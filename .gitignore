@@ -1,0 +1,51 @@
+.venv/
+
+# Local folders to ignore
+plan/
+temp/
+
+# Python bytecode and caches.
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Packaging and build outputs.
+*.egg-info/
+.eggs/
+build/
+dist/
+pip-wheel-metadata/
+
+# Generated test fixtures (regenerate via R scripts in tests/fixtures/).
+# TODO: When making the repo-public stop ignoring for better transparency.
+tests/fixtures/*.tsv
+tests/fixtures/*.csv
+
+# Test, lint, and coverage artifacts.
+.coverage
+.coverage.*
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+coverage.xml
+htmlcov/
+
+# Notebook and interactive session artifacts.
+.ipynb_checkpoints/
+
+# R session artifacts from fixture generation.
+.Rhistory
+.RData
+.Ruserdata
+renv/library/
+renv/staging/
+renv/sandbox/
+
+# Editor and OS noise.
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
