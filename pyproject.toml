@@ -1,14 +1,33 @@
 [project]
 name = "harmonizepy"
-version = "0.0.0"
-description = "Batch-effect harmonization toolkit and validation harness."
+version = "0.1.0"
+description = "Pure-Python batch-effect harmonization (ComBat + limma), validated against R sva/HarmonizR."
 readme = "README.md"
-requires-python = ">=3.12"
+license = "GPL-3.0-only"
+requires-python = ">=3.10"
+authors = [
+    { name = "Lange Lab" },
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
 dependencies = [
     "numpy",
     "pandas",
     "scipy",
 ]
+
+[project.urls]
+Repository = "https://github.com/LangeLab/HarmonizePy"
+Issues = "https://github.com/LangeLab/HarmonizePy/issues"
 
 [dependency-groups]
 dev = [

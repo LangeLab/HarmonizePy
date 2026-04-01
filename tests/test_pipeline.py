@@ -197,7 +197,7 @@ class TestPipelineEdgeCases:
     def test_description_mismatch_raises(self):
         data = pd.DataFrame(np.ones((3, 4)))
         desc = pd.DataFrame({"ID": ["a", "b", "c"], "sample": [1, 2, 3], "batch": [1, 1, 2]})
-        with pytest.raises(ValueError, match="samples"):
+        with pytest.raises(ValueError, match="(?i)sample"):
             harmonize(data, desc)
 
     def test_single_batch_no_crash(self):

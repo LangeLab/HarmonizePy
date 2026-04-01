@@ -10,11 +10,10 @@ This mirrors R ``HarmonizR:::splitting``.
 
 from __future__ import annotations
 
-from typing import Callable
-
 import numpy as np
 import pandas as pd
 
+from .affiliation import reduce_to_unique_groups
 from .combat_wrapper import adjust_combat
 from .limma_wrapper import adjust_limma
 
@@ -55,10 +54,8 @@ def splitting(
     batch_arr = np.asarray(batch_list)
     block_arr = np.asarray(block_list)
 
-    # Group features by affiliation
-    affil_to_features: dict[tuple[int, ...], list[int]] = {}
-    for i, affil in enumerate(affiliation_list):
-        affil_to_features.setdefault(affil, []).append(i)
+    # Group features by affiliation using the shared reducer
+    affil_to_features = reduce_to_unique_groups(affiliation_list)
 
     results: list[pd.DataFrame] = []
 

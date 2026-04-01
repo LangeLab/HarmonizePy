@@ -1,0 +1,60 @@
+<svg width="800" height="460" viewBox="0 0 800 460" fill="none" xmlns="http://www.w3.org/2000/svg">
+
+  <!-- Icon (280×280, centered, nested with its own coordinate space) -->
+  <svg x="260" y="20" width="280" height="280" viewBox="0 0 1024 1024">
+    <defs>
+      <linearGradient id="bg" x1="512" y1="0" x2="512" y2="1024" gradientUnits="userSpaceOnUse">
+        <stop stop-color="#0F2132"/>
+        <stop offset="1" stop-color="#132B3D"/>
+      </linearGradient>
+      <linearGradient id="panel" x1="512" y1="148" x2="512" y2="876" gradientUnits="userSpaceOnUse">
+        <stop stop-color="#FFFFFF"/>
+        <stop offset="1" stop-color="#EFF1F5"/>
+      </linearGradient>
+      <linearGradient id="blue" x1="338" y1="268" x2="338" y2="512" gradientUnits="userSpaceOnUse">
+        <stop stop-color="#7DB4E0"/>
+        <stop offset="1" stop-color="#356FA3"/>
+      </linearGradient>
+      <linearGradient id="gold" x1="686" y1="268" x2="686" y2="512" gradientUnits="userSpaceOnUse">
+        <stop stop-color="#E8B830"/>
+        <stop offset="1" stop-color="#B8891A"/>
+      </linearGradient>
+      <linearGradient id="teal" x1="512" y1="464" x2="512" y2="756" gradientUnits="userSpaceOnUse">
+        <stop stop-color="#2DD4BF"/>
+        <stop offset="1" stop-color="#0A7A6F"/>
+      </linearGradient>
+      <filter id="ps" x="-10%" y="-10%" width="120%" height="120%">
+        <feDropShadow dx="0" dy="6" stdDeviation="14" flood-color="#091A2A" flood-opacity="0.22"/>
+      </filter>
+      <clipPath id="lp"><rect x="282" y="268" width="112" height="488" rx="56"/></clipPath>
+      <clipPath id="rp"><rect x="630" y="268" width="112" height="488" rx="56"/></clipPath>
+    </defs>
+    <rect width="1024" height="1024" rx="224" fill="url(#bg)"/>
+    <g filter="url(#ps)">
+      <rect x="148" y="148" width="728" height="728" rx="168" fill="url(#panel)"/>
+    </g>
+    <g clip-path="url(#lp)">
+      <rect x="282" y="268" width="112" height="244" fill="url(#blue)"/>
+      <rect x="282" y="512" width="112" height="244" fill="url(#teal)"/>
+    </g>
+    <g clip-path="url(#rp)">
+      <rect x="630" y="268" width="112" height="244" fill="url(#gold)"/>
+      <rect x="630" y="512" width="112" height="244" fill="url(#teal)"/>
+    </g>
+    <rect x="338" y="464" width="348" height="96" rx="48" fill="url(#teal)"/>
+    <circle cx="460" cy="380" r="18" fill="#356FA3"/>
+    <circle cx="564" cy="414" r="18" fill="#B8891A"/>
+    <circle cx="460" cy="620" r="18" fill="#0A7A6F"/>
+    <circle cx="564" cy="620" r="18" fill="#0A7A6F"/>
+  </svg>
+
+  <!-- Wordmark: outlined style — works on both light and dark backgrounds -->
+  <!-- Teal (#0D9488) gives ~3.8:1 on white, ~4.5:1 on GitHub dark (#0D1117) -->
+  <!-- Dark gold (#9A7520) gives ~4.3:1 on white, ~3.9:1 on GitHub dark -->
+  <text x="400" y="400" text-anchor="middle"
+        font-family="'Arial Rounded MT Bold', Arial, Helvetica, sans-serif"
+        font-weight="700" font-size="72" letter-spacing="3"
+        fill="none" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round">
+    <tspan stroke="#0D9488">Harmonize</tspan><tspan stroke="#9A7520">Py</tspan>
+  </text>
+</svg>

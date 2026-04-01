@@ -30,7 +30,7 @@ def adjust_combat(
     Parameters
     ----------
     sub_df : pd.DataFrame
-        Features × samples.  **Must have no missing values.**
+        Features x samples.  **Must have no missing values.**
     batch_labels : array-like
         Integer batch label per sample (length == ``sub_df.shape[1]``).
     mode : {1, 2, 3, 4}
@@ -51,6 +51,14 @@ def adjust_combat(
     ------
     ValueError
         If *sub_df* contains NaN, has < 2 rows, or *mode* is invalid.
+
+    Examples
+    --------
+    >>> import pandas as pd
+    >>> from harmonizepy import adjust_combat
+    >>> df = pd.DataFrame({"s1": [1.0, 2.0], "s2": [3.0, 4.0],
+    ...                     "s3": [5.0, 6.0], "s4": [7.0, 8.0]})
+    >>> corrected = adjust_combat(df, [0, 0, 1, 1], mode=2)
     """
     if mode not in _MODE_MAP:
         raise ValueError(f"Invalid ComBat mode {mode}. Must be 1–4.")

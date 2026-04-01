@@ -654,7 +654,7 @@ class TestPipelineFailureModes:
             "sample": [1, 2, 3],
             "batch": [1, 1, 2],
         })
-        with pytest.raises(ValueError, match="samples"):
+        with pytest.raises(ValueError, match="(?i)sample"):
             harmonize(data, desc)
 
     def test_all_missing_feature(self):
@@ -695,7 +695,7 @@ class TestPipelineFailureModes:
         assert not np.isnan(result.iloc[0, :6]).any()
 
     def test_duplicate_feature_names(self):
-        """Duplicate feature indices should be deduplicated."""
+        """Duplicate feature indices should raise ValueError."""
         data = pd.DataFrame(
             np.random.default_rng(4).normal(10, 1, size=(4, 6)),
             index=["p_0", "p_0", "p_1", "p_2"],
@@ -706,9 +706,8 @@ class TestPipelineFailureModes:
             "sample": list(range(1, 7)),
             "batch": [1, 1, 1, 2, 2, 2],
         })
-        result = harmonize(data, desc, algorithm="ComBat", combat_mode=2)
-        # One of the p_0 duplicates should be dropped
-        assert result.shape[0] == 3
+        with pytest.raises(ValueError, match="Duplicate"):
+            harmonize(data, desc, algorithm="ComBat", combat_mode=2)
 
     def test_dataframe_input(self):
         """Pipeline accepts DataFrames directly."""

@@ -20,6 +20,8 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
+from .validation import validate_limma_input
+
 _Array = npt.NDArray[np.floating]
 
 
@@ -45,19 +47,23 @@ def remove_batch_effect(
     ------
     ValueError
         On NaN in *data* or fewer than 2 batches.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from harmonizepy import remove_batch_effect
+    >>> data = np.random.default_rng(0).normal(10, 2, (20, 8))
+    >>> batch = np.array([0]*4 + [1]*4)
+    >>> corrected = remove_batch_effect(data, batch)
+    >>> corrected.shape
+    (20, 8)
     """
     data = np.asarray(data, dtype=np.float64)
-    if data.ndim != 2:
-        raise ValueError(f"data must be 2-D, got {data.ndim}-D")
-    if np.isnan(data).any():
-        raise ValueError("data must not contain NaN")
-
     batch = np.asarray(batch).ravel()
+
+    validate_limma_input(data, batch)
+
     n_features, n_samples = data.shape
-    if batch.shape[0] != n_samples:
-        raise ValueError(
-            f"batch length ({batch.shape[0]}) != number of samples ({n_samples})"
-        )
 
     unique_batches = np.unique(batch)
     n_batch = len(unique_batches)
@@ -102,7 +108,7 @@ def adjust_limma(
     Parameters
     ----------
     sub_df : DataFrame
-        Features × samples.  Must not contain NaN.
+        Features x samples.  Must not contain NaN.
     batch_labels : array-like
         Integer batch label per sample (column).
 
@@ -110,6 +116,19 @@ def adjust_limma(
     -------
     DataFrame
         Batch-corrected matrix with original index/columns preserved.
+
+    Raises
+    ------
+    ValueError
+        On NaN in *sub_df* or fewer than 2 batches.
+
+    Examples
+    --------
+    >>> import pandas as pd
+    >>> from harmonizepy import adjust_limma
+    >>> df = pd.DataFrame({"s1": [1.0, 2.0], "s2": [3.0, 4.0],
+    ...                     "s3": [5.0, 6.0], "s4": [7.0, 8.0]})
+    >>> corrected = adjust_limma(df, [0, 0, 1, 1])
     """
     result = remove_batch_effect(sub_df.values, np.asarray(batch_labels))
     return pd.DataFrame(result, index=sub_df.index, columns=sub_df.columns)

@@ -2,16 +2,21 @@
 
 For each feature (row), determines which batches/blocks have sufficient
 non-missing data to participate in batch-effect adjustment.  Returns an
-*affiliation list* — a list of tuples, one per feature, containing the
+*affiliation list* - a list of tuples, one per feature, containing the
 sorted set of block IDs where the feature has enough observations.
 
 This mirrors R ``HarmonizR:::spotting_missing_values``.
+
+The heavy lifting is done by :func:`affiliation.build_affiliation_list`;
+this module is a thin entry point that preserves the original call site.
 """
 
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+
+from .affiliation import build_affiliation_list
 
 
 def spotting_missing_values(
@@ -25,7 +30,7 @@ def spotting_missing_values(
     Parameters
     ----------
     data : DataFrame
-        Features × samples.  May contain NaN.
+        Features x samples.  May contain NaN.
     batch_list : ndarray, shape (n_samples,)
         Integer batch label per sample (1-indexed to match R convention).
     block_list : ndarray, shape (n_samples,)
@@ -44,44 +49,4 @@ def spotting_missing_values(
         contained in that block.  An empty tuple means the feature will
         be dropped (insufficient data everywhere).
     """
-    mat = data.values  # (n_features, n_samples)
-    n_features, n_samples = mat.shape
-
-    batch_arr = np.asarray(batch_list)
-    block_arr = np.asarray(block_list)
-
-    # Pre-compute batch and block boundaries
-    unique_blocks = np.unique(block_arr)
-    # For each block, find the original batches it contains and sample indices
-    block_info: list[list[tuple[np.ndarray, ...]]] = []
-    for blk in unique_blocks:
-        blk_mask = block_arr == blk
-        batches_in_block = np.unique(batch_arr[blk_mask])
-        batch_indices = []
-        for b in batches_in_block:
-            idx = np.where((batch_arr == b) & blk_mask)[0]
-            batch_indices.append(idx)
-        block_info.append(batch_indices)
-
-    # Not-NaN mask
-    notna = ~np.isnan(mat)  # (n_features, n_samples)
-
-    affiliation_list: list[tuple[int, ...]] = []
-
-    for i in range(n_features):
-        row_notna = notna[i]
-        blocks_present: list[int] = []
-
-        for blk_idx, batch_indices in enumerate(block_info):
-            # Feature must have >= needed_values in EVERY batch within block
-            all_ok = True
-            for idx in batch_indices:
-                if row_notna[idx].sum() < needed_values:
-                    all_ok = False
-                    break
-            if all_ok:
-                blocks_present.append(int(unique_blocks[blk_idx]))
-
-        affiliation_list.append(tuple(sorted(blocks_present)))
-
-    return affiliation_list
+    return build_affiliation_list(data, batch_list, block_list, needed_values)

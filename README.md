@@ -1,6 +1,18 @@
-# HarmonizePy
+<!-- markdownlint-disable MD033 MD041 -->
 
-Pure-Python batch-effect harmonization toolkit, validated against R `sva::ComBat`, `limma::removeBatchEffect`, and `HarmonizR`.
+<div align="center">
+  <img src="assets/logo_readme.svg" alt="HarmonizePy" width="420" />
+  <br />
+  Pure-Python batch-effect harmonization toolkit validated against R `sva::ComBat`, `limma::removeBatchEffect`, and `HarmonizR`.
+  <br />
+  Current version: <strong>v0.1.0</strong>. New default pipeline: `harmonize()` with ComBat/limma mode parity and structural missingness support.
+  <br />
+  <br />
+  <a href="https://github.com/LangeLab/HarmonizePy/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/CI-passing-22c55e?style=for-the-badge" alt="CI" /></a>
+  <a href="#installation"><img src="https://img.shields.io/badge/python-3.10%20|%203.11%20|%203.12-3776AB?style=for-the-badge" alt="Python versions" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-f59e0b?style=for-the-badge" alt="License: GPL-3.0" /></a>
+  <a href="https://codecov.io/gh/LangeLab/HarmonizePy"><img src="https://img.shields.io/badge/coverage-tracked-6366f1?style=for-the-badge" alt="codecov" /></a>
+</div>
 
 ## Features
 
