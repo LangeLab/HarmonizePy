@@ -56,6 +56,24 @@ class AffiliationEntry(NamedTuple):
 
     Wraps the raw tuple produced by spotting to give it a name and
     make pipeline code self-documenting.
+
+    Parameters
+    ----------
+    blocks : tuple[int, ...]
+        Sorted block IDs where the feature has sufficient observations.
+        An empty tuple means the feature is dropped from adjustment.
+
+    Raises
+    ------
+    TypeError
+        If *blocks* is not a tuple of integers.
+
+    Examples
+    --------
+    >>> from harmonizepy.types import AffiliationEntry
+    >>> entry = AffiliationEntry(blocks=(1, 2))
+    >>> entry.blocks
+    (1, 2)
     """
 
     blocks: tuple[int, ...]
@@ -71,6 +89,19 @@ class BatchDescription:
         Sample identifiers matching data column names.
     batch_labels : tuple[int, ...]
         Integer batch label per sample.
+
+    Raises
+    ------
+    ValueError
+        If *sample_ids* and *batch_labels* differ in length, or if
+        *batch_labels* contains fewer than 2 unique values.
+
+    Examples
+    --------
+    >>> from harmonizepy.types import BatchDescription
+    >>> bd = BatchDescription(("s1", "s2", "s3"), (1, 1, 2))
+    >>> len(bd.batch_labels)
+    3
     """
 
     sample_ids: tuple[str, ...]

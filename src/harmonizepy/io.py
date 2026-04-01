@@ -9,16 +9,29 @@ import pandas as pd
 
 
 def read_main_data(path: str) -> pd.DataFrame:
-    """Read a TSV data matrix (features × samples).
+    """Read a TSV data matrix (features x samples).
 
-    Expects tab-separated values with a header row and the first column
-    as row names (feature identifiers).  Matches R
-    ``read.table(sep="\\t", header=TRUE, row.names=1)``.
+    Parameters
+    ----------
+    path : str
+        Path to the tab-separated file.  The file must have a header row
+        and use the first column as row names (feature identifiers).
+        Matches R ``read.table(sep="\\t", header=TRUE, row.names=1)``.
 
     Returns
     -------
     DataFrame
         Numeric matrix with feature names as index and sample names as columns.
+
+    Raises
+    ------
+    FileNotFoundError
+        If *path* does not exist.
+
+    Examples
+    --------
+    >>> from harmonizepy.io import read_main_data
+    >>> df = read_main_data("data.tsv")  # doctest: +SKIP
     """
     df = pd.read_csv(path, sep="\t", index_col=0)
     # Drop completely empty rows/columns (mirrors janitor::remove_empty)
@@ -29,13 +42,27 @@ def read_main_data(path: str) -> pd.DataFrame:
 def read_description(path: str) -> pd.DataFrame:
     """Read a CSV batch description file.
 
-    Expects columns: ``ID`` (sample name), ``sample`` (numeric index),
-    ``batch`` (integer batch label).
+    Parameters
+    ----------
+    path : str
+        Path to the comma-separated file.  Expected columns: ``ID``
+        (sample name), ``sample`` (integer index), ``batch`` (integer
+        batch label).
 
     Returns
     -------
     DataFrame
         Batch description with columns ID, sample, batch.
+
+    Raises
+    ------
+    FileNotFoundError
+        If *path* does not exist.
+
+    Examples
+    --------
+    >>> from harmonizepy.io import read_description
+    >>> desc = read_description("batch.csv")  # doctest: +SKIP
     """
     return pd.read_csv(path)
 
@@ -46,8 +73,20 @@ def write_output(df: pd.DataFrame, path: str) -> None:
     Parameters
     ----------
     df : DataFrame
-        Features × samples.
+        Features x samples.
     path : str
         Output file path.
+
+    Raises
+    ------
+    OSError
+        If *path* is not writable.
+
+    Examples
+    --------
+    >>> import pandas as pd
+    >>> from harmonizepy.io import write_output
+    >>> df = pd.DataFrame({"s1": [1.0, 2.0]}, index=["p1", "p2"])
+    >>> write_output(df, "/tmp/out.tsv")  # doctest: +SKIP
     """
     df.to_csv(path, sep="\t")

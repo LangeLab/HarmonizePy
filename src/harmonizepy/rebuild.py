@@ -21,8 +21,23 @@ def rebuild(sub_dfs: list[pd.DataFrame]) -> pd.DataFrame:
     Returns
     -------
     DataFrame
-        Combined features × samples matrix.  Row order follows the
+        Combined features x samples matrix.  Row order follows the
         order of sub-DataFrames (grouped by affiliation).
+
+    Raises
+    ------
+    ValueError
+        Propagated from ``pandas.concat`` if sub-DataFrames have
+        incompatible dtypes.
+
+    Examples
+    --------
+    >>> import pandas as pd
+    >>> from harmonizepy.rebuild import rebuild
+    >>> sub1 = pd.DataFrame({"s1": [1.0], "s2": [2.0]}, index=["p1"])
+    >>> sub2 = pd.DataFrame({"s1": [3.0], "s2": [4.0]}, index=["p2"])
+    >>> rebuild([sub1, sub2]).shape
+    (2, 2)
     """
     if not sub_dfs:
         return pd.DataFrame()

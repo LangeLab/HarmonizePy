@@ -382,4 +382,61 @@ for (m in 1:4) {
   }, error = function(e) cat(sprintf("✗ sparse HarmonizR ComBat mode %d: %s\n", m, e$message)))
 }
 
+# =======================================================================
+# 11. HIGH-MISSINGNESS: 50 proteins x 9 samples x 3 batches (3 each),
+#     ~65% of features have one whole batch missing
+# =======================================================================
+cat("\n--- highmiss (50x9, 3 batches of 3, 65% structural missing) ---\n")
+set.seed(777)
+np11 <- 50; ns11 <- 9
+data_hm <- matrix(rnorm(np11 * ns11, mean = 10, sd = 2), nrow = np11)
+batch_hm <- rep(1:3, each = 3)
+data_hm[, batch_hm == 2] <- data_hm[, batch_hm == 2] + 2.5
+data_hm[, batch_hm == 3] <- data_hm[, batch_hm == 3] - 1.8
+# 65% of features have one whole batch absent
+for (i in seq_len(np11)) {
+  if (runif(1) < 0.65) {
+    drop_batch <- sample(1:3, 1)
+    data_hm[i, batch_hm == drop_batch] <- NA
+  }
+}
+rownames(data_hm) <- paste0("protein_", seq_len(np11))
+colnames(data_hm) <- paste0("sample_", seq_len(ns11))
+write_matrix(data_hm, file.path(out_dir, "highmiss_input.tsv"))
+desc_hm <- data.frame(
+  ID     = colnames(data_hm),
+  sample = seq_len(ns11),
+  batch  = batch_hm
+)
+write.csv(desc_hm, file.path(out_dir, "highmiss_batch.csv"), row.names = FALSE)
+
+for (m in 1:4) {
+  tryCatch({
+    result <- harmonizR(
+      data_as_input        = as.data.frame(data_hm),
+      description_as_input = desc_hm,
+      algorithm            = "ComBat", ComBat_mode = m,
+      sort = FALSE, plot = FALSE,
+      output_file          = file.path(out_dir, sprintf("highmiss_harmonizr_combat_mode%d", m)),
+      verbosity = 0, cores = 1
+    )
+    write_matrix(as.matrix(result),
+                 file.path(out_dir, sprintf("highmiss_harmonizr_combat_mode%d.tsv", m)))
+    cat(sprintf("✓ highmiss HarmonizR ComBat mode %d\n", m))
+  }, error = function(e) cat(sprintf("✗ highmiss HarmonizR ComBat mode %d: %s\n", m, e$message)))
+}
+
+tryCatch({
+  result <- harmonizR(
+    data_as_input        = as.data.frame(data_hm),
+    description_as_input = desc_hm,
+    algorithm            = "limma",
+    sort = FALSE, plot = FALSE,
+    output_file          = file.path(out_dir, "highmiss_harmonizr_limma"),
+    verbosity = 0, cores = 1
+  )
+  write_matrix(as.matrix(result), file.path(out_dir, "highmiss_harmonizr_limma.tsv"))
+  cat("✓ highmiss HarmonizR limma\n")
+}, error = function(e) cat(sprintf("✗ highmiss HarmonizR limma: %s\n", e$message)))
+
 cat("\n=== Edge-case fixture generation complete ===\n")

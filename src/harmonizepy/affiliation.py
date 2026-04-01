@@ -47,6 +47,21 @@ def build_affiliation_list(
         One tuple per feature.  Each tuple contains the sorted block IDs
         where the feature has sufficient data.  An empty tuple means
         the feature has insufficient data everywhere.
+
+    Raises
+    ------
+    ValueError
+        Propagated from NumPy if *batch_list* or *block_list* cannot be
+        broadcast against the columns of *data*.
+
+    Examples
+    --------
+    >>> import numpy as np, pandas as pd
+    >>> from harmonizepy.affiliation import build_affiliation_list
+    >>> data = pd.DataFrame({"s1": [1.0, np.nan], "s2": [2.0, 3.0], "s3": [4.0, 5.0]})
+    >>> batch = np.array([1, 1, 2])
+    >>> build_affiliation_list(data, batch, batch, needed_values=1)
+    [(1, 2), (2,)]
     """
     mat = data.values
     n_features = mat.shape[0]
@@ -105,6 +120,18 @@ def reduce_to_unique_groups(
         Mapping from each unique affiliation to the list of feature
         row indices that share it.  Iteration order matches first
         appearance.
+
+    Raises
+    ------
+    TypeError
+        If *affiliation_list* contains non-hashable elements.
+
+    Examples
+    --------
+    >>> from harmonizepy.affiliation import reduce_to_unique_groups
+    >>> groups = reduce_to_unique_groups([(1, 2), (1,), (1, 2)])
+    >>> groups == {(1, 2): [0, 2], (1,): [1]}
+    True
     """
     groups: dict[tuple[int, ...], list[int]] = {}
     for i, affil in enumerate(affiliation_list):

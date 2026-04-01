@@ -16,18 +16,30 @@ _Array = npt.NDArray[np.floating]
 def validate_data_matrix(df: pd.DataFrame) -> None:
     """Check that *df* is a valid features-x-samples matrix.
 
+    Parameters
+    ----------
+    df : DataFrame
+        Features x samples matrix to validate.
+
     Raises
     ------
     ValueError
         If *df* has duplicate row indices, all-NaN rows, fewer than
         2 columns, or non-numeric dtype.
+
+    Examples
+    --------
+    >>> import pandas as pd
+    >>> from harmonizepy.validation import validate_data_matrix
+    >>> df = pd.DataFrame({"s1": [1.0, 2.0], "s2": [3.0, 4.0]})
+    >>> validate_data_matrix(df)  # no error
     """
     if df.index.duplicated().any():
         dups = df.index[df.index.duplicated(keep=False)].unique().tolist()
         raise ValueError(f"Duplicate feature names: {dups[:5]}")
 
-    if not np.issubdtype(df.dtypes.values[0], np.number):
-        bad = [c for c in df.columns if not np.issubdtype(df[c].dtype, np.number)]
+    bad = [c for c in df.columns if not pd.api.types.is_numeric_dtype(df[c])]
+    if bad:
         raise ValueError(f"Non-numeric columns: {bad[:5]}")
 
     if df.shape[1] < 2:
@@ -39,11 +51,26 @@ def validate_data_matrix(df: pd.DataFrame) -> None:
 def validate_description(desc: pd.DataFrame, data: pd.DataFrame) -> None:
     """Check that a batch description matches a data matrix.
 
+    Parameters
+    ----------
+    desc : DataFrame
+        Batch description with at least 3 columns (ID, sample, batch).
+    data : DataFrame
+        Data matrix whose column names must match the IDs in *desc*.
+
     Raises
     ------
     ValueError
         If sample IDs do not match data columns or the batch column has
         fewer than 2 unique values.
+
+    Examples
+    --------
+    >>> import pandas as pd
+    >>> from harmonizepy.validation import validate_description
+    >>> data = pd.DataFrame({"s1": [1.0], "s2": [2.0]})
+    >>> desc = pd.DataFrame({"ID": ["s1", "s2"], "sample": [1, 2], "batch": [1, 2]})
+    >>> validate_description(desc, data)  # no error
     """
     if desc.shape[1] < 3:
         raise ValueError(
@@ -70,11 +97,25 @@ def validate_description(desc: pd.DataFrame, data: pd.DataFrame) -> None:
 def validate_combat_input(data: _Array, batch: _Array) -> None:
     """Check ndarray inputs for the ComBat engine.
 
+    Parameters
+    ----------
+    data : ndarray, shape (n_features, n_samples)
+        Features x samples matrix.  Must be 2-D and NaN-free.
+    batch : ndarray, shape (n_samples,)
+        Integer batch labels; length must equal the number of samples.
+
     Raises
     ------
     ValueError
         On NaN in *data*, wrong dimensionality, < 2 features, or
         batch length mismatch.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from harmonizepy.validation import validate_combat_input
+    >>> data = np.ones((5, 4))
+    >>> validate_combat_input(data, np.array([0, 0, 1, 1]))  # no error
     """
     if data.ndim != 2:
         raise ValueError(f"data must be 2-D, got {data.ndim}-D")
@@ -96,10 +137,24 @@ def validate_combat_input(data: _Array, batch: _Array) -> None:
 def validate_limma_input(data: _Array, batch: _Array) -> None:
     """Check ndarray inputs for the limma engine.
 
+    Parameters
+    ----------
+    data : ndarray, shape (n_features, n_samples)
+        Features x samples matrix.  Must be 2-D and NaN-free.
+    batch : ndarray, shape (n_samples,)
+        Integer batch labels; length must equal the number of samples.
+
     Raises
     ------
     ValueError
         On NaN in *data*, wrong dimensionality, or batch length mismatch.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from harmonizepy.validation import validate_limma_input
+    >>> data = np.ones((5, 4))
+    >>> validate_limma_input(data, np.array([0, 0, 1, 1]))  # no error
     """
     if data.ndim != 2:
         raise ValueError(f"data must be 2-D, got {data.ndim}-D")
@@ -120,10 +175,24 @@ def validate_harmonize_args(
 ) -> None:
     """Validate top-level ``harmonize()`` keyword arguments.
 
+    Parameters
+    ----------
+    algorithm : str
+        Adjustment algorithm; must be ``"ComBat"`` or ``"limma"``.
+    combat_mode : int
+        ComBat variant; must be 1, 2, 3, or 4.
+    needed_values : int
+        Minimum non-missing observations per batch; must be >= 1.
+
     Raises
     ------
     ValueError
         On invalid algorithm, combat_mode, or needed_values.
+
+    Examples
+    --------
+    >>> from harmonizepy.validation import validate_harmonize_args
+    >>> validate_harmonize_args("ComBat", 2, 2)  # no error
     """
     if algorithm not in ("ComBat", "limma"):
         raise ValueError(

@@ -50,6 +50,24 @@ def splitting(
         Corrected sub-DataFrames, one per unique non-empty affiliation.
         Features with empty affiliations are included with all-NaN values
         to preserve completeness.
+
+    Raises
+    ------
+    ValueError
+        If *algorithm* is not ``"ComBat"`` or ``"limma"``, or if
+        *combat_mode* is not 1-4.
+
+    Examples
+    --------
+    >>> import numpy as np, pandas as pd
+    >>> from harmonizepy.splitting import splitting
+    >>> data = pd.DataFrame(np.ones((3, 4)), columns=list("abcd"))
+    >>> data.iloc[:, 2:] += 1.0
+    >>> affil = [(1, 2), (1, 2), (1, 2)]
+    >>> batch = np.array([1, 1, 2, 2])
+    >>> sub_dfs = splitting(affil, data, batch, batch, algorithm="ComBat", combat_mode=2)
+    >>> len(sub_dfs)
+    1
     """
     batch_arr = np.asarray(batch_list)
     block_arr = np.asarray(block_list)

@@ -48,5 +48,20 @@ def spotting_missing_values(
         where the feature has sufficient data in every original batch
         contained in that block.  An empty tuple means the feature will
         be dropped (insufficient data everywhere).
+
+    Raises
+    ------
+    ValueError
+        Propagated from :func:`affiliation.build_affiliation_list` on
+        invalid inputs.
+
+    Examples
+    --------
+    >>> import numpy as np, pandas as pd
+    >>> from harmonizepy.spotting import spotting_missing_values
+    >>> data = pd.DataFrame({"s1": [1.0, np.nan], "s2": [2.0, 3.0], "s3": [4.0, 5.0]})
+    >>> batch = np.array([1, 1, 2])
+    >>> spotting_missing_values(data, batch, batch, needed_values=2)
+    [(1, 2), (2,)]
     """
     return build_affiliation_list(data, batch_list, block_list, needed_values)

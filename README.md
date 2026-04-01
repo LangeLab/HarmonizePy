@@ -5,10 +5,10 @@
   <br />
   Pure-Python batch-effect harmonization toolkit validated against R `sva::ComBat`, `limma::removeBatchEffect`, and `HarmonizR`.
   <br />
-  Current version: <strong>v0.1.0</strong>. New default pipeline: `harmonize()` with ComBat/limma mode parity and structural missingness support.
+  Version <strong>v0.1.0</strong>. ComBat/limma mode parity and structural missingness support.
   <br />
   <br />
-  <a href="https://github.com/LangeLab/HarmonizePy/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/CI-passing-22c55e?style=for-the-badge" alt="CI" /></a>
+  <a href="#running-tests"><img src="https://img.shields.io/badge/tests-286%20passing-22c55e?style=for-the-badge" alt="Tests" /></a>
   <a href="#installation"><img src="https://img.shields.io/badge/python-3.10%20|%203.11%20|%203.12-3776AB?style=for-the-badge" alt="Python versions" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-f59e0b?style=for-the-badge" alt="License: GPL-3.0" /></a>
   <a href="https://codecov.io/gh/LangeLab/HarmonizePy"><img src="https://img.shields.io/badge/coverage-tracked-6366f1?style=for-the-badge" alt="codecov" /></a>
@@ -24,7 +24,7 @@
 - **limma** - Linear-model batch correction via sum-to-zero contrasts (Ritchie et al. 2015)
 - **HarmonizR-compatible pipeline** - handles structural missingness (features absent in some batches) via automatic splitting, adjustment, and reassembly
 - Pure NumPy/SciPy - no R dependency at runtime
-- Validated against R reference implementations with 226+ tests
+- Validated against R reference implementations with 286+ tests
 
 ## Quick start
 
@@ -86,6 +86,9 @@ Rscript tests/fixtures/generate_edgecase_fixtures.R
 src/harmonizepy/
     __init__.py          # Public API: harmonize, combat, remove_batch_effect
     core.py              # Pipeline entry point (harmonize)
+    types.py             # Shared data structures (HarmonizeConfig, etc.)
+    validation.py        # Centralised input validation
+    affiliation.py       # Per-feature batch affiliation + group reduction
     combat.py            # Pure NumPy ComBat engine
     combat_wrapper.py    # Mode dispatch (1-4) wrapper
     limma_wrapper.py     # Pure NumPy limma::removeBatchEffect
@@ -97,9 +100,10 @@ tests/
     test_smoke.py        # Version check
     test_combat.py       # ComBat unit + R concordance tests
     test_limma.py        # limma unit + R concordance tests
+    test_api.py          # Public API surface tests
     test_pipeline.py     # Full pipeline + spotting/splitting tests
     test_comprehensive.py # Edge-case, failure-mode, and extended R concordance
-    fixtures/            # R-generated reference outputs (70+ TSV/CSV files)
+    fixtures/            # R-generated reference outputs (79 TSV/CSV files)
 data/                    # Small showcase datasets (user-provided)
 temp/                    # Full-scale datasets (gitignored)
 plan/                    # Development planning notes (gitignored)
@@ -107,7 +111,7 @@ plan/                    # Development planning notes (gitignored)
 
 ## Dependencies
 
-- Python >= 3.12
+- Python >= 3.10
 - numpy, pandas, scipy
 - pytest >= 8.0 (dev)
 

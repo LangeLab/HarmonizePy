@@ -350,7 +350,10 @@ def combat(
     gamma_bar = gamma_hat.mean(axis=1)               # (n_batch,)
     t2 = gamma_hat.var(axis=1, ddof=1)                # (n_batch,)
 
-    if not mean_only:
+    # a_prior/b_prior are only used by the parametric iterative solver.
+    # For non-parametric mode, computing them on near-zero delta_hat would
+    # produce NaN (s2=0 → divide-by-zero) that triggers spurious RuntimeWarnings.
+    if par_prior and not mean_only:
         a_prior = np.array([_aprior(delta_hat[i]) for i in range(n_batch)])
         b_prior = np.array([_bprior(delta_hat[i]) for i in range(n_batch)])
     else:
