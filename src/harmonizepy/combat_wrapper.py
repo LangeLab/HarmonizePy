@@ -1,10 +1,12 @@
 """ComBat integration layer.
 
-Thin public API that maps HarmonizR-style integer modes (1–4) to the
+Thin public API that maps HarmonizR-style integer modes (1-4) to the
 underlying :func:`harmonizepy.combat.combat` parameters.
 """
 
 from __future__ import annotations
+
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -61,11 +63,14 @@ def adjust_combat(
     >>> corrected = adjust_combat(df, [0, 0, 1, 1], mode=2)
     """
     if mode not in _MODE_MAP:
-        raise ValueError(f"Invalid ComBat mode {mode}. Must be 1–4.")
+        raise ValueError(
+            f"combat_mode must be 1, 2, 3, or 4, got {mode}. "
+            f"Modes 1/2 are parametric; 3/4 are non-parametric."
+        )
 
     batch_labels = np.asarray(batch_labels, dtype=np.intp).ravel()
     if len(np.unique(batch_labels)) < 2:
-        return sub_df.copy()
+        return cast(pd.DataFrame, sub_df.copy())
 
     corrected = combat(
         sub_df.to_numpy(dtype=np.float64),

@@ -6,11 +6,13 @@ consistent and the logic is not duplicated across modules.
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
-_Array = npt.NDArray[np.floating]
+_Array = npt.NDArray[np.floating[Any]]
 
 
 def validate_data_matrix(df: pd.DataFrame) -> None:
@@ -36,15 +38,22 @@ def validate_data_matrix(df: pd.DataFrame) -> None:
     """
     if df.index.duplicated().any():
         dups = df.index[df.index.duplicated(keep=False)].unique().tolist()
-        raise ValueError(f"Duplicate feature names: {dups[:5]}")
+        raise ValueError(
+            f"data contains duplicate feature names (first {len(dups[:5])}: "
+            f"{dups[:5]}). Each row must have a unique identifier."
+        )
 
     bad = [c for c in df.columns if not pd.api.types.is_numeric_dtype(df[c])]
     if bad:
-        raise ValueError(f"Non-numeric columns: {bad[:5]}")
+        raise ValueError(
+            f"data contains non-numeric columns: {bad[:5]}. "
+            f"All sample columns must be numeric (float or int)."
+        )
 
     if df.shape[1] < 2:
         raise ValueError(
-            f"Data must have >= 2 sample columns, got {df.shape[1]}"
+            f"data must have at least 2 sample columns (got {df.shape[1]}). "
+            f"Batch correction requires samples from multiple batches."
         )
 
 
@@ -74,8 +83,8 @@ def validate_description(desc: pd.DataFrame, data: pd.DataFrame) -> None:
     """
     if desc.shape[1] < 3:
         raise ValueError(
-            f"Description must have >= 3 columns (ID, sample, batch), "
-            f"got {desc.shape[1]}"
+            f"description must have at least 3 columns (ID, sample, batch), "
+            f"got {desc.shape[1]}. Check the description file format."
         )
 
     desc_ids = set(desc.iloc[:, 0].astype(str))
@@ -89,12 +98,13 @@ def validate_description(desc: pd.DataFrame, data: pd.DataFrame) -> None:
             parts.append(f"in description but not data: {sorted(extra_desc)[:5]}")
         if extra_data:
             parts.append(f"in data but not description: {sorted(extra_data)[:5]}")
-        raise ValueError(f"Sample ID mismatch: {'; '.join(parts)}")
+        raise ValueError(
+            f"Sample IDs in description do not match data columns — {'; '.join(parts)}. "
+            f"The first column of description must list the exact column names of data."
+        )
 
 
-
-
-def validate_combat_input(data: _Array, batch: _Array) -> None:
+def validate_combat_input(data: _Array, batch: npt.NDArray[np.integer[Any]]) -> None:
     """Check ndarray inputs for the ComBat engine.
 
     Parameters
@@ -118,19 +128,26 @@ def validate_combat_input(data: _Array, batch: _Array) -> None:
     >>> validate_combat_input(data, np.array([0, 0, 1, 1]))  # no error
     """
     if data.ndim != 2:
-        raise ValueError(f"data must be 2-D, got {data.ndim}-D")
+        raise ValueError(f"data must be a 2-D array (features x samples), got {data.ndim}-D.")
 
     n_features, n_samples = data.shape
 
     if n_features < 2:
-        raise ValueError("ComBat requires >= 2 features (rows)")
+        raise ValueError(
+            f"ComBat requires at least 2 features (rows), got {n_features}. "
+            f"Use limma for single-feature scenarios."
+        )
 
     if np.isnan(data).any():
-        raise ValueError("data must not contain NaN")
+        raise ValueError(
+            "data must not contain NaN before calling combat(). "
+            "Use harmonize() which handles structural missingness automatically."
+        )
 
     if batch.shape[0] != n_samples:
         raise ValueError(
-            f"batch length ({batch.shape[0]}) != number of samples ({n_samples})"
+            f"batch length ({batch.shape[0]}) does not match the number of "
+            f"sample columns in data ({n_samples})."
         )
 
 
@@ -157,16 +174,20 @@ def validate_limma_input(data: _Array, batch: _Array) -> None:
     >>> validate_limma_input(data, np.array([0, 0, 1, 1]))  # no error
     """
     if data.ndim != 2:
-        raise ValueError(f"data must be 2-D, got {data.ndim}-D")
+        raise ValueError(f"data must be a 2-D array (features x samples), got {data.ndim}-D.")
 
     if np.isnan(data).any():
-        raise ValueError("data must not contain NaN")
+        raise ValueError(
+            "data must not contain NaN before calling remove_batch_effect(). "
+            "Use harmonize() which handles structural missingness automatically."
+        )
 
-    n_features, n_samples = data.shape
+    _, n_samples = data.shape
 
     if batch.shape[0] != n_samples:
         raise ValueError(
-            f"batch length ({batch.shape[0]}) != number of samples ({n_samples})"
+            f"batch length ({batch.shape[0]}) does not match the number of "
+            f"sample columns in data ({n_samples})."
         )
 
 
@@ -220,30 +241,35 @@ def validate_harmonize_args(
     ...                         block_size=2, n_batches=4)  # no error
     """
     if algorithm not in ("ComBat", "limma"):
-        raise ValueError(
-            f"algorithm must be 'ComBat' or 'limma', got {algorithm!r}"
-        )
+        raise ValueError(f"algorithm must be 'ComBat' or 'limma', got {algorithm!r}.")
     if combat_mode not in (1, 2, 3, 4):
-        raise ValueError(f"combat_mode must be 1-4, got {combat_mode}")
+        raise ValueError(
+            f"combat_mode must be 1, 2, 3, or 4, got {combat_mode}. "
+            f"Modes 1/2 are parametric; 3/4 are non-parametric. "
+            f"Modes 1/3 adjust location+scale; 2/4 adjust location only."
+        )
     if needed_values < 1:
-        raise ValueError(f"needed_values must be >= 1, got {needed_values}")
+        raise ValueError(
+            f"needed_values must be >= 1, got {needed_values}. "
+            f"Use needed_values=None to auto-select based on algorithm."
+        )
     if sort_strategy is not None and sort_strategy not in _VALID_SORT_STRATEGIES:
         raise ValueError(
-            f"sort_strategy must be one of "
-            f"{sorted(_VALID_SORT_STRATEGIES)!r} or None, "
-            f"got {sort_strategy!r}"
+            f"sort must be one of {sorted(_VALID_SORT_STRATEGIES)!r} or None, "
+            f"got {sort_strategy!r}."
         )
     if block_size is not None:
         if not isinstance(block_size, int) or block_size < 2:
             raise ValueError(
-                f"block_size must be an integer >= 2 or None, got {block_size!r}"
+                f"block must be an integer >= 2 or None, got {block_size!r}. "
+                f"Use block=None to disable blocking."
             )
         if n_batches is not None and block_size >= n_batches:
             raise ValueError(
-                f"block_size ({block_size}) must be < number of unique batches "
-                f"({n_batches})"
+                f"block ({block_size}) must be less than the number of unique batches "
+                f"({n_batches}). Each block needs at least two batches to be meaningful."
             )
     if not isinstance(unique_removal, bool):
         raise TypeError(
-            f"unique_removal must be bool, got {type(unique_removal).__name__!r}"
+            f"unique_removal must be True or False, got {type(unique_removal).__name__!r}."
         )

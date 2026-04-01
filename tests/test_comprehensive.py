@@ -10,7 +10,7 @@ Organized into:
   6.  Pipeline failure modes and edge cases
   7.  Numerical stability and determinism
   8.  spotting / splitting unit tests
-  9.  Splitting / rebuild integration
+  9.  Splitting integration
   10. Singleton batch (R forces mean_only)
   11. needed_values parameter (Step 3)
   12. NaN propagation audit (Step 4)
@@ -48,9 +48,8 @@ from harmonizepy.combat import combat
 from harmonizepy.combat_wrapper import adjust_combat
 from harmonizepy.limma_wrapper import remove_batch_effect, adjust_limma
 from harmonizepy.core import harmonize
-from harmonizepy.spotting import spotting_missing_values
+from harmonizepy.affiliation import build_affiliation_list
 from harmonizepy.splitting import splitting
-from harmonizepy.rebuild import rebuild
 
 # ---------------------------------------------------------------------------
 # Fixture helpers
@@ -545,7 +544,7 @@ class TestCombatFailureModes:
             combat(data, np.array([0, 0, 1, 1]))
 
     def test_single_feature_rejected(self):
-        with pytest.raises(ValueError, match=">= 2"):
+        with pytest.raises(ValueError, match="at least 2 features"):
             combat(np.array([[1.0, 2.0, 3.0, 4.0]]), np.array([0, 0, 1, 1]))
 
     def test_batch_length_mismatch(self):
@@ -868,7 +867,7 @@ class TestPipelineFailureModes:
             "sample": list(range(1, 7)),
             "batch": [1, 1, 1, 2, 2, 2],
         })
-        with pytest.raises(ValueError, match="Duplicate"):
+        with pytest.raises(ValueError, match="duplicate feature names"):
             harmonize(data, desc, algorithm="ComBat", combat_mode=2)
 
     def test_dataframe_input(self):
@@ -920,7 +919,7 @@ class TestPipelineFailureModes:
             "sample": [1, 2, 3, 4],
             "batch": [1, 1, 2, 2],
         })
-        with pytest.raises(ValueError, match="Non-numeric"):
+        with pytest.raises(ValueError, match="non-numeric columns"):
             harmonize(data, desc)
 
     def test_feature_only_one_batch_passthrough(self):
@@ -948,6 +947,39 @@ class TestPipelineFailureModes:
         assert np.isnan(result.iloc[0, 3:]).all()
         # Other features should be adjusted (not all-NaN)
         assert not np.isnan(result.iloc[1:]).any(axis=None)
+
+    def test_all_features_missing_returns_all_nan(self):
+        """All features entirely NaN → zero features pass spotting → all-NaN output, no crash."""
+        data = pd.DataFrame(
+            [[np.nan] * 4, [np.nan] * 4, [np.nan] * 4],
+            index=["p0", "p1", "p2"],
+            columns=["s0", "s1", "s2", "s3"],
+        )
+        desc = pd.DataFrame({
+            "ID": ["s0", "s1", "s2", "s3"],
+            "sample": [1, 2, 3, 4],
+            "batch": [1, 1, 2, 2],
+        })
+        result = harmonize(data, desc, algorithm="ComBat", combat_mode=1)
+        assert result.shape == data.shape
+        assert np.isnan(result.values).all(), "Expected all-NaN when all features are missing"
+
+    def test_zero_features_pass_needed_values(self):
+        """Feature with only 1 value per batch fails nv=2 → NaN passthrough."""
+        # batch 1: one sample per feature; batch 2: one sample per feature → nv=2 fails all
+        data = pd.DataFrame(
+            {"s0": [1.0, 2.0, 3.0], "s1": [4.0, 5.0, 6.0]},
+            index=["p0", "p1", "p2"],
+        )
+        desc = pd.DataFrame({
+            "ID": ["s0", "s1"],
+            "sample": [1, 2],
+            "batch": [1, 2],
+        })
+        result = harmonize(data, desc, algorithm="ComBat", combat_mode=1, needed_values=2)
+        # Each batch has only 1 sample, so needed_values=2 is never met → all NaN
+        assert result.shape == data.shape
+        assert np.isnan(result.values).all(), "Expected all-NaN when no features meet needed_values"
 
 
 # ===================================================================
@@ -1051,7 +1083,7 @@ class TestSpottingEdgeCases:
         data = pd.DataFrame(np.ones((5, 6)))
         batch = np.array([1, 1, 1, 2, 2, 2])
         block = batch.copy()
-        result = spotting_missing_values(data, batch, block, needed_values=2)
+        result = build_affiliation_list(data, batch, block, needed_values=2)
         assert all(affil == (1, 2) for affil in result)
 
     def test_one_batch_all_nan(self):
@@ -1060,7 +1092,7 @@ class TestSpottingEdgeCases:
         data.iloc[0, 3:] = np.nan  # Feature 0: NaN in batch 2
         batch = np.array([1, 1, 1, 2, 2, 2])
         block = batch.copy()
-        result = spotting_missing_values(data, batch, block, needed_values=2)
+        result = build_affiliation_list(data, batch, block, needed_values=2)
         assert result[0] == (1,)  # Only batch 1 eligible
         assert result[1] == (1, 2)
         assert result[2] == (1, 2)
@@ -1071,7 +1103,7 @@ class TestSpottingEdgeCases:
         data.iloc[0, :] = np.nan
         batch = np.array([1, 1, 1, 2, 2, 2])
         block = batch.copy()
-        result = spotting_missing_values(data, batch, block, needed_values=2)
+        result = build_affiliation_list(data, batch, block, needed_values=2)
         assert result[0] == ()  # No batches qualify
 
     def test_needed_values_1(self):
@@ -1080,7 +1112,7 @@ class TestSpottingEdgeCases:
         data.iloc[0, 0:2] = np.nan  # Still 1 value in batch 1
         batch = np.array([1, 1, 1, 2, 2, 2])
         block = batch.copy()
-        result = spotting_missing_values(data, batch, block, needed_values=1)
+        result = build_affiliation_list(data, batch, block, needed_values=1)
         assert result[0] == (1, 2)
 
     def test_needed_values_2_stricter(self):
@@ -1088,8 +1120,8 @@ class TestSpottingEdgeCases:
         data = pd.DataFrame(np.ones((3, 6)))
         data.iloc[0, 0:2] = np.nan  # Only 1 value in batch 1
         batch = np.array([1, 1, 1, 2, 2, 2])
-        result_nv1 = spotting_missing_values(data, batch, batch, needed_values=1)
-        result_nv2 = spotting_missing_values(data, batch, batch, needed_values=2)
+        result_nv1 = build_affiliation_list(data, batch, batch, needed_values=1)
+        result_nv2 = build_affiliation_list(data, batch, batch, needed_values=2)
         assert result_nv1[0] == (1, 2)  # 1 value in batch 1 suffices
         assert result_nv2[0] == (2,)    # Not enough in batch 1
 
@@ -1099,13 +1131,13 @@ class TestSpottingEdgeCases:
         data.iloc[0, 6:] = np.nan  # Missing batch 3
         batch = np.array([1, 1, 1, 2, 2, 2, 3, 3, 3])
         block = batch.copy()
-        result = spotting_missing_values(data, batch, block, needed_values=2)
+        result = build_affiliation_list(data, batch, block, needed_values=2)
         assert result[0] == (1, 2)
         assert result[1] == (1, 2, 3)
 
 
 # ===================================================================
-# 9. Splitting + rebuild integration
+# 9. Splitting integration
 # ===================================================================
 
 class TestSplittingRebuild:
@@ -1120,11 +1152,11 @@ class TestSplittingRebuild:
         data.iloc[:, 3:] += 3.0
         batch = np.array([1, 1, 1, 2, 2, 2])
         block = batch.copy()
-        affiliation = spotting_missing_values(data, batch, block, needed_values=2)
+        affiliation = build_affiliation_list(data, batch, block, needed_values=2)
 
         sub_dfs = splitting(affiliation, data, batch, block,
                             algorithm="ComBat", combat_mode=2)
-        result = rebuild(sub_dfs)
+        result = pd.concat(sub_dfs, axis=0)
 
         # Should match direct combat
         direct = adjust_combat(data, batch, mode=2)
@@ -1141,11 +1173,11 @@ class TestSplittingRebuild:
         data.iloc[0, 6:] = np.nan  # Feature 0 missing batch 3
         batch = np.array([1, 1, 1, 2, 2, 2, 3, 3, 3])
         block = batch.copy()
-        affiliation = spotting_missing_values(data, batch, block, needed_values=2)
+        affiliation = build_affiliation_list(data, batch, block, needed_values=2)
 
         sub_dfs = splitting(affiliation, data, batch, block,
                             algorithm="ComBat", combat_mode=2)
-        result = rebuild(sub_dfs)
+        result = pd.concat(sub_dfs, axis=0)
 
         # Feature 0: NaN in batch 3 columns
         assert np.isnan(result.iloc[0, 6:]).all()
@@ -1163,11 +1195,11 @@ class TestSplittingRebuild:
         data.iloc[0, :] = np.nan
         batch = np.array([1, 1, 1, 2, 2, 2])
         block = batch.copy()
-        affiliation = spotting_missing_values(data, batch, block, needed_values=2)
+        affiliation = build_affiliation_list(data, batch, block, needed_values=2)
 
         sub_dfs = splitting(affiliation, data, batch, block,
                             algorithm="limma")
-        result = rebuild(sub_dfs)
+        result = pd.concat(sub_dfs, axis=0)
         assert np.isnan(result.iloc[0]).all()
 
     def test_limma_through_splitting(self):
@@ -1181,10 +1213,10 @@ class TestSplittingRebuild:
         data.iloc[:, 3:] += 3.0
         batch = np.array([1, 1, 1, 2, 2, 2])
         block = batch.copy()
-        affiliation = spotting_missing_values(data, batch, block, needed_values=2)
+        affiliation = build_affiliation_list(data, batch, block, needed_values=2)
 
         sub_dfs = splitting(affiliation, data, batch, block, algorithm="limma")
-        result = rebuild(sub_dfs)
+        result = pd.concat(sub_dfs, axis=0)
 
         direct = adjust_limma(data, batch)
         np.testing.assert_allclose(result.values, direct.values, atol=1e-12)

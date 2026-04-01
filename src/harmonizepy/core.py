@@ -3,33 +3,37 @@
 Orchestrates the full batch-correction workflow:
 
     read → [sort] → [block] → spot missing → [unique removal]
-        → split → adjust (ComBat / limma) → rebuild → [re-sort] → write
+        → split → adjust (ComBat / limma) → concat → [re-sort] → write
 
 This mirrors the R ``HarmonizR::harmonizR()`` function.
 """
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Literal
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 
-from .io import read_main_data, read_description, write_output
-from .spotting import spotting_missing_values
-from .splitting import splitting
-from .rebuild import rebuild
-from .sorting import sort_batches
+from .affiliation import build_affiliation_list, remove_unique_combinations
 from .blocking import build_block_list
-from .affiliation import remove_unique_combinations
+from .io import read_description, read_main_data, write_output
+from .sorting import sort_batches
+from .splitting import splitting
+from .types import HarmonizeConfig
 from .validation import validate_data_matrix, validate_description, validate_harmonize_args
+
+logger = logging.getLogger(__name__)
 
 
 def harmonize(
     data: pd.DataFrame | str | Path,
     description: pd.DataFrame | str | Path,
     *,
+    config: HarmonizeConfig | None = None,
     algorithm: Literal["ComBat", "limma"] = "ComBat",
     combat_mode: int = 1,
     needed_values: int | None = None,
@@ -48,6 +52,12 @@ def harmonize(
     description : DataFrame, str, or Path
         Batch description with columns ``ID``, ``sample``, ``batch``.
         If a path, read from that CSV file.
+    config : HarmonizeConfig or None
+        If provided, all algorithm settings are taken from this object.
+        Individual keyword arguments (``algorithm``, ``combat_mode``,
+        ``needed_values``, ``sort``, ``block``, ``unique_removal``) are
+        ignored when *config* is given.  Useful for re-running or
+        storing reproducible run configurations.
     algorithm : ``"ComBat"`` or ``"limma"``
         Adjustment algorithm.
     combat_mode : int
@@ -93,39 +103,63 @@ def harmonize(
     >>> result = harmonize(df, desc_df, algorithm="limma")
     >>> result = harmonize(df, desc_df, combat_mode=3, needed_values=1)
     >>> result = harmonize(df, desc_df, sort="sparsity", block=2)
+    >>> cfg = HarmonizeConfig(algorithm="limma", sort_strategy="sparsity", block_size=2)
+    >>> result = harmonize(df, desc_df, config=cfg)
     """
+    # --- Apply config (overrides individual kwargs when provided) ----------
+    if config is not None:
+        algorithm = config.algorithm  # type: ignore[assignment]
+        combat_mode = config.combat_mode
+        needed_values = config.needed_values
+        sort = config.sort_strategy
+        block = config.block_size
+        unique_removal = config.unique_removal
+
     # --- Validate basic arguments (before data load) ----------------------
     validate_harmonize_args(
-        algorithm, combat_mode, needed_values if needed_values is not None else 2,
+        algorithm,
+        combat_mode,
+        needed_values if needed_values is not None else 2,
         sort_strategy=sort,
         unique_removal=unique_removal,
     )
 
     # --- Read inputs -------------------------------------------------------
     if isinstance(data, (str, Path)):
+        logger.debug("Reading data from %s", data)
         data = read_main_data(str(data))
     else:
         data = data.copy()
+    assert isinstance(data, pd.DataFrame)  # narrow: always DataFrame after load
 
     if isinstance(description, (str, Path)):
+        logger.debug("Reading description from %s", description)
         description = read_description(str(description))
+    assert isinstance(description, pd.DataFrame)  # narrow: always DataFrame after load
 
     # --- Validate inputs ---------------------------------------------------
     validate_data_matrix(data)
     validate_description(description, data)
 
+    n_features, n_samples = data.shape
+    logger.info(
+        "Input: %d features x %d samples",
+        n_features,
+        n_samples,
+    )
+
     # --- Extract batch labels aligned to data column order -----------------
     sample_to_batch = dict(
-        zip(description.iloc[:, 0].astype(str), description.iloc[:, 2].astype(int))
+        zip(description.iloc[:, 0].astype(str), description.iloc[:, 2].astype(int), strict=True)
     )
-    batch_list = np.array(
-        [sample_to_batch[col] for col in data.columns], dtype=np.int64
-    )
+    batch_list = np.array([sample_to_batch[col] for col in data.columns], dtype=np.int64)
 
     # --- Validate block_size now that we know n_batches --------------------
     n_batches = len(np.unique(batch_list))
     validate_harmonize_args(
-        algorithm, combat_mode, needed_values if needed_values is not None else 2,
+        algorithm,
+        combat_mode,
+        needed_values if needed_values is not None else 2,
         block_size=block,
         n_batches=n_batches,
     )
@@ -137,34 +171,65 @@ def harmonize(
         else:
             needed_values = 1
 
+    logger.info(
+        "Algorithm: %s%s | batches: %d | needed_values: %d",
+        algorithm,
+        f" mode {combat_mode}" if algorithm == "ComBat" else "",
+        n_batches,
+        needed_values,
+    )
+
     # --- Sort batches ------------------------------------------------------
-    col_order: np.ndarray | None = None
+    col_order: npt.NDArray[np.intp] | None = None
     if sort is not None:
-        data, batch_list, col_order = sort_batches(
+        logger.info("Sorting %d batches by '%s'", n_batches, sort)
+        data, batch_list, col_order = sort_batches(  # type: ignore[assignment]
             data, batch_list, strategy=sort, needed_values=needed_values
         )
 
     # --- Build block list --------------------------------------------------
     if block is not None:
+        logger.info("Blocking: %d batches → blocks of size %d", n_batches, block)
         block_list = build_block_list(batch_list, block_size=block)
     else:
         block_list = batch_list.copy()
 
     # --- Spot missing values -----------------------------------------------
-    affiliation_list = spotting_missing_values(
-        data, batch_list, block_list, needed_values
+    affiliation_list = build_affiliation_list(data, batch_list, block_list, needed_values)
+    n_empty = sum(1 for a in affiliation_list if len(a) == 0)
+    logger.debug(
+        "Spotting: %d features with data, %d features dropped (insufficient observations)",
+        n_features - n_empty,
+        n_empty,
     )
 
     # --- Unique removal ----------------------------------------------------
     if unique_removal:
+        before_ur = sum(1 for a in affiliation_list if len(a) == 0)
         affiliation_list = remove_unique_combinations(affiliation_list)
+        after_ur = sum(1 for a in affiliation_list if len(a) == 0)
+        rescued = before_ur - after_ur
+        if rescued > 0:
+            logger.info(
+                "Unique removal rescued %d feature(s) (%.1f%%)",
+                rescued,
+                100.0 * rescued / n_features,
+            )
+        else:
+            logger.debug("Unique removal: no singleton patterns found")
 
     # --- Split, adjust, rebuild --------------------------------------------
+    n_groups = len({a for a in affiliation_list if len(a) > 0})
+    logger.info("Adjusting %d unique affiliation group(s)…", n_groups)
     sub_dfs = splitting(
-        affiliation_list, data, batch_list, block_list,
-        algorithm=algorithm, combat_mode=combat_mode,
+        affiliation_list,
+        data,
+        batch_list,
+        block_list,
+        algorithm=algorithm,
+        combat_mode=combat_mode,
     )
-    result = rebuild(sub_dfs)
+    result = pd.concat(sub_dfs, axis=0) if sub_dfs else pd.DataFrame()
 
     # --- Re-sort columns to original order ---------------------------------
     if col_order is not None:
@@ -172,6 +237,8 @@ def harmonize(
 
     # --- Write output ------------------------------------------------------
     if output_file is not None:
+        logger.info("Writing output to %s", output_file)
         write_output(result, str(output_file))
 
+    logger.info("Done.")
     return result

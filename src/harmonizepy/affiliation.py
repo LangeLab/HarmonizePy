@@ -78,10 +78,7 @@ def build_affiliation_list(
     for blk in unique_blocks:
         blk_mask = block_arr == blk
         batches_in_block = np.unique(batch_arr[blk_mask])
-        batch_indices = [
-            np.where((batch_arr == b) & blk_mask)[0]
-            for b in batches_in_block
-        ]
+        batch_indices = [np.where((batch_arr == b) & blk_mask)[0] for b in batches_in_block]
         block_info.append(batch_indices)
 
     notna = ~np.isnan(mat)

@@ -16,13 +16,15 @@ RNA-sequencing and microarray studies." *Nucleic Acids Research*
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
 from .validation import validate_limma_input
 
-_Array = npt.NDArray[np.floating]
+_Array = npt.NDArray[np.floating[Any]]
 
 
 def remove_batch_effect(
@@ -63,12 +65,12 @@ def remove_batch_effect(
 
     validate_limma_input(data, batch)
 
-    n_features, n_samples = data.shape
+    _, n_samples = data.shape
 
     unique_batches = np.unique(batch)
     n_batch = len(unique_batches)
     if n_batch < 2:
-        return data.copy()
+        return data.copy()  # type: ignore[no-any-return]
 
     # --- Sum-to-zero contrasts (R's contr.sum) ---
     # For k levels, produces (n_samples, k-1) matrix.
@@ -77,7 +79,7 @@ def remove_batch_effect(
     label_map = {b: i for i, b in enumerate(unique_batches)}
     batch_idx = np.array([label_map[b] for b in batch], dtype=np.intp)
 
-    X_batch = np.zeros((n_samples, n_batch - 1), dtype=np.float64)
+    X_batch = np.zeros((n_samples, n_batch - 1), dtype=np.float64)  # noqa: N806
     for j in range(n_batch - 1):
         X_batch[batch_idx == j, j] = 1.0
     X_batch[batch_idx == n_batch - 1, :] = -1.0
@@ -96,7 +98,7 @@ def remove_batch_effect(
 
     corrected = data - beta_batch @ X_batch.T
 
-    return corrected
+    return corrected  # type: ignore[no-any-return]
 
 
 def adjust_limma(

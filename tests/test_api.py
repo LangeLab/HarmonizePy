@@ -338,7 +338,7 @@ class TestHarmonizeConfig:
         cfg = HarmonizeConfig()
         assert cfg.algorithm == "ComBat"
         assert cfg.combat_mode == 1
-        assert cfg.needed_values == 2
+        assert cfg.needed_values is None  # auto-select: same as harmonize() default
 
     def test_custom(self):
         from harmonizepy import HarmonizeConfig
@@ -372,3 +372,65 @@ class TestHarmonizeConfig:
 
         with pytest.raises(ValueError, match="needed_values"):
             HarmonizeConfig(needed_values=0)
+
+
+# ---------------------------------------------------------------------------
+# 7. harmonize() config= parameter
+# ---------------------------------------------------------------------------
+
+
+class TestHarmonizeWithConfig:
+    """harmonize() accepts a HarmonizeConfig that overrides individual kwargs."""
+
+    @pytest.fixture()
+    def small_inputs(self):
+        rng = np.random.default_rng(99)
+        data = pd.DataFrame(
+            rng.normal(10, 2, size=(8, 6)),
+            index=[f"p{i}" for i in range(8)],
+            columns=[f"s{j}" for j in range(6)],
+        )
+        data.iloc[:, 3:] += 3.0
+        desc = pd.DataFrame({
+            "ID": [f"s{j}" for j in range(6)],
+            "sample": list(range(1, 7)),
+            "batch": [1, 1, 1, 2, 2, 2],
+        })
+        return data, desc
+
+    def test_config_equivalent_to_kwargs(self, small_inputs):
+        """Config with same values as kwargs must produce identical output."""
+        from harmonizepy import HarmonizeConfig, harmonize
+        data, desc = small_inputs
+        cfg = HarmonizeConfig(algorithm="ComBat", combat_mode=2)
+        result_cfg = harmonize(data, desc, config=cfg)
+        result_kw = harmonize(data, desc, algorithm="ComBat", combat_mode=2)
+        pd.testing.assert_frame_equal(result_cfg, result_kw)
+
+    def test_config_limma(self, small_inputs):
+        """Config selecting limma matches direct kwarg."""
+        from harmonizepy import HarmonizeConfig, harmonize
+        data, desc = small_inputs
+        cfg = HarmonizeConfig(algorithm="limma")
+        result_cfg = harmonize(data, desc, config=cfg)
+        result_kw = harmonize(data, desc, algorithm="limma")
+        pd.testing.assert_frame_equal(result_cfg, result_kw)
+
+    def test_config_overrides_kwargs(self, small_inputs):
+        """When config is provided, its algorithm is used even if kwarg says otherwise."""
+        from harmonizepy import HarmonizeConfig, harmonize
+        data, desc = small_inputs
+        cfg = HarmonizeConfig(algorithm="limma")
+        # Pass algorithm="ComBat" as kwarg — config should win
+        result_cfg = harmonize(data, desc, config=cfg, algorithm="ComBat")
+        result_limma = harmonize(data, desc, algorithm="limma")
+        pd.testing.assert_frame_equal(result_cfg, result_limma)
+
+    def test_config_needed_values_none_auto_selects(self, small_inputs):
+        """Config with needed_values=None applies same auto-selection as default."""
+        from harmonizepy import HarmonizeConfig, harmonize
+        data, desc = small_inputs
+        cfg = HarmonizeConfig(needed_values=None)
+        result_cfg = harmonize(data, desc, config=cfg)
+        result_kw = harmonize(data, desc)
+        pd.testing.assert_frame_equal(result_cfg, result_kw)

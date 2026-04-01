@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import NamedTuple
 
-
-_VALID_SORT_STRATEGIES: frozenset[str] = frozenset({"sparsity", "jaccard", "seriation"})
+from .validation import _VALID_SORT_STRATEGIES
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,8 +17,10 @@ class HarmonizeConfig:
         ``"ComBat"`` or ``"limma"``.
     combat_mode : int
         ComBat mode 1-4 (ignored when *algorithm* is ``"limma"``).
-    needed_values : int
+    needed_values : int or None
         Minimum non-missing values per batch for a feature to be included.
+        ``None`` (default) auto-selects: 2 for modes 1, 3 and limma; 1 for
+        modes 2, 4.  Mirrors the *needed_values* default in :func:`harmonize`.
     sort_strategy : str or None
         Batch sorting strategy: ``"sparsity"``, ``"jaccard"``,
         ``"seriation"``, or ``None`` (no sort).
@@ -53,24 +53,18 @@ class HarmonizeConfig:
 
     algorithm: str = "ComBat"
     combat_mode: int = 1
-    needed_values: int = 2
+    needed_values: int | None = None
     sort_strategy: str | None = None
     block_size: int | None = None
     unique_removal: bool = True
 
     def __post_init__(self) -> None:
         if self.algorithm not in ("ComBat", "limma"):
-            raise ValueError(
-                f"algorithm must be 'ComBat' or 'limma', got {self.algorithm!r}"
-            )
+            raise ValueError(f"algorithm must be 'ComBat' or 'limma', got {self.algorithm!r}")
         if self.combat_mode not in (1, 2, 3, 4):
-            raise ValueError(
-                f"combat_mode must be 1-4, got {self.combat_mode}"
-            )
-        if self.needed_values < 1:
-            raise ValueError(
-                f"needed_values must be >= 1, got {self.needed_values}"
-            )
+            raise ValueError(f"combat_mode must be 1-4, got {self.combat_mode}")
+        if self.needed_values is not None and self.needed_values < 1:
+            raise ValueError(f"needed_values must be >= 1 or None, got {self.needed_values}")
         if self.sort_strategy not in _VALID_SORT_STRATEGIES and self.sort_strategy is not None:
             raise ValueError(
                 f"sort_strategy must be one of "
@@ -78,77 +72,8 @@ class HarmonizeConfig:
                 f"got {self.sort_strategy!r}"
             )
         if self.block_size is not None and self.block_size < 2:
-            raise ValueError(
-                f"block_size must be >= 2 or None, got {self.block_size}"
-            )
+            raise ValueError(f"block_size must be >= 2 or None, got {self.block_size}")
         if not isinstance(self.unique_removal, bool):
             raise TypeError(
-                f"unique_removal must be bool, got "
-                f"{type(self.unique_removal).__name__!r}"
+                f"unique_removal must be bool, got {type(self.unique_removal).__name__!r}"
             )
-
-
-class AffiliationEntry(NamedTuple):
-    """Per-feature affiliation: the block IDs with sufficient data.
-
-    Wraps the raw tuple produced by spotting to give it a name and
-    make pipeline code self-documenting.
-
-    Parameters
-    ----------
-    blocks : tuple[int, ...]
-        Sorted block IDs where the feature has sufficient observations.
-        An empty tuple means the feature is dropped from adjustment.
-
-    Raises
-    ------
-    TypeError
-        If *blocks* is not a tuple of integers.
-
-    Examples
-    --------
-    >>> from harmonizepy.types import AffiliationEntry
-    >>> entry = AffiliationEntry(blocks=(1, 2))
-    >>> entry.blocks
-    (1, 2)
-    """
-
-    blocks: tuple[int, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class BatchDescription:
-    """Validated sample-to-batch mapping.
-
-    Parameters
-    ----------
-    sample_ids : tuple[str, ...]
-        Sample identifiers matching data column names.
-    batch_labels : tuple[int, ...]
-        Integer batch label per sample.
-
-    Raises
-    ------
-    ValueError
-        If *sample_ids* and *batch_labels* differ in length, or if
-        *batch_labels* contains fewer than 2 unique values.
-
-    Examples
-    --------
-    >>> from harmonizepy.types import BatchDescription
-    >>> bd = BatchDescription(("s1", "s2", "s3"), (1, 1, 2))
-    >>> len(bd.batch_labels)
-    3
-    """
-
-    sample_ids: tuple[str, ...]
-    batch_labels: tuple[int, ...]
-
-    def __post_init__(self) -> None:
-        if len(self.sample_ids) != len(self.batch_labels):
-            raise ValueError(
-                f"sample_ids length ({len(self.sample_ids)}) != "
-                f"batch_labels length ({len(self.batch_labels)})"
-            )
-        if len(set(self.batch_labels)) < 2:
-            raise ValueError("batch_labels must contain at least 2 unique values")

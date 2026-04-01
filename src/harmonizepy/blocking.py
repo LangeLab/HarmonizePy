@@ -71,12 +71,13 @@ def build_block_list(
 
     if block_size < 2:
         raise ValueError(
-            f"block_size must be >= 2, got {block_size}"
+            f"block_size must be >= 2, got {block_size}. Use block=None to disable blocking."
         )
     if block_size >= n_batches:
         raise ValueError(
             f"block_size ({block_size}) must be < number of unique batches "
-            f"({n_batches}); a block spanning all batches makes adjustment impossible"
+            f"({n_batches}). A block spanning all batches makes adjustment impossible "
+            f"because every feature would be in a single group."
         )
 
     # Assign each unique batch to a block index (0-based), then +1 for 1-indexing

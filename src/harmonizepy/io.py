@@ -5,6 +5,8 @@ Read/write HarmonizR-compatible data and batch description files.
 
 from __future__ import annotations
 
+from typing import cast
+
 import pandas as pd
 
 
@@ -35,7 +37,7 @@ def read_main_data(path: str) -> pd.DataFrame:
     """
     df = pd.read_csv(path, sep="\t", index_col=0)
     # Drop completely empty rows/columns (mirrors janitor::remove_empty)
-    df = df.dropna(how="all", axis=0).dropna(how="all", axis=1)
+    df = cast(pd.DataFrame, df.dropna(how="all", axis=0).dropna(how="all", axis=1))
     return df
 
 

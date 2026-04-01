@@ -18,6 +18,8 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
+from .validation import _VALID_SORT_STRATEGIES
+
 
 def sort_batches(
     data: pd.DataFrame,
@@ -83,10 +85,10 @@ def sort_batches(
     >>> list(sd.columns[:2])  # batch 3 (sparsest) is now first
     ['s4', 's5']
     """
-    valid = {"sparsity", "jaccard", "seriation"}
-    if strategy not in valid:
+    if strategy not in _VALID_SORT_STRATEGIES:
         raise ValueError(
-            f"sort strategy must be one of {sorted(valid)}, got {strategy!r}"
+            f"sort strategy must be one of {sorted(_VALID_SORT_STRATEGIES)!r}, got {strategy!r}. "
+            f"Use sort=None to disable sorting."
         )
 
     unique_batches = _unique_batches_ordered(batch_list)
@@ -238,7 +240,7 @@ def _seriation_order(presence: npt.NDArray[np.bool_]) -> npt.NDArray[np.intp]:
     p -= p.mean(axis=0)
 
     # SVD → PC1 scores for each batch
-    U, s, _Vt = np.linalg.svd(p, full_matrices=False)
+    U, s, _Vt = np.linalg.svd(p, full_matrices=False)  # noqa: N806 -- standard SVD notation
     pc1 = U[:, 0] * s[0]
 
     # Sign convention: make the PC1 direction point "toward" the batch with

@@ -121,7 +121,7 @@ class TestEdgeCases:
     def test_too_few_features(self):
         data = np.array([[1.0, 2.0, 3.0]])  # 1 row
         batches = np.array([0, 0, 1])
-        with pytest.raises(ValueError, match=">= 2 features"):
+        with pytest.raises(ValueError, match="at least 2 features"):
             combat(data, batches)
 
     def test_wrapper_invalid_mode(self):

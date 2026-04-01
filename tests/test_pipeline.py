@@ -1,6 +1,6 @@
 """Integration tests for the full HarmonizePy pipeline.
 
-Tests the complete spotting → splitting → adjust → rebuild flow via
+Tests the complete spotting → splitting → adjust → concat flow via
 ``harmonize()`` and validates against R HarmonizR fixtures.
 """
 
@@ -10,7 +10,7 @@ import pytest
 from pathlib import Path
 
 from harmonizepy.core import harmonize
-from harmonizepy.spotting import spotting_missing_values
+from harmonizepy.affiliation import build_affiliation_list
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 _has_small = (FIXTURE_DIR / "small_combat_mode1.tsv").exists()
@@ -146,7 +146,7 @@ class TestSpotting:
             columns=[f"s{j}" for j in range(6)],
         )
         batch_list = np.array([1, 1, 1, 2, 2, 2])
-        result = spotting_missing_values(data, batch_list, batch_list, needed_values=2)
+        result = build_affiliation_list(data, batch_list, batch_list, needed_values=2)
         assert all(a == (1, 2) for a in result)
 
     def test_one_batch_missing(self):
@@ -158,7 +158,7 @@ class TestSpotting:
             columns=[f"s{j}" for j in range(6)],
         )
         batch_list = np.array([1, 1, 1, 2, 2, 2])
-        result = spotting_missing_values(data, batch_list, batch_list, needed_values=2)
+        result = build_affiliation_list(data, batch_list, batch_list, needed_values=2)
         assert result[0] == (1,)     # missing_b2: only batch 1
         assert result[1] == (1, 2)   # complete: both batches
 
@@ -171,8 +171,8 @@ class TestSpotting:
         )
         # Batch 1 has 2 samples (s0, s1), but s1 is NaN → only 1 value
         batch_list = np.array([1, 1, 2, 2, 2])
-        result_2 = spotting_missing_values(data, batch_list, batch_list, needed_values=2)
-        result_1 = spotting_missing_values(data, batch_list, batch_list, needed_values=1)
+        result_2 = build_affiliation_list(data, batch_list, batch_list, needed_values=2)
+        result_1 = build_affiliation_list(data, batch_list, batch_list, needed_values=1)
         assert result_2[0] == (2,)      # batch 1 excluded (only 1 value)
         assert result_1[0] == (1, 2)    # batch 1 included (1 value is enough)
 
@@ -184,7 +184,7 @@ class TestSpotting:
             columns=[f"s{j}" for j in range(4)],
         )
         batch_list = np.array([1, 1, 2, 2])
-        result = spotting_missing_values(data, batch_list, batch_list, needed_values=1)
+        result = build_affiliation_list(data, batch_list, batch_list, needed_values=1)
         assert result[0] == ()
 
 

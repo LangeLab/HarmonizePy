@@ -34,7 +34,7 @@ def splitting(
         One tuple per feature (row) — the block IDs where the feature
         has sufficient data.  From :func:`spotting.spotting_missing_values`.
     data : DataFrame
-        Features × samples.
+        Features x samples.
     batch_list : ndarray
         Batch label per sample (1-indexed).
     block_list : ndarray
@@ -42,7 +42,7 @@ def splitting(
     algorithm : str
         ``"ComBat"`` or ``"limma"``.
     combat_mode : int
-        ComBat mode 1–4 (ignored when algorithm is limma).
+        ComBat mode 1-4 (ignored when algorithm is limma).
 
     Returns
     -------
@@ -103,7 +103,9 @@ def splitting(
         if len(unique_batches) < 2 or sub_df.shape[0] < 2:
             # Can't adjust — return as-is within the full column space
             full_df = pd.DataFrame(
-                np.nan, index=sub_data.index, columns=data.columns,
+                np.nan,
+                index=sub_data.index,
+                columns=data.columns,
             )
             full_df.iloc[:, col_indices] = sub_df.values
             results.append(full_df)
@@ -117,7 +119,9 @@ def splitting(
 
         # Place corrected values back into full-width frame (NaN elsewhere)
         full_df = pd.DataFrame(
-            np.nan, index=sub_data.index, columns=data.columns,
+            np.nan,
+            index=sub_data.index,
+            columns=data.columns,
         )
         full_df.iloc[:, col_indices] = corrected.values
         results.append(full_df)
