@@ -96,7 +96,7 @@ def harmonize(
     """
     # --- Validate basic arguments (before data load) ----------------------
     validate_harmonize_args(
-        algorithm, combat_mode, needed_values or 2,
+        algorithm, combat_mode, needed_values if needed_values is not None else 2,
         sort_strategy=sort,
         unique_removal=unique_removal,
     )
@@ -125,7 +125,7 @@ def harmonize(
     # --- Validate block_size now that we know n_batches --------------------
     n_batches = len(np.unique(batch_list))
     validate_harmonize_args(
-        algorithm, combat_mode, needed_values or 2,
+        algorithm, combat_mode, needed_values if needed_values is not None else 2,
         block_size=block,
         n_batches=n_batches,
     )

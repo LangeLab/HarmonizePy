@@ -331,11 +331,6 @@ def combat(
     gamma_hat = np.linalg.solve(
         batch_design @ batch_design.T,
         batch_design @ s_data.T,
-    ).T  # → (n_features, n_batch) after transpose? No:
-    # solve gives (n_batch, n_features), let's keep it that way
-    gamma_hat = np.linalg.solve(
-        batch_design @ batch_design.T,
-        batch_design @ s_data.T,
     )  # (n_batch, n_features)
 
     # delta_hat: multiplicative effect per batch

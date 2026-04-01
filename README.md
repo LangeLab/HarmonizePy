@@ -27,7 +27,7 @@
     - Batch sorting: `"sparsity"`, `"jaccard"`, `"seriation"` strategies
     - Batch blocking: group neighbouring batches to reduce sub-matrix space (`block=2`, etc.)
     - Unique-combination removal: rescue singleton features by cropping to nearest shared pattern (`unique_removal=True`)
-- Pure NumPy/SciPy — no R dependency at runtime
+- Pure NumPy/SciPy - no R dependency at runtime
 - Validated against R reference implementations with 411 tests
 
 ## Quick start
@@ -133,4 +133,4 @@ plan/                    # Development planning notes (gitignored)
 - Johnson WE, Li C, Rabinovic A. "Adjusting batch effects in microarray expression data using empirical Bayes methods." *Biostatistics* 8(1):118-127, 2007.
 - Ritchie ME et al. "limma powers differential expression analyses for RNA-sequencing and microarray studies." *Nucleic Acids Research* 43(7):e47, 2015.
 - Voß H et al. "HarmonizR enables data harmonization across independent proteomic datasets with appropriate handling of missing values." *Nature Communications* 13:3523, 2022.
-- Schlumbohm S et al. "HarmonizR v2 enables advanced data harmonization with improved handling of missing values for multi-batch omics data." *bioRxiv*, 2025.
+- Schlumbohm S et al. "HarmonizR: blocking and singular feature data adjustment improve runtime efficiency and data preservation" *BMC Bioinformatics*, 2025.
