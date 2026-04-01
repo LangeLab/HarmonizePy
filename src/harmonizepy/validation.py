@@ -170,8 +170,17 @@ def validate_limma_input(data: _Array, batch: _Array) -> None:
         )
 
 
+_VALID_SORT_STRATEGIES: frozenset[str] = frozenset({"sparsity", "jaccard", "seriation"})
+
+
 def validate_harmonize_args(
-    algorithm: str, combat_mode: int, needed_values: int,
+    algorithm: str,
+    combat_mode: int,
+    needed_values: int,
+    sort_strategy: str | None = None,
+    block_size: int | None = None,
+    unique_removal: bool = True,
+    n_batches: int | None = None,
 ) -> None:
     """Validate top-level ``harmonize()`` keyword arguments.
 
@@ -183,16 +192,32 @@ def validate_harmonize_args(
         ComBat variant; must be 1, 2, 3, or 4.
     needed_values : int
         Minimum non-missing observations per batch; must be >= 1.
+    sort_strategy : str or None
+        Batch sorting strategy; must be ``"sparsity"``, ``"jaccard"``,
+        ``"seriation"``, or ``None``.
+    block_size : int or None
+        Block size; must be ``None`` or an integer >= 2.  If *n_batches*
+        is provided it must also be strictly less than *n_batches*.
+    unique_removal : bool
+        Singleton-rescue toggle; must be a ``bool``.
+    n_batches : int or None
+        Number of unique batches in the data.  When provided, validates
+        ``block_size < n_batches``.
 
     Raises
     ------
     ValueError
-        On invalid algorithm, combat_mode, or needed_values.
+        On invalid algorithm, combat_mode, needed_values, sort_strategy,
+        or block_size.
+    TypeError
+        If *unique_removal* is not a bool.
 
     Examples
     --------
     >>> from harmonizepy.validation import validate_harmonize_args
     >>> validate_harmonize_args("ComBat", 2, 2)  # no error
+    >>> validate_harmonize_args("ComBat", 1, 2, sort_strategy="sparsity",
+    ...                         block_size=2, n_batches=4)  # no error
     """
     if algorithm not in ("ComBat", "limma"):
         raise ValueError(
@@ -202,3 +227,23 @@ def validate_harmonize_args(
         raise ValueError(f"combat_mode must be 1-4, got {combat_mode}")
     if needed_values < 1:
         raise ValueError(f"needed_values must be >= 1, got {needed_values}")
+    if sort_strategy is not None and sort_strategy not in _VALID_SORT_STRATEGIES:
+        raise ValueError(
+            f"sort_strategy must be one of "
+            f"{sorted(_VALID_SORT_STRATEGIES)!r} or None, "
+            f"got {sort_strategy!r}"
+        )
+    if block_size is not None:
+        if not isinstance(block_size, int) or block_size < 2:
+            raise ValueError(
+                f"block_size must be an integer >= 2 or None, got {block_size!r}"
+            )
+        if n_batches is not None and block_size >= n_batches:
+            raise ValueError(
+                f"block_size ({block_size}) must be < number of unique batches "
+                f"({n_batches})"
+            )
+    if not isinstance(unique_removal, bool):
+        raise TypeError(
+            f"unique_removal must be bool, got {type(unique_removal).__name__!r}"
+        )

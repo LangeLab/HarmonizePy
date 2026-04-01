@@ -1569,3 +1569,239 @@ class TestNaNPropagation:
         # Feature 1 absent in batches 2+3 (cols 3-8) → NaN there, values in batch 1 (cols 0-2)
         assert np.isnan(result.iloc[1, 3:]).all()
         assert not np.isnan(result.iloc[1, :3]).any()
+
+
+# ============================================================================
+# Phase 2 — blocking, sort+block, unique-removal R concordance
+# ============================================================================
+
+def _concordance_check(result, expected, rtol, atol, label):
+    """Shared NaN + allclose assertion for all Phase 2 concordance tests."""
+    shared_idx = result.index.intersection(expected.index)
+    shared_cols = result.columns.intersection(expected.columns)
+    r = result.loc[shared_idx, shared_cols].values
+    e = expected.loc[shared_idx, shared_cols].values
+    nan_mask = np.isnan(e)
+    assert np.isnan(r[nan_mask]).all(), f"{label}: missing NaN where R has NaN"
+    assert not np.isnan(r[~nan_mask]).any(), f"{label}: extra NaN in Python output"
+    valid = ~nan_mask
+    if valid.any():
+        np.testing.assert_allclose(r[valid], e[valid], rtol=rtol, atol=atol,
+                                   err_msg=label)
+
+
+@pytest.mark.skipif(
+    not _fixture_exists("medium_block2_combat_mode1.tsv"),
+    reason="Blocking R fixtures not generated (run generate_blocking_fixtures.R)",
+)
+class TestBlockingRConcordance:
+    """Full pipeline with blocking (no sort) vs R HarmonizR.
+
+    Datasets:
+    - medium:  100 features x 12 samples x 3 batches, 30% structural missing
+    - highmiss: 50 features x 9 samples x 3 batches, ~65% missing
+    - large:   500 features x 30 samples x 5 batches, no missing
+    """
+
+    @pytest.fixture(autouse=True)
+    def _load(self):
+        self.med_data = _load_tsv_df("medium_input.tsv")
+        self.med_desc = pd.read_csv(FIXTURE_DIR / "medium_batch.csv")
+        self.hm_data  = _load_tsv_df("highmiss_input.tsv")
+        self.hm_desc  = pd.read_csv(FIXTURE_DIR / "highmiss_batch.csv")
+        self.lg_data  = _load_tsv_df("large_input.tsv")
+        self.lg_desc  = pd.read_csv(FIXTURE_DIR / "large_batch.csv")
+
+    @pytest.mark.parametrize("mode", [1, 2, 3, 4])
+    def test_medium_block2_combat(self, mode):
+        expected = _load_tsv_df(f"medium_block2_combat_mode{mode}.tsv")
+        result = harmonize(
+            self.med_data, self.med_desc,
+            algorithm="ComBat", combat_mode=mode, block=2,
+        )
+        rtol = 5e-4 if mode in (1, 3) else 1e-5
+        _concordance_check(result, expected, rtol=rtol, atol=1e-4,
+                           label=f"medium block=2 ComBat mode {mode}")
+
+    def test_medium_block2_limma(self):
+        expected = _load_tsv_df("medium_block2_limma.tsv")
+        result = harmonize(self.med_data, self.med_desc, algorithm="limma", block=2)
+        _concordance_check(result, expected, rtol=1e-8, atol=1e-8,
+                           label="medium block=2 limma")
+
+    @pytest.mark.parametrize("mode", [1, 2, 3, 4])
+    def test_highmiss_block2_combat(self, mode):
+        expected = _load_tsv_df(f"highmiss_block2_combat_mode{mode}.tsv")
+        result = harmonize(
+            self.hm_data, self.hm_desc,
+            algorithm="ComBat", combat_mode=mode, block=2,
+        )
+        rtol = 5e-4 if mode in (1, 3) else 1e-5
+        _concordance_check(result, expected, rtol=rtol, atol=1e-4,
+                           label=f"highmiss block=2 ComBat mode {mode}")
+
+    def test_highmiss_block2_limma(self):
+        expected = _load_tsv_df("highmiss_block2_limma.tsv")
+        result = harmonize(self.hm_data, self.hm_desc, algorithm="limma", block=2)
+        _concordance_check(result, expected, rtol=1e-8, atol=1e-8,
+                           label="highmiss block=2 limma")
+
+    def test_large_block4_combat_mode1(self):
+        expected = _load_tsv_df("large_block4_combat_mode1.tsv")
+        result = harmonize(
+            self.lg_data, self.lg_desc,
+            algorithm="ComBat", combat_mode=1, block=4,
+        )
+        _concordance_check(result, expected, rtol=5e-4, atol=1e-4,
+                           label="large block=4 ComBat mode 1")
+
+
+@pytest.mark.skipif(
+    not _fixture_exists("medium_sparsity_block2_combat_mode1.tsv"),
+    reason="Sort+block R fixtures not generated (run generate_blocking_fixtures.R)",
+)
+class TestSortBlockRConcordance:
+    """Full pipeline with sort + blocking vs R HarmonizR.
+
+    Covers the three Python sort strategies (sparsity, jaccard, seriation)
+    mapped to R's "sparsity_sort", "jaccard_sort", "seriation_sort" strings.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _load(self):
+        self.med_data = _load_tsv_df("medium_input.tsv")
+        self.med_desc = pd.read_csv(FIXTURE_DIR / "medium_batch.csv")
+        self.hm_data  = _load_tsv_df("highmiss_input.tsv")
+        self.hm_desc  = pd.read_csv(FIXTURE_DIR / "highmiss_batch.csv")
+        self.lg_data  = _load_tsv_df("large_input.tsv")
+        self.lg_desc  = pd.read_csv(FIXTURE_DIR / "large_batch.csv")
+
+    @pytest.mark.parametrize("mode", [1, 2, 3, 4])
+    def test_medium_sparsity_block2_combat(self, mode):
+        expected = _load_tsv_df(f"medium_sparsity_block2_combat_mode{mode}.tsv")
+        result = harmonize(
+            self.med_data, self.med_desc,
+            algorithm="ComBat", combat_mode=mode, sort="sparsity", block=2,
+        )
+        rtol = 5e-4 if mode in (1, 3) else 1e-5
+        _concordance_check(result, expected, rtol=rtol, atol=1e-4,
+                           label=f"medium sparsity block=2 ComBat mode {mode}")
+
+    def test_medium_sparsity_block2_limma(self):
+        expected = _load_tsv_df("medium_sparsity_block2_limma.tsv")
+        result = harmonize(
+            self.med_data, self.med_desc,
+            algorithm="limma", sort="sparsity", block=2,
+        )
+        _concordance_check(result, expected, rtol=1e-8, atol=1e-8,
+                           label="medium sparsity block=2 limma")
+
+    def test_medium_jaccard_block2_combat_mode1(self):
+        expected = _load_tsv_df("medium_jaccard_block2_combat_mode1.tsv")
+        result = harmonize(
+            self.med_data, self.med_desc,
+            algorithm="ComBat", combat_mode=1, sort="jaccard", block=2,
+        )
+        _concordance_check(result, expected, rtol=5e-4, atol=1e-4,
+                           label="medium jaccard block=2 ComBat mode 1")
+
+    def test_medium_seriation_block2_combat_mode1(self):
+        expected = _load_tsv_df("medium_seriation_block2_combat_mode1.tsv")
+        result = harmonize(
+            self.med_data, self.med_desc,
+            algorithm="ComBat", combat_mode=1, sort="seriation", block=2,
+        )
+        _concordance_check(result, expected, rtol=5e-4, atol=1e-4,
+                           label="medium seriation block=2 ComBat mode 1")
+
+    def test_large_sparsity_block4_combat_mode1(self):
+        expected = _load_tsv_df("large_sparsity_block4_combat_mode1.tsv")
+        result = harmonize(
+            self.lg_data, self.lg_desc,
+            algorithm="ComBat", combat_mode=1, sort="sparsity", block=4,
+        )
+        _concordance_check(result, expected, rtol=5e-4, atol=1e-4,
+                           label="large sparsity block=4 ComBat mode 1")
+
+    def test_highmiss_sparsity_block2_combat_mode1(self):
+        expected = _load_tsv_df("highmiss_sparsity_block2_combat_mode1.tsv")
+        result = harmonize(
+            self.hm_data, self.hm_desc,
+            algorithm="ComBat", combat_mode=1, sort="sparsity", block=2,
+        )
+        _concordance_check(result, expected, rtol=5e-4, atol=1e-4,
+                           label="highmiss sparsity block=2 ComBat mode 1")
+
+
+@pytest.mark.skipif(
+    not _fixture_exists("highmiss_nour_combat_mode1.tsv"),
+    reason="Unique-removal R fixture not generated (run generate_blocking_fixtures.R)",
+)
+class TestUniqueRemovalRConcordance:
+    """unique_removal toggle vs R HarmonizR (ur= parameter) on high-missingness data.
+
+    The highmiss dataset (50 features, 3 batches, ~65% missing) has enough
+    features per batch-combination that no combo is a singleton.  Therefore
+    ur=True and ur=False produce the same feature set and values for this
+    dataset.  The tests verify:
+      1. Python ur=True matches R ur=TRUE (values).
+      2. Python ur=False matches R ur=FALSE (values).
+      3. Python ur=True retains >= features than ur=False.
+      4. Feature counts match R for both settings.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _load(self):
+        self.hm_data = _load_tsv_df("highmiss_input.tsv")
+        self.hm_desc = pd.read_csv(FIXTURE_DIR / "highmiss_batch.csv")
+
+    def test_ur_true_matches_r(self):
+        """ur=True (default) matches R ur=TRUE fixture."""
+        expected = _load_tsv_df("highmiss_harmonizr_combat_mode1.tsv")
+        result = harmonize(
+            self.hm_data, self.hm_desc,
+            algorithm="ComBat", combat_mode=1, unique_removal=True,
+        )
+        _concordance_check(result, expected, rtol=5e-4, atol=1e-4,
+                           label="highmiss ur=True ComBat mode 1")
+
+    def test_ur_false_matches_r(self):
+        """ur=False matches R ur=FALSE fixture (feature count and values)."""
+        expected = _load_tsv_df("highmiss_nour_combat_mode1.tsv")
+        result = harmonize(
+            self.hm_data, self.hm_desc,
+            algorithm="ComBat", combat_mode=1, unique_removal=False,
+        )
+        assert len(result) == len(expected), (
+            f"Feature count: Python={len(result)}, R={len(expected)}"
+        )
+        _concordance_check(result, expected, rtol=5e-4, atol=1e-4,
+                           label="highmiss ur=False ComBat mode 1")
+
+    def test_ur_true_retains_at_least_as_many_features_as_ur_false(self):
+        """ur=True retains >= features than ur=False."""
+        result_ur   = harmonize(self.hm_data, self.hm_desc,
+                                algorithm="ComBat", combat_mode=1, unique_removal=True)
+        result_nour = harmonize(self.hm_data, self.hm_desc,
+                                algorithm="ComBat", combat_mode=1, unique_removal=False)
+        assert len(result_ur) >= len(result_nour), (
+            f"ur=True:{len(result_ur)} < ur=False:{len(result_nour)}"
+        )
+
+    def test_ur_true_feature_count_equals_r(self):
+        """ur=True feature count matches R ur=TRUE."""
+        expected = _load_tsv_df("highmiss_harmonizr_combat_mode1.tsv")
+        result = harmonize(self.hm_data, self.hm_desc,
+                           algorithm="ComBat", combat_mode=1, unique_removal=True)
+        assert len(result) == len(expected), (
+            f"Python ur=True: {len(result)}, R ur=True: {len(expected)}"
+        )
+
+    def test_ur_false_feature_count_equals_r(self):
+        """ur=False feature count matches R ur=FALSE."""
+        expected = _load_tsv_df("highmiss_nour_combat_mode1.tsv")
+        result = harmonize(self.hm_data, self.hm_desc,
+                           algorithm="ComBat", combat_mode=1, unique_removal=False)
+        assert len(result) == len(expected), (
+            f"Python ur=False: {len(result)}, R ur=False: {len(expected)}"
+        )

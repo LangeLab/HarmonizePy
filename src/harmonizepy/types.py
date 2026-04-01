@@ -6,6 +6,9 @@ from dataclasses import dataclass
 from typing import NamedTuple
 
 
+_VALID_SORT_STRATEGIES: frozenset[str] = frozenset({"sparsity", "jaccard", "seriation"})
+
+
 @dataclass(frozen=True, slots=True)
 class HarmonizeConfig:
     """Configuration for a single harmonization run.
@@ -18,11 +21,24 @@ class HarmonizeConfig:
         ComBat mode 1-4 (ignored when *algorithm* is ``"limma"``).
     needed_values : int
         Minimum non-missing values per batch for a feature to be included.
+    sort_strategy : str or None
+        Batch sorting strategy: ``"sparsity"``, ``"jaccard"``,
+        ``"seriation"``, or ``None`` (no sort).
+    block_size : int or None
+        Number of consecutive batches to group into one block.  Must be
+        >= 2 and < total number of unique batches.  ``None`` disables
+        blocking.
+    unique_removal : bool
+        When ``True`` (default), rescue singleton features whose batch
+        combination is unique by cropping to the nearest shared pattern.
 
     Raises
     ------
     ValueError
-        On invalid *algorithm*, *combat_mode*, or *needed_values*.
+        On invalid *algorithm*, *combat_mode*, *needed_values*,
+        *sort_strategy*, or *block_size*.
+    TypeError
+        If *unique_removal* is not a bool.
 
     Examples
     --------
@@ -30,11 +46,17 @@ class HarmonizeConfig:
     >>> cfg = HarmonizeConfig(algorithm="limma")
     >>> cfg.algorithm
     'limma'
+    >>> cfg2 = HarmonizeConfig(sort_strategy="sparsity", block_size=2)
+    >>> cfg2.sort_strategy
+    'sparsity'
     """
 
     algorithm: str = "ComBat"
     combat_mode: int = 1
     needed_values: int = 2
+    sort_strategy: str | None = None
+    block_size: int | None = None
+    unique_removal: bool = True
 
     def __post_init__(self) -> None:
         if self.algorithm not in ("ComBat", "limma"):
@@ -48,6 +70,21 @@ class HarmonizeConfig:
         if self.needed_values < 1:
             raise ValueError(
                 f"needed_values must be >= 1, got {self.needed_values}"
+            )
+        if self.sort_strategy not in _VALID_SORT_STRATEGIES and self.sort_strategy is not None:
+            raise ValueError(
+                f"sort_strategy must be one of "
+                f"{sorted(_VALID_SORT_STRATEGIES)!r} or None, "
+                f"got {self.sort_strategy!r}"
+            )
+        if self.block_size is not None and self.block_size < 2:
+            raise ValueError(
+                f"block_size must be >= 2 or None, got {self.block_size}"
+            )
+        if not isinstance(self.unique_removal, bool):
+            raise TypeError(
+                f"unique_removal must be bool, got "
+                f"{type(self.unique_removal).__name__!r}"
             )
 
 

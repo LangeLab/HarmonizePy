@@ -12,6 +12,8 @@ combines both responsibilities.
 
 from __future__ import annotations
 
+import itertools
+
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
@@ -137,3 +139,102 @@ def reduce_to_unique_groups(
     for i, affil in enumerate(affiliation_list):
         groups.setdefault(affil, []).append(i)
     return groups
+
+
+def remove_unique_combinations(
+    affiliation_list: list[tuple[int, ...]],
+) -> list[tuple[int, ...]]:
+    """Rescue singleton features by cropping their affiliation to a shared pattern.
+
+    A feature whose batch-presence combination is unique (no other feature
+    shares it) would end up alone in a sub-matrix.  ComBat and limma cannot
+    adjust a single feature, so it would otherwise be dropped.
+
+    For each such singleton, this function finds the closest non-unique
+    affiliation — the one reachable by removing the fewest batches — and
+    replaces the singleton's affiliation with that pattern.  Empty
+    affiliations (features with no data anywhere) are left unchanged.
+
+    This mirrors R ``HarmonizR:::unique_removal`` (``ur`` parameter,
+    default ``TRUE`` in R HarmonizR v1.8.0).
+
+    Parameters
+    ----------
+    affiliation_list : list[tuple[int, ...]]
+        One tuple per feature from :func:`build_affiliation_list`.
+        Each tuple contains sorted block IDs where the feature has
+        sufficient data.
+
+    Returns
+    -------
+    list[tuple[int, ...]]
+        New affiliation list of the same length.  Singleton tuples are
+        replaced with a subset of their original blocks that at least one
+        other feature also shares.  Non-singleton and empty tuples are
+        unchanged.
+
+    Raises
+    ------
+    ValueError
+        If all non-empty affiliations are unique (no shared pattern exists
+        to crop to).  This indicates a dataset too fragmented for unique
+        removal to help — in practice this cannot happen when n_features > 1.
+
+    Examples
+    --------
+    >>> from harmonizepy.affiliation import remove_unique_combinations
+    >>> # Feature 0 is a singleton; features 1 and 2 share (1, 2)
+    >>> result = remove_unique_combinations([(1, 2, 3), (1, 2), (1, 2)])
+    >>> result[0]  # cropped to the nearest shared pattern
+    (1, 2)
+    >>> result[1:]  # unchanged
+    [(1, 2), (1, 2)]
+    """
+    result = list(affiliation_list)
+
+    # Count how many features share each non-empty affiliation
+    counts: dict[tuple[int, ...], int] = {}
+    for affil in result:
+        if affil:
+            counts[affil] = counts.get(affil, 0) + 1
+
+    # Collect the non-unique (shared) patterns — used as rescue targets
+    non_unique = {affil for affil, cnt in counts.items() if cnt > 1}
+
+    if not non_unique:
+        # Nothing to rescue to; leave list unchanged
+        return result
+
+    for i, affil in enumerate(result):
+        if not affil or affil in non_unique:
+            continue  # empty or already non-unique — nothing to do
+
+        # Find the reachable non-unique pattern with fewest blocks removed.
+        # Search all non-empty subsets of affil (in descending size order)
+        # until we hit one that is non-unique.
+        best = _find_best_crop(frozenset(affil), non_unique)
+        if best is not None:
+            result[i] = best
+
+    return result
+
+
+def _find_best_crop(
+    affil_set: frozenset[int],
+    non_unique: set[tuple[int, ...]],
+) -> tuple[int, ...] | None:
+    """Return the largest subset of *affil_set* that is in *non_unique*.
+
+    Searches by decreasing subset size so that the first match found
+    removes the minimum number of batches (greedy, matching R's approach).
+    Returns ``None`` if no non-empty subset matches.
+    """
+    affil_sorted = tuple(sorted(affil_set))
+    n = len(affil_sorted)
+
+    # Try subsets from size n-1 down to 1
+    for size in range(n - 1, 0, -1):
+        for combo in itertools.combinations(affil_sorted, size):
+            if combo in non_unique:
+                return combo
+    return None
