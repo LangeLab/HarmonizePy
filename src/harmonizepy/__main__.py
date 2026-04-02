@@ -8,6 +8,8 @@ Entry points::
 Run ``harmonizepy --help`` for full flag documentation.
 """
 
+# PYTHON_ARGCOMPLETE_OK
+
 from __future__ import annotations
 
 import argparse
@@ -43,6 +45,21 @@ _EXT_TO_FMT: dict[str, str] = {
     ".feather": "feather",
     ".ftr": "feather",
 }
+
+# Config keys that map directly to CLI flag destinations
+_VALID_CONFIG_KEYS: frozenset[str] = frozenset(
+    {
+        "algorithm",
+        "combat_mode",
+        "needed_values",
+        "sort",
+        "block",
+        "unique_removal",
+        "output",
+        "output_format",
+        "summary",
+    }
+)
 
 # ---------------------------------------------------------------------------
 # Parser
@@ -206,6 +223,28 @@ def _build_parser() -> argparse.ArgumentParser:
             "Use in pipeline pre-checks to catch problems before committing compute time."
         ),
     )
+    parser.add_argument(
+        "--config",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Path to a TOML, JSON, or YAML (.yaml/.yml) config file. "
+            "Keys map 1:1 to CLI flag names (algorithm, combat_mode, needed_values, "
+            "sort, block, unique_removal, output, output_format, summary). "
+            "CLI flags override config file values; config file overrides built-in defaults. "
+            "YAML requires pyyaml; TOML requires Python ≥ 3.11 or tomli on older versions."
+        ),
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help=(
+            "Print the run summary as JSON to stdout after completion. "
+            "For programmatic consumption — pipe to jq or capture in a shell script. "
+            "Suppresses INFO log messages so stdout contains only the JSON object."
+        ),
+    )
 
     # -- Verbosity ----------------------------------------------------------
     verbosity = parser.add_mutually_exclusive_group()
@@ -252,6 +291,55 @@ def _infer_format(path: str, fmt_arg: str | None) -> str:
     return _EXT_TO_FMT.get(Path(path).suffix.lower(), "tsv")
 
 
+def _load_config(path: str) -> dict[str, object]:
+    """Load a TOML, JSON, or YAML config file and return the parsed mapping.
+
+    Supported formats
+    -----------------
+    ``.json``        — stdlib, always available.
+    ``.toml``        — ``tomllib`` (Python ≥ 3.11 stdlib) or ``tomli`` package.
+    ``.yaml``/``.yml`` — requires ``pyyaml``: ``pip install pyyaml``.
+    """
+    p = Path(path)
+    ext = p.suffix.lower()
+    raw: object
+
+    if ext == ".json":
+        with p.open("rb") as fh:
+            raw = json.load(fh)
+
+    elif ext == ".toml":
+        try:
+            import tomllib  # type: ignore[import-not-found]  # stdlib ≥ 3.11
+        except ImportError:
+            try:
+                import tomli as tomllib  # type: ignore[import-not-found]
+            except ImportError:
+                raise ImportError(
+                    "TOML config requires 'tomllib' (Python ≥ 3.11) "
+                    "or 'tomli': pip install harmonizepy[config]"
+                ) from None
+        with p.open("rb") as fh:
+            raw = tomllib.load(fh)
+
+    elif ext in (".yaml", ".yml"):
+        try:
+            import yaml  # type: ignore[import-untyped]
+        except ImportError:
+            raise ImportError(
+                "YAML config requires 'pyyaml': pip install harmonizepy[config]"
+            ) from None
+        with p.open(encoding="utf-8") as fh:
+            raw = yaml.safe_load(fh)
+
+    else:
+        raise ValueError(f"Unsupported config format '{ext}'. Use .toml, .json, .yaml, or .yml.")
+
+    if not isinstance(raw, dict):
+        raise ValueError(f"Config file must be a TOML/JSON/YAML mapping, got {type(raw).__name__}.")
+    return raw  # type narrowed to dict[Any, Any] by isinstance check above
+
+
 # ---------------------------------------------------------------------------
 # I/O helpers
 # ---------------------------------------------------------------------------
@@ -268,8 +356,7 @@ def _write_result(df: pd.DataFrame, path: str, fmt: str) -> None:
         df.to_csv(path, sep="\t")
 
 
-def _write_summary(
-    path: str,
+def _build_summary_dict(
     *,
     data_file: str,
     description_file: str,
@@ -285,9 +372,9 @@ def _write_summary(
     n_features_output: int,
     n_samples: int,
     n_batches: int,
-) -> None:
-    """Write a JSON run-summary file to *path*."""
-    summary: dict[str, object] = {
+) -> dict[str, object]:
+    """Build the run-summary dict (shared by --summary and --json)."""
+    return {
         "harmonizepy_version": version("harmonizepy"),
         "data_file": str(Path(data_file).resolve()),
         "description_file": str(Path(description_file).resolve()),
@@ -304,6 +391,10 @@ def _write_summary(
         "n_samples": n_samples,
         "n_batches": n_batches,
     }
+
+
+def _write_summary(path: str, summary: dict[str, object]) -> None:
+    """Write a JSON run-summary file to *path*."""
     with Path(path).open("w", encoding="utf-8") as fh:
         json.dump(summary, fh, indent=2)
     logging.getLogger("harmonizepy").info("Run summary written to %s", path)
@@ -372,12 +463,41 @@ def _print_dry_run(
 def main(argv: Sequence[str] | None = None) -> None:
     """Parse arguments and run the harmonization pipeline."""
     parser = _build_parser()
+
+    # Shell completion (no-op when argcomplete is not installed)
+    try:
+        import argcomplete  # type: ignore[import-not-found]
+
+        argcomplete.autocomplete(parser)
+    except ImportError:
+        pass
+
+    # -- Config file pre-parse: apply config values as parser defaults ------
+    # Use a lightweight pre-parser so we can call parser.set_defaults() before
+    # the full parse.  CLI flags always win because set_defaults() only affects
+    # the default value, not an explicitly supplied argument.
+    _pre = argparse.ArgumentParser(add_help=False)
+    _pre.add_argument("--config", default=None)
+    _pre_ns, _ = _pre.parse_known_args(argv)
+    if _pre_ns.config is not None:
+        if not Path(_pre_ns.config).is_file():
+            parser.error(f"config file not found: '{_pre_ns.config}'")
+        try:
+            _cfg = _load_config(_pre_ns.config)
+        except (ValueError, ImportError, OSError) as exc:
+            parser.error(str(exc))
+        _unknown = set(_cfg) - _VALID_CONFIG_KEYS
+        if _unknown:
+            parser.error(f"Unknown config key(s): {', '.join(sorted(_unknown))}")
+        parser.set_defaults(**{k: v for k, v in _cfg.items() if k in _VALID_CONFIG_KEYS})
+
     args = parser.parse_args(argv)
 
     # -- Logging setup ------------------------------------------------------
+    # --json suppresses INFO so that stdout contains only the JSON object.
     if args.verbose:
         level = logging.DEBUG
-    elif args.quiet:
+    elif args.quiet or args.json_output:
         level = logging.WARNING
     else:
         level = logging.INFO
@@ -488,28 +608,34 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     logging.getLogger("harmonizepy").info("Output written to %s", output_path)
 
-    # -- Optional JSON summary ----------------------------------------------
-    if args.summary:
-        try:
-            _write_summary(
-                args.summary,
-                data_file=args.data,
-                description_file=args.description,
-                output_file=output_path,
-                output_format=output_fmt,
-                algorithm=args.algorithm,
-                combat_mode=args.combat_mode,
-                needed_values=args.needed_values,
-                sort=args.sort,
-                block=args.block,
-                unique_removal=args.unique_removal,
-                n_features_input=n_features_input,
-                n_features_output=result.shape[0],
-                n_samples=n_samples,
-                n_batches=n_batches,
-            )
-        except OSError as exc:
-            print(f"WARNING: could not write summary to '{args.summary}': {exc}", file=sys.stderr)
+    # -- Run summary (--summary file and/or --json stdout) ------------------
+    if args.summary or args.json_output:
+        _summary = _build_summary_dict(
+            data_file=args.data,
+            description_file=args.description,
+            output_file=output_path,
+            output_format=output_fmt,
+            algorithm=args.algorithm,
+            combat_mode=args.combat_mode,
+            needed_values=args.needed_values,
+            sort=args.sort,
+            block=args.block,
+            unique_removal=args.unique_removal,
+            n_features_input=n_features_input,
+            n_features_output=result.shape[0],
+            n_samples=n_samples,
+            n_batches=n_batches,
+        )
+        if args.summary:
+            try:
+                _write_summary(args.summary, _summary)
+            except OSError as exc:
+                print(
+                    f"WARNING: could not write summary to '{args.summary}': {exc}",
+                    file=sys.stderr,
+                )
+        if args.json_output:
+            print(json.dumps(_summary, indent=2))
 
 
 if __name__ == "__main__":

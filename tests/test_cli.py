@@ -542,6 +542,8 @@ class TestCLIHelpVersion:
             "--unique-removal",
             "--dry-run",
             "--summary",
+            "--config",
+            "--json",
             "--verbose",
             "--quiet",
         ):
@@ -565,3 +567,318 @@ class TestCLIHelpVersion:
         combined = capsys.readouterr()
         output = combined.out + combined.err
         assert "harmonizepy" in output.lower()
+
+
+# ===========================================================================
+# --config flag
+# ===========================================================================
+
+
+class TestCLIConfig:
+    """Tests for config-file loading via --config."""
+
+    # -- JSON config --------------------------------------------------------
+
+    def test_json_config_sets_algorithm(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "cfg.json"
+        cfg.write_text('{"algorithm": "limma"}', encoding="utf-8")
+        out = str(tmp_path / "r.tsv")
+        main([DATA, BATCH, "-o", out, "--config", str(cfg)])
+        api = harmonize(DATA, BATCH, algorithm="limma")
+        cli = pd.read_csv(out, sep="\t", index_col=0)
+        pd.testing.assert_frame_equal(cli, api, atol=1e-10)
+
+    def test_json_config_sets_combat_mode(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "cfg.json"
+        cfg.write_text('{"combat_mode": 2}', encoding="utf-8")
+        out = str(tmp_path / "r.tsv")
+        main([DATA, BATCH, "-o", out, "--config", str(cfg)])
+        assert Path(out).exists()
+
+    def test_json_config_sets_unique_removal_false(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "cfg.json"
+        cfg.write_text('{"unique_removal": false}', encoding="utf-8")
+        out = str(tmp_path / "r.tsv")
+        main([DATA, BATCH, "-o", out, "--config", str(cfg)])
+        api = harmonize(DATA, BATCH, unique_removal=False)
+        cli = pd.read_csv(out, sep="\t", index_col=0)
+        pd.testing.assert_frame_equal(cli, api, atol=1e-10)
+
+    def test_cli_flag_overrides_config(self, tmp_path: Path) -> None:
+        """An explicit CLI flag must win over the config file value."""
+        cfg = tmp_path / "cfg.json"
+        cfg.write_text('{"algorithm": "limma"}', encoding="utf-8")
+        out = str(tmp_path / "r.tsv")
+        # CLI supplies --algorithm ComBat which should override config's limma
+        main([DATA, BATCH, "-o", out, "--config", str(cfg), "--algorithm", "ComBat"])
+        api_combat = harmonize(DATA, BATCH, algorithm="ComBat")
+        cli = pd.read_csv(out, sep="\t", index_col=0)
+        pd.testing.assert_frame_equal(cli, api_combat, atol=1e-10)
+
+    def test_json_config_unknown_key_fails(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        cfg = tmp_path / "cfg.json"
+        cfg.write_text('{"unknown_param": 99}', encoding="utf-8")
+        out = str(tmp_path / "r.tsv")
+        with pytest.raises(SystemExit) as exc_info:
+            main([DATA, BATCH, "-o", out, "--config", str(cfg)])
+        assert exc_info.value.code != 0
+        err = capsys.readouterr().err
+        assert "unknown_param" in err
+
+    def test_config_file_not_found_fails(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            main([DATA, BATCH, "--config", str(tmp_path / "nonexistent.json")])
+        assert exc_info.value.code != 0
+
+    # -- TOML config --------------------------------------------------------
+
+    def test_toml_config_sets_algorithm(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "cfg.toml"
+        cfg.write_text('algorithm = "limma"\n', encoding="utf-8")
+        out = str(tmp_path / "r.tsv")
+        main([DATA, BATCH, "-o", out, "--config", str(cfg)])
+        api = harmonize(DATA, BATCH, algorithm="limma")
+        cli = pd.read_csv(out, sep="\t", index_col=0)
+        pd.testing.assert_frame_equal(cli, api, atol=1e-10)
+
+    def test_toml_config_multiple_keys(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "cfg.toml"
+        cfg.write_text(
+            'algorithm = "ComBat"\ncombat_mode = 2\nunique_removal = false\n',
+            encoding="utf-8",
+        )
+        out = str(tmp_path / "r.tsv")
+        main([DATA, BATCH, "-o", out, "--config", str(cfg)])
+        api = harmonize(DATA, BATCH, combat_mode=2, unique_removal=False)
+        cli = pd.read_csv(out, sep="\t", index_col=0)
+        pd.testing.assert_frame_equal(cli, api, atol=1e-10)
+
+    # -- Help text ----------------------------------------------------------
+
+    def test_help_mentions_config(self, capsys: pytest.CaptureFixture[str]) -> None:
+        with pytest.raises(SystemExit):
+            main(["--help"])
+        out = capsys.readouterr().out
+        assert "--config" in out
+
+    def test_help_mentions_json(self, capsys: pytest.CaptureFixture[str]) -> None:
+        with pytest.raises(SystemExit):
+            main(["--help"])
+        out = capsys.readouterr().out
+        assert "--json" in out
+
+
+# ===========================================================================
+# --json flag
+# ===========================================================================
+
+
+class TestCLIJson:
+    """Tests for the --json stdout run-summary flag."""
+
+    def test_json_flag_prints_valid_json(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        out = str(tmp_path / "r.tsv")
+        main([DATA, BATCH, "-o", out, "--json"])
+        captured = capsys.readouterr().out
+        parsed = json.loads(captured)
+        assert isinstance(parsed, dict)
+
+    def test_json_output_contains_expected_keys(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        out = str(tmp_path / "r.tsv")
+        main([DATA, BATCH, "-o", out, "--json"])
+        summary = json.loads(capsys.readouterr().out)
+        for key in (
+            "harmonizepy_version",
+            "algorithm",
+            "combat_mode",
+            "n_features_input",
+            "n_features_output",
+            "n_samples",
+            "n_batches",
+        ):
+            assert key in summary, f"Missing key: {key}"
+
+    def test_json_n_features_output_leq_input(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        out = str(tmp_path / "r.tsv")
+        main([DATA, BATCH, "-o", out, "--json"])
+        summary = json.loads(capsys.readouterr().out)
+        assert summary["n_features_output"] <= summary["n_features_input"]
+
+    def test_json_suppresses_info_logging(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """stdout must contain only JSON — no log lines mixed in."""
+        out = str(tmp_path / "r.tsv")
+        main([DATA, BATCH, "-o", out, "--json"])
+        stdout = capsys.readouterr().out.strip()
+        # The entire stdout must be parseable as a single JSON object
+        parsed = json.loads(stdout)
+        assert isinstance(parsed, dict)
+
+    def test_json_and_summary_both_work(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        out = str(tmp_path / "r.tsv")
+        summary_file = str(tmp_path / "run.json")
+        main([DATA, BATCH, "-o", out, "--json", "--summary", summary_file])
+        # stdout JSON
+        stdout_summary = json.loads(capsys.readouterr().out)
+        assert isinstance(stdout_summary, dict)
+        # file JSON
+        with Path(summary_file).open() as fh:
+            file_summary = json.load(fh)
+        assert file_summary == stdout_summary
+
+    def test_json_config_combo(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """--config + --json: config sets algorithm, json reports it."""
+        cfg = tmp_path / "cfg.json"
+        cfg.write_text('{"algorithm": "limma"}', encoding="utf-8")
+        out = str(tmp_path / "r.tsv")
+        main([DATA, BATCH, "-o", out, "--config", str(cfg), "--json"])
+        summary = json.loads(capsys.readouterr().out)
+        assert summary["algorithm"] == "limma"
+
+    # -- YAML config --------------------------------------------------------
+
+    def test_yaml_config_sets_algorithm(self, tmp_path: Path) -> None:
+        yaml = pytest.importorskip("yaml")  # skip when pyyaml is not installed
+        del yaml  # only needed for the skip check; _load_config imports it internally
+        cfg = tmp_path / "cfg.yaml"
+        cfg.write_text("algorithm: limma\n", encoding="utf-8")
+        out = str(tmp_path / "r.tsv")
+        main([DATA, BATCH, "-o", out, "--config", str(cfg)])
+        api = harmonize(DATA, BATCH, algorithm="limma")
+        cli = pd.read_csv(out, sep="\t", index_col=0)
+        pd.testing.assert_frame_equal(cli, api, atol=1e-10)
+
+    def test_yaml_config_yml_extension(self, tmp_path: Path) -> None:
+        pytest.importorskip("yaml")
+        cfg = tmp_path / "cfg.yml"
+        cfg.write_text("unique_removal: false\n", encoding="utf-8")
+        out = str(tmp_path / "r.tsv")
+        main([DATA, BATCH, "-o", out, "--config", str(cfg)])
+        assert Path(out).exists()
+
+    # -- Unsupported extension ----------------------------------------------
+
+    def test_unsupported_config_extension_fails(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        cfg = tmp_path / "cfg.xml"
+        cfg.write_text("<config/>", encoding="utf-8")
+        with pytest.raises(SystemExit) as exc_info:
+            main([DATA, BATCH, "--config", str(cfg)])
+        assert exc_info.value.code != 0
+
+    # -- --config + --dry-run combo -----------------------------------------
+
+    def test_config_and_dry_run_combo(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Config-file settings must be visible in --dry-run output."""
+        cfg = tmp_path / "cfg.json"
+        cfg.write_text('{"algorithm": "limma"}', encoding="utf-8")
+        main([DATA, BATCH, "--config", str(cfg), "--dry-run"])
+        out = capsys.readouterr().out
+        assert "limma" in out
+
+    def test_config_dry_run_exits_zero(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "cfg.json"
+        cfg.write_text('{"combat_mode": 2}', encoding="utf-8")
+        # SystemExit is not raised on success — function returns normally
+        main([DATA, BATCH, "--config", str(cfg), "--dry-run"])
+
+
+# ===========================================================================
+# All-flags smoke test (plan §2.5 test_cli_all_flags)
+# ===========================================================================
+
+
+class TestCLIAllFlags:
+    """Single test that fires every non-mutually-exclusive flag at once.
+
+    Guards against unexpected flag interactions or import-time failures
+    when the full combination is used together.
+    """
+
+    def test_all_flags_combined(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        out = str(tmp_path / "result.tsv")
+        summary = str(tmp_path / "run.json")
+        main(
+            [
+                MED_DATA,
+                MED_BATCH,
+                "-o",
+                out,
+                "--algorithm",
+                "ComBat",
+                "--combat-mode",
+                "1",
+                "--needed-values",
+                "2",
+                "--sort",
+                "sparsity",
+                "--block",
+                "2",
+                "--unique-removal",
+                "--output-format",
+                "tsv",
+                "--summary",
+                summary,
+                "--json",
+                "--verbose",
+            ]
+        )
+        # Output file written
+        assert Path(out).exists()
+        # Summary file written and valid JSON
+        file_summary = json.loads(Path(summary).read_text())
+        assert file_summary["algorithm"] == "ComBat"
+        # stdout JSON also valid (--json + --verbose: verbose wins for level but json still printed)
+        stdout_json = json.loads(capsys.readouterr().out)
+        assert stdout_json == file_summary
+
+    def test_all_flags_matches_api(self, tmp_path: Path) -> None:
+        """All-flags CLI result must equal harmonize() called with the same parameters."""
+        out = str(tmp_path / "result.tsv")
+        main(
+            [
+                MED_DATA,
+                MED_BATCH,
+                "-o",
+                out,
+                "--algorithm",
+                "ComBat",
+                "--combat-mode",
+                "1",
+                "--needed-values",
+                "2",
+                "--sort",
+                "sparsity",
+                "--block",
+                "2",
+                "--unique-removal",
+            ]
+        )
+        cli = pd.read_csv(out, sep="\t", index_col=0)
+        api = harmonize(
+            MED_DATA,
+            MED_BATCH,
+            algorithm="ComBat",
+            combat_mode=1,
+            needed_values=2,
+            sort="sparsity",
+            block=2,
+            unique_removal=True,
+        )
+        pd.testing.assert_frame_equal(cli, api, atol=1e-10)

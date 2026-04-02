@@ -24,6 +24,15 @@ dependencies = [
     "pandas>=2.0",
 ]
 
+[project.optional-dependencies]
+# pip install harmonizepy[config]   → enables YAML and TOML (Python < 3.11) config files
+config = [
+    "pyyaml>=6.0",
+    "tomli>=2.0; python_version < '3.11'",
+]
+# pip install harmonizepy[completion] → enables shell tab-completion via argcomplete
+completion = ["argcomplete>=3.0"]
+
 [project.scripts]
 harmonizepy = "harmonizepy.__main__:main"
 
