@@ -24,6 +24,9 @@ dependencies = [
     "pandas>=2.0",
 ]
 
+[project.scripts]
+harmonizepy = "harmonizepy.__main__:main"
+
 [project.urls]
 Repository = "https://github.com/LangeLab/HarmonizePy"
 Issues = "https://github.com/LangeLab/HarmonizePy/issues"

@@ -24,15 +24,14 @@ import pandas as pd
 import pytest
 
 from harmonizepy.sorting import (
-    sort_batches,
     _build_presence_matrix,
     _column_order,
     _jaccard_order,
     _seriation_order,
     _sparsity_order,
     _unique_batches_ordered,
+    sort_batches,
 )
-
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -71,12 +70,12 @@ def _make_skewed_dataset() -> tuple[pd.DataFrame, np.ndarray]:
     """
     rng = np.random.default_rng(42)
     n_features = 20
-    n_per_batch = 3
+    _n_per_batch = 3
     n_samples = 9
     values = rng.standard_normal((n_features, n_samples))
-    # Batch2: features 10–19 all NaN
+    # Batch2: features 10-19 all NaN
     values[10:, 3:6] = np.nan
-    # Batch3: features 5–19 all NaN
+    # Batch3: features 5-19 all NaN
     values[5:, 6:] = np.nan
     cols = [f"s{i}" for i in range(n_samples)]
     df = pd.DataFrame(values, index=[f"f{i}" for i in range(n_features)], columns=cols)
@@ -93,12 +92,12 @@ class TestSparsitySort:
     def test_ordering_is_descending_completeness(self):
         """Batches ordered by descending feature count (most complete first)."""
         df, batch = _make_skewed_dataset()
-        sd, sb, co = sort_batches(df, batch, "sparsity", needed_values=2)
+        _, sb, _ = sort_batches(df, batch, "sparsity", needed_values=2)
         # _make_skewed_dataset: batch 3 → 5 features, batch 2 → 10, batch 1 → 20
         # Sparsity descending → [1, 2, 3] (most complete first, matching R)
-        assert sb[0] == 1   # most complete first
-        assert sb[3] == 2   # mid completeness in the middle
-        assert sb[6] == 3   # sparsest last
+        assert sb[0] == 1  # most complete first
+        assert sb[3] == 2  # mid completeness in the middle
+        assert sb[6] == 3  # sparsest last
 
     def test_all_samples_preserved(self):
         df, batch = _make_skewed_dataset()
@@ -110,17 +109,15 @@ class TestSparsitySort:
     def test_column_values_unchanged(self):
         """Each column in sorted_data must equal the same column in original."""
         df, batch = _make_skewed_dataset()
-        sd, sb, co = sort_batches(df, batch, "sparsity", needed_values=2)
+        sd, _, co = sort_batches(df, batch, "sparsity", needed_values=2)
         for new_pos, orig_pos in enumerate(co):
             orig_col = df.columns[orig_pos]
-            pd.testing.assert_series_equal(
-                sd.iloc[:, new_pos], df[orig_col], check_names=False
-            )
+            pd.testing.assert_series_equal(sd.iloc[:, new_pos], df[orig_col], check_names=False)
 
     def test_uniform_dataset_stable(self):
         """When all batches have equal completeness, order is stable (unchanged)."""
         df, batch = _make_dataset(n_features=10, n_batches=3, missing_frac=0.0)
-        sd, sb, co = sort_batches(df, batch, "sparsity", needed_values=2)
+        _, _, co = sort_batches(df, batch, "sparsity", needed_values=2)
         # All completeness equal → argsort stable → original order preserved
         np.testing.assert_array_equal(co, np.arange(len(batch)))
 
@@ -134,24 +131,22 @@ class TestJaccardSort:
     def test_returns_valid_permutation(self):
         """All batch IDs appear exactly once."""
         df, batch = _make_dataset(n_batches=4, missing_frac=0.3, seed=1)
-        sd, sb, co = sort_batches(df, batch, "jaccard", needed_values=2)
+        _, sb, _ = sort_batches(df, batch, "jaccard", needed_values=2)
         unique_in_result = np.unique(sb)
         unique_in_input = np.unique(batch)
         np.testing.assert_array_equal(unique_in_result, unique_in_input)
 
     def test_all_samples_preserved(self):
         df, batch = _make_dataset(n_batches=4, missing_frac=0.3, seed=1)
-        sd, sb, co = sort_batches(df, batch, "jaccard", needed_values=2)
+        sd, _, _ = sort_batches(df, batch, "jaccard", needed_values=2)
         assert sd.shape == df.shape
 
     def test_column_values_unchanged(self):
         df, batch = _make_dataset(n_batches=4, missing_frac=0.3, seed=1)
-        sd, sb, co = sort_batches(df, batch, "jaccard", needed_values=2)
+        sd, _, co = sort_batches(df, batch, "jaccard", needed_values=2)
         for new_pos, orig_pos in enumerate(co):
             orig_col = df.columns[orig_pos]
-            pd.testing.assert_series_equal(
-                sd.iloc[:, new_pos], df[orig_col], check_names=False
-            )
+            pd.testing.assert_series_equal(sd.iloc[:, new_pos], df[orig_col], check_names=False)
 
     def test_similar_batches_are_adjacent(self):
         """The two most similar batches (by Jaccard) end up neighbors."""
@@ -161,9 +156,9 @@ class TestJaccardSort:
         # Batch 3: all NaN
         vals[:, 6:] = np.nan
         df = pd.DataFrame(vals, columns=[f"s{i}" for i in range(9)])
-        # Batches 1 and 2 ↔ cols 0–2 and 3–5; batch 3 ↔ cols 6–8
+        # Batches 1 and 2 ↔ cols 0-2 and 3-5; batch 3 ↔ cols 6-8
         batch = np.array([1, 1, 1, 2, 2, 2, 3, 3, 3])
-        sd, sb, co = sort_batches(df, batch, "jaccard", needed_values=2)
+        _, sb, _ = sort_batches(df, batch, "jaccard", needed_values=2)
         # Batch 3 (all NaN → zero features present) is dissimilar from 1 and 2.
         # Batches 1 and 2 should be adjacent somewhere in the result.
         positions = {b: i // 3 for i, b in enumerate(sb)}  # batch → position index
@@ -178,27 +173,25 @@ class TestJaccardSort:
 class TestSeriationSort:
     def test_returns_valid_permutation(self):
         df, batch = _make_dataset(n_batches=4, missing_frac=0.3, seed=2)
-        sd, sb, co = sort_batches(df, batch, "seriation", needed_values=2)
+        _, sb, _ = sort_batches(df, batch, "seriation", needed_values=2)
         np.testing.assert_array_equal(np.sort(sb), np.sort(batch))
 
     def test_all_samples_preserved(self):
         df, batch = _make_dataset(n_batches=4, missing_frac=0.3, seed=2)
-        sd, sb, co = sort_batches(df, batch, "seriation", needed_values=2)
+        sd, _, _ = sort_batches(df, batch, "seriation", needed_values=2)
         assert sd.shape == df.shape
 
     def test_column_values_unchanged(self):
         df, batch = _make_dataset(n_batches=4, missing_frac=0.3, seed=2)
-        sd, sb, co = sort_batches(df, batch, "seriation", needed_values=2)
+        sd, _, co = sort_batches(df, batch, "seriation", needed_values=2)
         for new_pos, orig_pos in enumerate(co):
             orig_col = df.columns[orig_pos]
-            pd.testing.assert_series_equal(
-                sd.iloc[:, new_pos], df[orig_col], check_names=False
-            )
+            pd.testing.assert_series_equal(sd.iloc[:, new_pos], df[orig_col], check_names=False)
 
     def test_five_batches(self):
         """Seriation with >3 batches exercises PCA on the presence matrix."""
         df, batch = _make_dataset(n_batches=5, missing_frac=0.2, seed=3)
-        sd, sb, co = sort_batches(df, batch, "seriation", needed_values=2)
+        sd, sb, _ = sort_batches(df, batch, "seriation", needed_values=2)
         assert sd.shape == df.shape
         assert set(sb.tolist()) == set(range(1, 6))
 
@@ -214,19 +207,18 @@ class TestInversePermutation:
     @pytest.mark.parametrize("strategy", ["sparsity", "jaccard", "seriation"])
     def test_restore_original_order(self, strategy):
         df, batch = _make_dataset(n_batches=3, missing_frac=0.2, seed=5)
-        sd, sb, co = sort_batches(df, batch, strategy, needed_values=2)
+        sd, _, co = sort_batches(df, batch, strategy, needed_values=2)
         # Simulate a rebuild that preserves sorted column order (values unchanged)
         restored = sd.iloc[:, np.argsort(co)]
         # Column names should match original
         assert list(restored.columns) == list(df.columns)
         # Values should be identical
-        pd.testing.assert_frame_equal(restored.reset_index(drop=True),
-                                      df.reset_index(drop=True))
+        pd.testing.assert_frame_equal(restored.reset_index(drop=True), df.reset_index(drop=True))
 
     @pytest.mark.parametrize("strategy", ["sparsity", "jaccard", "seriation"])
     def test_col_order_is_permutation(self, strategy):
         df, batch = _make_dataset(n_batches=4, missing_frac=0.15, seed=6)
-        sd, sb, co = sort_batches(df, batch, strategy, needed_values=2)
+        _, _, co = sort_batches(df, batch, strategy, needed_values=2)
         assert len(co) == df.shape[1]
         np.testing.assert_array_equal(np.sort(co), np.arange(df.shape[1]))
 
@@ -279,7 +271,7 @@ class TestEdgeCases:
     def test_two_batches(self, strategy):
         """Works correctly with only two batches."""
         df, batch = _make_dataset(n_batches=2, n_per_batch=5, seed=20)
-        sd, sb, co = sort_batches(df, batch, strategy, needed_values=2)
+        sd, sb, _ = sort_batches(df, batch, strategy, needed_values=2)
         assert sd.shape == df.shape
         assert set(sb.tolist()) == {1, 2}
 
@@ -289,14 +281,14 @@ class TestEdgeCases:
         df, batch = _make_dataset(n_features=15, n_batches=3, seed=21)
         # Make the first 3 features all-NaN
         df.iloc[:3, :] = np.nan
-        sd, sb, co = sort_batches(df, batch, strategy, needed_values=2)
+        sd, _, _ = sort_batches(df, batch, strategy, needed_values=2)
         assert sd.shape == df.shape
 
     @pytest.mark.parametrize("strategy", ["sparsity", "jaccard", "seriation"])
     def test_samples_within_batch_keep_relative_order(self, strategy):
         """Samples within the same batch retain their original relative order."""
         df, batch = _make_skewed_dataset()
-        sd, sb, co = sort_batches(df, batch, strategy, needed_values=2)
+        sd, _, co = sort_batches(df, batch, strategy, needed_values=2)
         for bid in np.unique(batch):
             orig_positions = np.where(batch == bid)[0]
             new_positions_in_co = [i for i, v in enumerate(co) if v in orig_positions]
@@ -335,24 +327,30 @@ class TestHelperFunctions:
         """_sparsity_order returns batches in descending completeness order (matches R)."""
         # 3 batches: completeness 2, 5, 2 → expected descending order: [1, 0, 2]
         # (stable: index 1 has 5, then 0 before 2 because they tie at 2)
-        presence = np.array([
-            [True,  True,  True],
-            [True,  True,  False],
-            [False, True,  True],
-            [False, True,  False],
-            [False, True,  False],
-        ], dtype=np.bool_)
+        presence = np.array(
+            [
+                [True, True, True],
+                [True, True, False],
+                [False, True, True],
+                [False, True, False],
+                [False, True, False],
+            ],
+            dtype=np.bool_,
+        )
         # Completeness: col0=2, col1=5, col2=2 → descending order: [1, 0, 2]
         order = _sparsity_order(presence)
         np.testing.assert_array_equal(order, [1, 0, 2])
 
     def test_jaccard_order_length(self):
         """_jaccard_order returns a permutation of length n_batches."""
-        presence = np.array([
-            [True, True,  False],
-            [True, False, True],
-            [True, True,  True],
-        ], dtype=np.bool_)
+        presence = np.array(
+            [
+                [True, True, False],
+                [True, False, True],
+                [True, True, True],
+            ],
+            dtype=np.bool_,
+        )
         order = _jaccard_order(presence)
         assert len(order) == 3
         np.testing.assert_array_equal(np.sort(order), [0, 1, 2])
@@ -415,15 +413,15 @@ class TestPresenceMatrix:
         df.iloc[:, 3:] = np.nan
         unique = _unique_batches_ordered(batch)
         p = _build_presence_matrix(df, batch, unique, needed_values=2)
-        assert p[:, 0].all()     # batch 1 present
-        assert not p[:, 1].any() # batch 2 absent
+        assert p[:, 0].all()  # batch 1 present
+        assert not p[:, 1].any()  # batch 2 absent
 
     def test_needed_values_one_threshold(self):
         """needed_values=1: a feature with exactly one non-NaN per batch is present."""
         df, batch = _make_dataset(n_features=4, n_batches=2, n_per_batch=3)
         # Leave only one non-NaN per batch for features 0 and 1
-        df.iloc[0, 1:3] = np.nan   # batch 1: 1 valid, 2 NaN
-        df.iloc[0, 4:6] = np.nan   # batch 2: 1 valid, 2 NaN
+        df.iloc[0, 1:3] = np.nan  # batch 1: 1 valid, 2 NaN
+        df.iloc[0, 4:6] = np.nan  # batch 2: 1 valid, 2 NaN
         unique = _unique_batches_ordered(batch)
         p2 = _build_presence_matrix(df, batch, unique, needed_values=2)
         p1 = _build_presence_matrix(df, batch, unique, needed_values=1)
@@ -452,7 +450,7 @@ class TestJaccardDegenerateCases:
         Greedy traversal must still produce a valid full permutation.
         """
         df, batch = _make_dataset(n_features=10, n_batches=4, missing_frac=0.0)
-        sd, sb, co = sort_batches(df, batch, "jaccard", needed_values=2)
+        _, sb, co = sort_batches(df, batch, "jaccard", needed_values=2)
         # All unique batch IDs appear exactly once
         np.testing.assert_array_equal(np.sort(np.unique(sb)), [1, 2, 3, 4])
         # col_order is a complete permutation
@@ -465,7 +463,7 @@ class TestJaccardDegenerateCases:
         """
         df, batch = _make_dataset(n_features=10, n_batches=3, n_per_batch=4)
         df.iloc[:, :] = np.nan
-        sd, sb, co = sort_batches(df, batch, "jaccard", needed_values=2)
+        _, _, co = sort_batches(df, batch, "jaccard", needed_values=2)
         np.testing.assert_array_equal(np.sort(co), np.arange(df.shape[1]))
 
     def test_empty_batch_not_chosen_as_start_when_others_are_not_empty(self):
@@ -477,6 +475,6 @@ class TestJaccardDegenerateCases:
         df, batch = _make_dataset(n_features=10, n_batches=3, n_per_batch=3)
         # Make batch 2 (indices 3-5) all NaN
         df.iloc[:, 3:6] = np.nan
-        sd, sb, co = sort_batches(df, batch, "jaccard", needed_values=2)
+        _, sb, _ = sort_batches(df, batch, "jaccard", needed_values=2)
         # Batch 2 (the empty one) must not be in first position
         assert sb[0] != 2

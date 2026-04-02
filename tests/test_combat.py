@@ -10,14 +10,14 @@ References
 Algorithm: Johnson WE, Li C, Rabinovic A. Biostatistics 8(1):118-127, 2007.
 """
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
-from pathlib import Path
 
 from harmonizepy.combat import combat
 from harmonizepy.combat_wrapper import adjust_combat
-
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -51,7 +51,7 @@ def make_test_data(n_proteins=50, n_samples_per_batch=5, n_batches=3, seed=42):
 
 
 # ---------------------------------------------------------------------------
-# Core correctness tests – all 4 modes
+# Core correctness tests - all 4 modes
 # ---------------------------------------------------------------------------
 
 
@@ -66,27 +66,25 @@ class TestCombatModes:
             (3, False, False),
             (4, False, True),
         ],
-        ids=["mode1-param-full", "mode2-param-meanonly",
-             "mode3-nonparam-full", "mode4-nonparam-meanonly"],
+        ids=[
+            "mode1-param-full",
+            "mode2-param-meanonly",
+            "mode3-nonparam-full",
+            "mode4-nonparam-meanonly",
+        ],
     )
     def test_mode(self, mode, par_prior, mean_only):
         df, batches = make_test_data()
 
         # Via low-level API
-        result = combat(
-            df.values, batches, par_prior=par_prior, mean_only=mean_only
-        )
+        result = combat(df.values, batches, par_prior=par_prior, mean_only=mean_only)
         assert result.shape == df.shape
         assert not np.isnan(result).any(), "NaN in output"
 
         # Batch mean spread should shrink
         n_batches = 3
-        means_before = [
-            df.values[:, batches == b].mean() for b in range(n_batches)
-        ]
-        means_after = [
-            result[:, batches == b].mean() for b in range(n_batches)
-        ]
+        means_before = [df.values[:, batches == b].mean() for b in range(n_batches)]
+        means_after = [result[:, batches == b].mean() for b in range(n_batches)]
         spread_before = max(means_before) - min(means_before)
         spread_after = max(means_after) - min(means_after)
         assert spread_after < spread_before, (
@@ -188,11 +186,11 @@ class TestRConcordance:
     def test_sva_combat(self, mode, par_prior, mean_only):
         """Compare against direct sva::ComBat output."""
         expected = _load_fixture(f"small_combat_mode{mode}.tsv")
-        result = combat(self.data, self.batches,
-                        par_prior=par_prior, mean_only=mean_only)
+        result = combat(self.data, self.batches, par_prior=par_prior, mean_only=mean_only)
         np.testing.assert_allclose(
-            result, expected, rtol=1e-4, atol=1e-6,
+            result,
+            expected,
+            rtol=1e-4,
+            atol=1e-6,
             err_msg=f"Mismatch vs R sva::ComBat mode {mode}",
         )
-
-

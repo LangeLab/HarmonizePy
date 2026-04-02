@@ -6,12 +6,13 @@ Validates:
 3. Edge cases.
 """
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
-from pathlib import Path
 
-from harmonizepy.limma_wrapper import remove_batch_effect, adjust_limma
+from harmonizepy.limma_wrapper import adjust_limma, remove_batch_effect
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 _has_r_fixtures = (FIXTURE_DIR / "small_limma.tsv").exists()
@@ -56,9 +57,7 @@ class TestLimmaBasic:
         assert isinstance(result, pd.DataFrame)
         assert list(result.index) == list(df.index)
         assert list(result.columns) == list(df.columns)
-        np.testing.assert_allclose(
-            result.values, remove_batch_effect(data, batches), rtol=1e-12
-        )
+        np.testing.assert_allclose(result.values, remove_batch_effect(data, batches), rtol=1e-12)
 
     def test_two_batches(self):
         rng = np.random.default_rng(7)
@@ -119,11 +118,12 @@ class TestRLimmaConcordance:
         self.batches = batch_csv["batch"].values
 
     def test_vs_r_limma(self):
-        expected = pd.read_csv(
-            FIXTURE_DIR / "small_limma.tsv", sep="\t", index_col=0
-        ).values
+        expected = pd.read_csv(FIXTURE_DIR / "small_limma.tsv", sep="\t", index_col=0).values
         result = remove_batch_effect(self.data, self.batches)
         np.testing.assert_allclose(
-            result, expected, rtol=1e-10, atol=1e-10,
+            result,
+            expected,
+            rtol=1e-10,
+            atol=1e-10,
             err_msg="Mismatch vs R limma::removeBatchEffect",
         )

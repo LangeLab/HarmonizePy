@@ -5,20 +5,29 @@ Read/write HarmonizR-compatible data and batch description files.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import cast
 
 import pandas as pd
 
 
 def read_main_data(path: str) -> pd.DataFrame:
-    """Read a TSV data matrix (features x samples).
+    """Read a features x samples data matrix.
+
+    Format is inferred from the file extension:
+
+    - ``.tsv`` / ``.txt`` or any other extension: tab-separated (default, R-compatible).
+    - ``.csv``: comma-separated.
+    - ``.feather`` / ``.ftr``: Apache Feather (requires ``pyarrow``).
+
+    The file must have a header row and use the first column as row names
+    (feature identifiers), matching R
+    ``read.table(sep="\\t", header=TRUE, row.names=1)``.
 
     Parameters
     ----------
     path : str
-        Path to the tab-separated file.  The file must have a header row
-        and use the first column as row names (feature identifiers).
-        Matches R ``read.table(sep="\\t", header=TRUE, row.names=1)``.
+        Path to the data file.
 
     Returns
     -------
@@ -34,8 +43,21 @@ def read_main_data(path: str) -> pd.DataFrame:
     --------
     >>> from harmonizepy.io import read_main_data
     >>> df = read_main_data("data.tsv")  # doctest: +SKIP
+    >>> df = read_main_data("data.csv")  # doctest: +SKIP
+    >>> df = read_main_data("data.feather")  # doctest: +SKIP
     """
-    df = pd.read_csv(path, sep="\t", index_col=0)
+    ext = Path(path).suffix.lower()
+    if ext in (".feather", ".ftr"):
+        # Feather encodes the index as a column named after the original index.
+        raw = pd.read_feather(path)
+        # The first column is always the row-name (feature identifier) column.
+        df = raw.set_index(raw.columns[0])
+    elif ext == ".csv":
+        df = pd.read_csv(path, sep=",", index_col=0)
+    else:
+        # Default: tab-separated (.tsv, .txt, or unrecognised extension)
+        df = pd.read_csv(path, sep="\t", index_col=0)
+
     # Drop completely empty rows/columns (mirrors janitor::remove_empty)
     df = cast(pd.DataFrame, df.dropna(how="all", axis=0).dropna(how="all", axis=1))
     return df

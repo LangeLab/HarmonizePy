@@ -1,0 +1,567 @@
+"""Tests for the harmonizepy CLI (__main__.py).
+
+Calls main(argv=[...]) directly so no installation or subprocess overhead.
+All tests that write files use tmp_path for isolation.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+
+import pandas as pd
+import pytest
+
+from harmonizepy.__main__ import (
+    _infer_format,
+    _resolve_output_path,
+    main,
+)
+from harmonizepy.core import harmonize
+
+# ---------------------------------------------------------------------------
+# Fixture paths
+# ---------------------------------------------------------------------------
+
+_FIXTURES = Path(__file__).parent / "fixtures"
+DATA = str(_FIXTURES / "small_input.tsv")
+BATCH = str(_FIXTURES / "small_batch.csv")
+
+# Medium dataset for block/sort tests (has enough batches)
+MED_DATA = str(_FIXTURES / "medium_input.tsv")
+MED_BATCH = str(_FIXTURES / "medium_batch.csv")
+
+
+# ===========================================================================
+# Helpers
+# ===========================================================================
+
+
+class TestResolveOutputPath:
+    def test_explicit_output_returned_unchanged(self) -> None:
+        assert _resolve_output_path("data.tsv", "/out/result.tsv") == "/out/result.tsv"
+
+    def test_default_placed_next_to_input(self) -> None:
+        result = _resolve_output_path("/data/my_file.tsv", None)
+        assert result == "/data/my_file_corrected.tsv"
+
+    def test_default_stem_preservation(self) -> None:
+        result = _resolve_output_path("proteins.tsv", None)
+        assert result == "proteins_corrected.tsv"
+
+
+class TestInferFormat:
+    def test_explicit_flag_wins(self) -> None:
+        assert _infer_format("result.tsv", "csv") == "csv"
+
+    def test_tsv_extension(self) -> None:
+        assert _infer_format("result.tsv", None) == "tsv"
+
+    def test_csv_extension(self) -> None:
+        assert _infer_format("result.csv", None) == "csv"
+
+    def test_feather_extension(self) -> None:
+        assert _infer_format("result.feather", None) == "feather"
+
+    def test_ftr_extension(self) -> None:
+        assert _infer_format("result.ftr", None) == "feather"
+
+    def test_unknown_extension_falls_back_to_tsv(self) -> None:
+        assert _infer_format("result.dat", None) == "tsv"
+
+    def test_txt_extension_is_tsv(self) -> None:
+        assert _infer_format("result.txt", None) == "tsv"
+
+
+# ===========================================================================
+# Minimal happy-path
+# ===========================================================================
+
+
+class TestCLIMinimal:
+    def test_creates_output_file(self, tmp_path: Path) -> None:
+        out = str(tmp_path / "result.tsv")
+        main([DATA, BATCH, "-o", out])
+        assert Path(out).exists()
+
+    def test_output_is_nonempty_dataframe(self, tmp_path: Path) -> None:
+        out = str(tmp_path / "result.tsv")
+        main([DATA, BATCH, "-o", out])
+        df = pd.read_csv(out, sep="\t", index_col=0)
+        assert not df.empty
+
+    def test_output_matches_harmonize_api(self, tmp_path: Path) -> None:
+        """CLI result must be numerically identical to calling harmonize() directly."""
+        out = str(tmp_path / "result.tsv")
+        main([DATA, BATCH, "-o", out])
+        cli_result = pd.read_csv(out, sep="\t", index_col=0)
+        api_result = harmonize(DATA, BATCH)
+        pd.testing.assert_frame_equal(cli_result, api_result, atol=1e-10)
+
+    def test_default_output_path_next_to_input(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When -o is omitted the output file lands alongside the input data."""
+        import shutil
+
+        local_data = str(tmp_path / "small_input.tsv")
+        local_batch = str(tmp_path / "small_batch.csv")
+        shutil.copy(DATA, local_data)
+        shutil.copy(BATCH, local_batch)
+
+        main([local_data, local_batch])
+        assert (tmp_path / "small_input_corrected.tsv").exists()
+
+    def test_python_m_invocation(self, tmp_path: Path) -> None:
+        """Ensure __main__.py is importable and callable as python -m harmonizepy."""
+        out = str(tmp_path / "result.tsv")
+        # main() is the same as `python -m harmonizepy` when called with argv
+        main([DATA, BATCH, "-o", out])
+        assert Path(out).is_file()
+
+
+# ===========================================================================
+# Algorithm flags
+# ===========================================================================
+
+
+class TestCLIAlgorithmFlags:
+    def test_algorithm_combat_default(self, tmp_path: Path) -> None:
+        out = str(tmp_path / "r.tsv")
+        main([DATA, BATCH, "-o", out])
+        assert Path(out).exists()
+
+    def test_algorithm_limma(self, tmp_path: Path) -> None:
+        out = str(tmp_path / "r.tsv")
+        main([DATA, BATCH, "-o", out, "--algorithm", "limma"])
+        assert Path(out).exists()
+
+    def test_combat_mode_1(self, tmp_path: Path) -> None:
+        out = str(tmp_path / "r.tsv")
+        main([DATA, BATCH, "-o", out, "--combat-mode", "1"])
+        assert Path(out).exists()
+
+    def test_combat_mode_2(self, tmp_path: Path) -> None:
+        out = str(tmp_path / "r.tsv")
+        main([DATA, BATCH, "-o", out, "--combat-mode", "2"])
+        assert Path(out).exists()
+
+    def test_combat_mode_3(self, tmp_path: Path) -> None:
+        out = str(tmp_path / "r.tsv")
+        main([DATA, BATCH, "-o", out, "--combat-mode", "3"])
+        assert Path(out).exists()
+
+    def test_combat_mode_4(self, tmp_path: Path) -> None:
+        out = str(tmp_path / "r.tsv")
+        main([DATA, BATCH, "-o", out, "--combat-mode", "4"])
+        assert Path(out).exists()
+
+    def test_needed_values_explicit(self, tmp_path: Path) -> None:
+        out = str(tmp_path / "r.tsv")
+        main([DATA, BATCH, "-o", out, "--needed-values", "2"])
+        assert Path(out).exists()
+
+    def test_limma_result_matches_api(self, tmp_path: Path) -> None:
+        out = str(tmp_path / "r.tsv")
+        main([DATA, BATCH, "-o", out, "--algorithm", "limma"])
+        cli = pd.read_csv(out, sep="\t", index_col=0)
+        api = harmonize(DATA, BATCH, algorithm="limma")
+        pd.testing.assert_frame_equal(cli, api, atol=1e-10)
+
+
+# ===========================================================================
+# Sorting and blocking
+# ===========================================================================
+
+
+class TestCLISortBlock:
+    def test_sort_sparsity(self, tmp_path: Path) -> None:
+        out = str(tmp_path / "r.tsv")
+        main([MED_DATA, MED_BATCH, "-o", out, "--sort", "sparsity"])
+        assert Path(out).exists()
+
+    def test_sort_jaccard(self, tmp_path: Path) -> None:
+        out = str(tmp_path / "r.tsv")
+        main([MED_DATA, MED_BATCH, "-o", out, "--sort", "jaccard"])
+        assert Path(out).exists()
+
+    def test_sort_seriation(self, tmp_path: Path) -> None:
+        out = str(tmp_path / "r.tsv")
+        main([MED_DATA, MED_BATCH, "-o", out, "--sort", "seriation"])
+        assert Path(out).exists()
+
+    def test_sort_and_block(self, tmp_path: Path) -> None:
+        out = str(tmp_path / "r.tsv")
+        main([MED_DATA, MED_BATCH, "-o", out, "--sort", "sparsity", "--block", "2"])
+        assert Path(out).exists()
+
+    def test_sort_block_matches_api(self, tmp_path: Path) -> None:
+        out = str(tmp_path / "r.tsv")
+        main([MED_DATA, MED_BATCH, "-o", out, "--sort", "sparsity", "--block", "2"])
+        cli = pd.read_csv(out, sep="\t", index_col=0)
+        api = harmonize(MED_DATA, MED_BATCH, sort="sparsity", block=2)
+        pd.testing.assert_frame_equal(cli, api, atol=1e-10)
+
+    def test_block_without_sort(self, tmp_path: Path) -> None:
+        out = str(tmp_path / "r.tsv")
+        main([MED_DATA, MED_BATCH, "-o", out, "--block", "2"])
+        assert Path(out).exists()
+
+
+# ===========================================================================
+# Unique removal
+# ===========================================================================
+
+
+class TestCLIUniqueRemoval:
+    def test_unique_removal_enabled_by_default(self, tmp_path: Path) -> None:
+        out_default = str(tmp_path / "default.tsv")
+        out_explicit = str(tmp_path / "explicit.tsv")
+        main([DATA, BATCH, "-o", out_default])
+        main([DATA, BATCH, "-o", out_explicit, "--unique-removal"])
+        df_default = pd.read_csv(out_default, sep="\t", index_col=0)
+        df_explicit = pd.read_csv(out_explicit, sep="\t", index_col=0)
+        pd.testing.assert_frame_equal(df_default, df_explicit, atol=1e-10)
+
+    def test_no_unique_removal(self, tmp_path: Path) -> None:
+        out = str(tmp_path / "r.tsv")
+        main([DATA, BATCH, "-o", out, "--no-unique-removal"])
+        assert Path(out).exists()
+
+    def test_no_unique_removal_matches_api(self, tmp_path: Path) -> None:
+        out = str(tmp_path / "r.tsv")
+        main([DATA, BATCH, "-o", out, "--no-unique-removal"])
+        cli = pd.read_csv(out, sep="\t", index_col=0)
+        api = harmonize(DATA, BATCH, unique_removal=False)
+        pd.testing.assert_frame_equal(cli, api, atol=1e-10)
+
+
+# ===========================================================================
+# Output formats
+# ===========================================================================
+
+
+class TestCLIOutputFormats:
+    def test_tsv_explicit_flag(self, tmp_path: Path) -> None:
+        out = str(tmp_path / "result.tsv")
+        main([DATA, BATCH, "-o", out, "--output-format", "tsv"])
+        df = pd.read_csv(out, sep="\t", index_col=0)
+        assert not df.empty
+
+    def test_tsv_inferred_from_extension(self, tmp_path: Path) -> None:
+        out = str(tmp_path / "result.tsv")
+        main([DATA, BATCH, "-o", out])
+        df = pd.read_csv(out, sep="\t", index_col=0)
+        assert not df.empty
+
+    def test_csv_inferred_from_extension(self, tmp_path: Path) -> None:
+        out = str(tmp_path / "result.csv")
+        main([DATA, BATCH, "-o", out])
+        df = pd.read_csv(out, index_col=0)
+        assert not df.empty
+
+    def test_csv_explicit_flag(self, tmp_path: Path) -> None:
+        out = str(tmp_path / "result.csv")
+        main([DATA, BATCH, "-o", out, "--output-format", "csv"])
+        df = pd.read_csv(out, index_col=0)
+        assert not df.empty
+
+    def test_format_flag_overrides_extension(self, tmp_path: Path) -> None:
+        """--output-format csv on a .tsv path: file is valid CSV, not TSV."""
+        out = str(tmp_path / "result.tsv")
+        main([DATA, BATCH, "-o", out, "--output-format", "csv"])
+        # A CSV file written to .tsv path: readable as CSV (comma-separated)
+        df = pd.read_csv(out, index_col=0)
+        assert not df.empty
+
+    def test_feather_inferred_from_extension(self, tmp_path: Path) -> None:
+        pytest.importorskip("pyarrow")
+        out = str(tmp_path / "result.feather")
+        main([DATA, BATCH, "-o", out])
+        df = pd.read_feather(out)
+        assert not df.empty
+
+    def test_feather_explicit_flag(self, tmp_path: Path) -> None:
+        pytest.importorskip("pyarrow")
+        out = str(tmp_path / "result.ftr")
+        main([DATA, BATCH, "-o", out, "--output-format", "feather"])
+        df = pd.read_feather(out)
+        assert not df.empty
+
+    def test_csv_content_matches_api(self, tmp_path: Path) -> None:
+        out = str(tmp_path / "result.csv")
+        main([DATA, BATCH, "-o", out])
+        cli = pd.read_csv(out, index_col=0)
+        api = harmonize(DATA, BATCH)
+        pd.testing.assert_frame_equal(cli, api, atol=1e-10)
+
+
+# ===========================================================================
+# Dry-run
+# ===========================================================================
+
+
+class TestCLIDryRun:
+    def test_dry_run_no_output_file_created(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        main([DATA, BATCH, "--dry-run"])
+        # Only the dry-run — no corrected file should be written
+        assert not (tmp_path / "small_input_corrected.tsv").exists()
+
+    def test_dry_run_prints_summary(self, capsys: pytest.CaptureFixture[str]) -> None:
+        main([DATA, BATCH, "--dry-run"])
+        out = capsys.readouterr().out
+        assert "dry run" in out.lower()
+
+    def test_dry_run_shows_dimensions(self, capsys: pytest.CaptureFixture[str]) -> None:
+        main([DATA, BATCH, "--dry-run"])
+        out = capsys.readouterr().out
+        assert "Features" in out
+        assert "Samples" in out
+        assert "Batches" in out
+        assert "Sub-matrices" in out
+
+    def test_dry_run_shows_algorithm(self, capsys: pytest.CaptureFixture[str]) -> None:
+        main([DATA, BATCH, "--dry-run", "--algorithm", "limma"])
+        out = capsys.readouterr().out
+        assert "limma" in out
+
+    def test_dry_run_shows_sort_strategy(self, capsys: pytest.CaptureFixture[str]) -> None:
+        main([MED_DATA, MED_BATCH, "--dry-run", "--sort", "sparsity"])
+        out = capsys.readouterr().out
+        assert "sparsity" in out
+
+    def test_dry_run_exits_zero(self) -> None:
+        """dry-run returns normally (exit code 0 implicitly)."""
+        # main() returns None on success — no SystemExit is raised
+        result = main([DATA, BATCH, "--dry-run"])
+        assert result is None
+
+    def test_dry_run_invalid_block_exits_nonzero(self) -> None:
+        """--dry-run with --block 1 (< 2) should exit with code 1."""
+        with pytest.raises(SystemExit) as exc_info:
+            main([DATA, BATCH, "--dry-run", "--block", "1"])
+        assert exc_info.value.code == 1
+
+    def test_dry_run_with_explicit_output_flag(self, tmp_path: Path) -> None:
+        out = str(tmp_path / "will_not_be_created.tsv")
+        main([DATA, BATCH, "--dry-run", "-o", out])
+        assert not Path(out).exists()
+
+
+# ===========================================================================
+# Run summary JSON
+# ===========================================================================
+
+
+class TestCLISummary:
+    def test_summary_file_created(self, tmp_path: Path) -> None:
+        out = str(tmp_path / "result.tsv")
+        summary = str(tmp_path / "summary.json")
+        main([DATA, BATCH, "-o", out, "--summary", summary])
+        assert Path(summary).exists()
+
+    def test_summary_is_valid_json(self, tmp_path: Path) -> None:
+        out = str(tmp_path / "result.tsv")
+        summary = str(tmp_path / "summary.json")
+        main([DATA, BATCH, "-o", out, "--summary", summary])
+        with Path(summary).open() as fh:
+            data = json.load(fh)
+        assert isinstance(data, dict)
+
+    def test_summary_contains_required_keys(self, tmp_path: Path) -> None:
+        out = str(tmp_path / "result.tsv")
+        summary = str(tmp_path / "summary.json")
+        main([DATA, BATCH, "-o", out, "--summary", summary])
+        with Path(summary).open() as fh:
+            s = json.load(fh)
+        required = {
+            "harmonizepy_version",
+            "algorithm",
+            "combat_mode",
+            "needed_values",
+            "sort_strategy",
+            "block_size",
+            "unique_removal",
+            "n_features_input",
+            "n_features_output",
+            "n_samples",
+            "n_batches",
+            "data_file",
+            "description_file",
+            "output_file",
+            "output_format",
+        }
+        assert required <= s.keys()
+
+    def test_summary_algorithm_recorded(self, tmp_path: Path) -> None:
+        out = str(tmp_path / "result.tsv")
+        summary = str(tmp_path / "summary.json")
+        main([DATA, BATCH, "-o", out, "--summary", summary, "--algorithm", "limma"])
+        with Path(summary).open() as fh:
+            s = json.load(fh)
+        assert s["algorithm"] == "limma"
+
+    def test_summary_combat_mode_recorded(self, tmp_path: Path) -> None:
+        out = str(tmp_path / "result.tsv")
+        summary = str(tmp_path / "summary.json")
+        main([DATA, BATCH, "-o", out, "--summary", summary, "--combat-mode", "3"])
+        with Path(summary).open() as fh:
+            s = json.load(fh)
+        assert s["combat_mode"] == 3
+
+    def test_summary_dimensions_correct(self, tmp_path: Path) -> None:
+        out = str(tmp_path / "result.tsv")
+        summary = str(tmp_path / "summary.json")
+        main([DATA, BATCH, "-o", out, "--summary", summary])
+        with Path(summary).open() as fh:
+            s = json.load(fh)
+        # n_features_output <= n_features_input (correction may drop rows)
+        assert s["n_features_output"] <= s["n_features_input"]
+        assert s["n_samples"] > 0
+        assert s["n_batches"] >= 2
+
+    def test_summary_version_is_string(self, tmp_path: Path) -> None:
+        out = str(tmp_path / "result.tsv")
+        summary = str(tmp_path / "summary.json")
+        main([DATA, BATCH, "-o", out, "--summary", summary])
+        with Path(summary).open() as fh:
+            s = json.load(fh)
+        assert isinstance(s["harmonizepy_version"], str)
+        assert re.search(r"\d+\.\d+\.\d+", s["harmonizepy_version"])
+
+
+# ===========================================================================
+# Verbosity flags
+# ===========================================================================
+
+
+class TestCLIVerbosity:
+    def test_verbose_flag_does_not_crash(self, tmp_path: Path) -> None:
+        out = str(tmp_path / "r.tsv")
+        main([DATA, BATCH, "-o", out, "--verbose"])
+        assert Path(out).exists()
+
+    def test_short_v_flag(self, tmp_path: Path) -> None:
+        out = str(tmp_path / "r.tsv")
+        main([DATA, BATCH, "-o", out, "-v"])
+        assert Path(out).exists()
+
+    def test_quiet_flag_does_not_crash(self, tmp_path: Path) -> None:
+        out = str(tmp_path / "r.tsv")
+        main([DATA, BATCH, "-o", out, "--quiet"])
+        assert Path(out).exists()
+
+    def test_short_q_flag(self, tmp_path: Path) -> None:
+        out = str(tmp_path / "r.tsv")
+        main([DATA, BATCH, "-o", out, "-q"])
+        assert Path(out).exists()
+
+    def test_verbose_and_quiet_mutually_exclusive(self) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            main([DATA, BATCH, "--verbose", "--quiet"])
+        assert exc_info.value.code != 0
+
+
+# ===========================================================================
+# Error handling
+# ===========================================================================
+
+
+class TestCLIErrors:
+    def test_missing_all_positional_args(self) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            main([])
+        assert exc_info.value.code != 0
+
+    def test_missing_description_arg(self) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            main([DATA])
+        assert exc_info.value.code != 0
+
+    def test_data_file_not_found(self, tmp_path: Path) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            main(["nonexistent_data.tsv", BATCH, "-o", str(tmp_path / "r.tsv")])
+        assert exc_info.value.code != 0
+
+    def test_description_file_not_found(self, tmp_path: Path) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            main([DATA, "nonexistent_batch.csv", "-o", str(tmp_path / "r.tsv")])
+        assert exc_info.value.code != 0
+
+    def test_invalid_algorithm(self) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            main([DATA, BATCH, "--algorithm", "InvalidAlgo"])
+        assert exc_info.value.code != 0
+
+    def test_invalid_combat_mode(self) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            main([DATA, BATCH, "--combat-mode", "5"])
+        assert exc_info.value.code != 0
+
+    def test_invalid_sort_strategy(self) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            main([DATA, BATCH, "--sort", "random"])
+        assert exc_info.value.code != 0
+
+    def test_block_lt_2_exits_nonzero(self, tmp_path: Path) -> None:
+        """block=1 fails validation inside harmonize → exit 1."""
+        with pytest.raises(SystemExit) as exc_info:
+            main([DATA, BATCH, "-o", str(tmp_path / "r.tsv"), "--block", "1"])
+        assert exc_info.value.code == 1
+
+    def test_invalid_output_format(self) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            main([DATA, BATCH, "--output-format", "xlsx"])
+        assert exc_info.value.code != 0
+
+
+# ===========================================================================
+# --help and --version
+# ===========================================================================
+
+
+class TestCLIHelpVersion:
+    def test_help_exits_zero(self, capsys: pytest.CaptureFixture[str]) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            main(["--help"])
+        assert exc_info.value.code == 0
+
+    def test_help_lists_core_flags(self, capsys: pytest.CaptureFixture[str]) -> None:
+        with pytest.raises(SystemExit):
+            main(["--help"])
+        out = capsys.readouterr().out
+        for flag in (
+            "--algorithm",
+            "--combat-mode",
+            "--sort",
+            "--block",
+            "--unique-removal",
+            "--dry-run",
+            "--summary",
+            "--verbose",
+            "--quiet",
+        ):
+            assert flag in out, f"--help output missing flag: {flag}"
+
+    def test_version_exits_zero(self) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            main(["--version"])
+        assert exc_info.value.code == 0
+
+    def test_version_contains_version_number(self, capsys: pytest.CaptureFixture[str]) -> None:
+        with pytest.raises(SystemExit):
+            main(["--version"])
+        combined = capsys.readouterr()
+        output = combined.out + combined.err
+        assert re.search(r"\d+\.\d+\.\d+", output), f"No version number in: {output!r}"
+
+    def test_version_contains_package_name(self, capsys: pytest.CaptureFixture[str]) -> None:
+        with pytest.raises(SystemExit):
+            main(["--version"])
+        combined = capsys.readouterr()
+        output = combined.out + combined.err
+        assert "harmonizepy" in output.lower()

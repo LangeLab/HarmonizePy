@@ -25,6 +25,7 @@ _has_fixtures = (FIXTURE_DIR / "small_input.tsv").exists()
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_data(n_features=20, n_per_batch=5, n_batches=3, seed=0):
     """Synthetic data with known batch shifts."""
     rng = np.random.default_rng(seed)
@@ -45,11 +46,13 @@ def _make_df_and_desc(n_features=20, n_per_batch=5, n_batches=3, seed=0):
         index=[f"feat_{i}" for i in range(n_features)],
         columns=[f"s{j}" for j in range(n_samples)],
     )
-    desc = pd.DataFrame({
-        "ID": df.columns.tolist(),
-        "sample": list(range(1, n_samples + 1)),
-        "batch": batches + 1,
-    })
+    desc = pd.DataFrame(
+        {
+            "ID": df.columns.tolist(),
+            "sample": list(range(1, n_samples + 1)),
+            "batch": batches + 1,
+        }
+    )
     return df, desc
 
 
@@ -61,14 +64,15 @@ def _make_df_and_desc(n_features=20, n_per_batch=5, n_batches=3, seed=0):
 class TestImports:
     def test_top_level_imports(self):
         from harmonizepy import (
-            harmonize,
-            combat,
-            adjust_combat,
-            remove_batch_effect,
-            adjust_limma,
             HarmonizeConfig,
             __version__,
+            adjust_combat,
+            adjust_limma,
+            combat,
+            harmonize,
+            remove_batch_effect,
         )
+
         assert callable(harmonize)
         assert callable(combat)
         assert callable(adjust_combat)
@@ -79,6 +83,7 @@ class TestImports:
 
     def test_version_format(self):
         from harmonizepy import __version__
+
         parts = __version__.split(".")
         assert len(parts) == 3
         assert all(p.isdigit() for p in parts)
@@ -391,16 +396,19 @@ class TestHarmonizeWithConfig:
             columns=[f"s{j}" for j in range(6)],
         )
         data.iloc[:, 3:] += 3.0
-        desc = pd.DataFrame({
-            "ID": [f"s{j}" for j in range(6)],
-            "sample": list(range(1, 7)),
-            "batch": [1, 1, 1, 2, 2, 2],
-        })
+        desc = pd.DataFrame(
+            {
+                "ID": [f"s{j}" for j in range(6)],
+                "sample": list(range(1, 7)),
+                "batch": [1, 1, 1, 2, 2, 2],
+            }
+        )
         return data, desc
 
     def test_config_equivalent_to_kwargs(self, small_inputs):
         """Config with same values as kwargs must produce identical output."""
         from harmonizepy import HarmonizeConfig, harmonize
+
         data, desc = small_inputs
         cfg = HarmonizeConfig(algorithm="ComBat", combat_mode=2)
         result_cfg = harmonize(data, desc, config=cfg)
@@ -410,6 +418,7 @@ class TestHarmonizeWithConfig:
     def test_config_limma(self, small_inputs):
         """Config selecting limma matches direct kwarg."""
         from harmonizepy import HarmonizeConfig, harmonize
+
         data, desc = small_inputs
         cfg = HarmonizeConfig(algorithm="limma")
         result_cfg = harmonize(data, desc, config=cfg)
@@ -419,6 +428,7 @@ class TestHarmonizeWithConfig:
     def test_config_overrides_kwargs(self, small_inputs):
         """When config is provided, its algorithm is used even if kwarg says otherwise."""
         from harmonizepy import HarmonizeConfig, harmonize
+
         data, desc = small_inputs
         cfg = HarmonizeConfig(algorithm="limma")
         # Pass algorithm="ComBat" as kwarg — config should win
@@ -429,6 +439,7 @@ class TestHarmonizeWithConfig:
     def test_config_needed_values_none_auto_selects(self, small_inputs):
         """Config with needed_values=None applies same auto-selection as default."""
         from harmonizepy import HarmonizeConfig, harmonize
+
         data, desc = small_inputs
         cfg = HarmonizeConfig(needed_values=None)
         result_cfg = harmonize(data, desc, config=cfg)

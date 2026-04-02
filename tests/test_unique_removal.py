@@ -11,11 +11,7 @@ Sections
 
 from __future__ import annotations
 
-import numpy as np
-import pytest
-
-from harmonizepy.affiliation import remove_unique_combinations, _find_best_crop
-
+from harmonizepy.affiliation import _find_best_crop, remove_unique_combinations
 
 # ---------------------------------------------------------------------------
 # 1. TestSingletonRescue

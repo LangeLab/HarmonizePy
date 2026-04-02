@@ -4,13 +4,14 @@ Tests the complete spotting → splitting → adjust → concat flow via
 ``harmonize()`` and validates against R HarmonizR fixtures.
 """
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
-from pathlib import Path
 
-from harmonizepy.core import harmonize
 from harmonizepy.affiliation import build_affiliation_list
+from harmonizepy.core import harmonize
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 _has_small = (FIXTURE_DIR / "small_combat_mode1.tsv").exists()
@@ -24,7 +25,7 @@ _has_medium = (FIXTURE_DIR / "medium_harmonizr_combat_mode1.tsv").exists()
 
 @pytest.mark.skipif(not _has_small, reason="R fixtures not generated")
 class TestSmallPipeline:
-    """Full pipeline on the small case (10×6, no NaN) vs R HarmonizR."""
+    """Full pipeline on the small case (10x6, no NaN) vs R HarmonizR."""
 
     @pytest.mark.parametrize("mode", [1, 2, 3, 4])
     def test_combat_modes(self, mode):
@@ -36,12 +37,16 @@ class TestSmallPipeline:
         )
         expected = pd.read_csv(
             FIXTURE_DIR / f"small_combat_mode{mode}.tsv",
-            sep="\t", index_col=0,
+            sep="\t",
+            index_col=0,
         )
         assert result.shape == expected.shape
         assert result.isna().sum().sum() == 0
         np.testing.assert_allclose(
-            result.values, expected.values, rtol=1e-4, atol=1e-6,
+            result.values,
+            expected.values,
+            rtol=1e-4,
+            atol=1e-6,
             err_msg=f"Pipeline mismatch vs R sva::ComBat mode {mode}",
         )
 
@@ -53,11 +58,15 @@ class TestSmallPipeline:
         )
         expected = pd.read_csv(
             FIXTURE_DIR / "small_limma.tsv",
-            sep="\t", index_col=0,
+            sep="\t",
+            index_col=0,
         )
         assert result.shape == expected.shape
         np.testing.assert_allclose(
-            result.values, expected.values, rtol=1e-10, atol=1e-10,
+            result.values,
+            expected.values,
+            rtol=1e-10,
+            atol=1e-10,
             err_msg="Pipeline mismatch vs R limma",
         )
 
@@ -69,7 +78,7 @@ class TestSmallPipeline:
 
 @pytest.mark.skipif(not _has_medium, reason="R medium fixtures not generated")
 class TestMediumPipeline:
-    """Full pipeline on the medium case (100×12, 30% missing) vs R HarmonizR."""
+    """Full pipeline on the medium case (100x12, 30% missing) vs R HarmonizR."""
 
     @pytest.mark.parametrize("mode", [1, 2, 3, 4])
     def test_combat_modes_with_missing(self, mode):
@@ -81,7 +90,8 @@ class TestMediumPipeline:
         )
         expected = pd.read_csv(
             FIXTURE_DIR / f"medium_harmonizr_combat_mode{mode}.tsv",
-            sep="\t", index_col=0,
+            sep="\t",
+            index_col=0,
         )
         assert result.shape == expected.shape
 
@@ -97,8 +107,10 @@ class TestMediumPipeline:
         e = expected.loc[common]
         mask = r.notna() & e.notna()
         np.testing.assert_allclose(
-            r.values[mask.values], e.values[mask.values],
-            rtol=1e-4, atol=1e-6,
+            r.values[mask.values],
+            e.values[mask.values],
+            rtol=1e-4,
+            atol=1e-6,
             err_msg=f"Pipeline mismatch vs HarmonizR ComBat mode {mode} (medium)",
         )
 
@@ -116,10 +128,14 @@ class TestDataFrameInput:
         result = harmonize(data, desc, algorithm="ComBat", combat_mode=1)
         expected = pd.read_csv(
             FIXTURE_DIR / "small_combat_mode1.tsv",
-            sep="\t", index_col=0,
+            sep="\t",
+            index_col=0,
         )
         np.testing.assert_allclose(
-            result.values, expected.values, rtol=1e-4, atol=1e-6,
+            result.values,
+            expected.values,
+            rtol=1e-4,
+            atol=1e-6,
         )
 
     def test_output_file(self, tmp_path):
@@ -152,15 +168,14 @@ class TestSpotting:
     def test_one_batch_missing(self):
         """Feature with one full batch missing → only present batch in affiliation."""
         data = pd.DataFrame(
-            [[1, 2, 3, np.nan, np.nan, np.nan],
-             [1, 2, 3, 4, 5, 6]],
+            [[1, 2, 3, np.nan, np.nan, np.nan], [1, 2, 3, 4, 5, 6]],
             index=["missing_b2", "complete"],
             columns=[f"s{j}" for j in range(6)],
         )
         batch_list = np.array([1, 1, 1, 2, 2, 2])
         result = build_affiliation_list(data, batch_list, batch_list, needed_values=2)
-        assert result[0] == (1,)     # missing_b2: only batch 1
-        assert result[1] == (1, 2)   # complete: both batches
+        assert result[0] == (1,)  # missing_b2: only batch 1
+        assert result[1] == (1, 2)  # complete: both batches
 
     def test_needed_values_threshold(self):
         """With needed_values=2, a batch with only 1 value is excluded."""
@@ -173,8 +188,8 @@ class TestSpotting:
         batch_list = np.array([1, 1, 2, 2, 2])
         result_2 = build_affiliation_list(data, batch_list, batch_list, needed_values=2)
         result_1 = build_affiliation_list(data, batch_list, batch_list, needed_values=1)
-        assert result_2[0] == (2,)      # batch 1 excluded (only 1 value)
-        assert result_1[0] == (1, 2)    # batch 1 included (1 value is enough)
+        assert result_2[0] == (2,)  # batch 1 excluded (only 1 value)
+        assert result_1[0] == (1, 2)  # batch 1 included (1 value is enough)
 
     def test_all_missing(self):
         """Feature with all NaN → empty affiliation."""
@@ -197,7 +212,7 @@ class TestPipelineEdgeCases:
     def test_description_mismatch_raises(self):
         data = pd.DataFrame(np.ones((3, 4)))
         desc = pd.DataFrame({"ID": ["a", "b", "c"], "sample": [1, 2, 3], "batch": [1, 1, 2]})
-        with pytest.raises(ValueError, match="(?i)sample"):
+        with pytest.raises(ValueError, match=r"(?i)sample"):
             harmonize(data, desc)
 
     def test_single_batch_no_crash(self):
@@ -206,11 +221,13 @@ class TestPipelineEdgeCases:
             index=[f"f{i}" for i in range(5)],
             columns=[f"s{j}" for j in range(4)],
         )
-        desc = pd.DataFrame({
-            "ID": [f"s{j}" for j in range(4)],
-            "sample": [1, 2, 3, 4],
-            "batch": [1, 1, 1, 1],
-        })
+        desc = pd.DataFrame(
+            {
+                "ID": [f"s{j}" for j in range(4)],
+                "sample": [1, 2, 3, 4],
+                "batch": [1, 1, 1, 1],
+            }
+        )
         result = harmonize(data, desc)
         # Single batch → data returned as-is (no adjustment possible)
         np.testing.assert_array_equal(result.values, data.values)

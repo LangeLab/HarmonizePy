@@ -39,16 +39,17 @@ These tolerances are the reference for future changes; tighter values
 should not be used without understanding the cause.
 """
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
-from pathlib import Path
 
+from harmonizepy.affiliation import build_affiliation_list
 from harmonizepy.combat import combat
 from harmonizepy.combat_wrapper import adjust_combat
-from harmonizepy.limma_wrapper import remove_batch_effect, adjust_limma
 from harmonizepy.core import harmonize
-from harmonizepy.affiliation import build_affiliation_list
+from harmonizepy.limma_wrapper import adjust_limma, remove_batch_effect
 from harmonizepy.splitting import splitting
 
 # ---------------------------------------------------------------------------
@@ -81,35 +82,49 @@ def _fixture_exists(name: str) -> bool:
 
 _DATASETS = {
     "large": {
-        "input": "large_input.tsv", "batch": "large_batch.csv",
-        "modes": [1, 2, 3, 4], "fixture": "large_combat_mode{}.tsv",
+        "input": "large_input.tsv",
+        "batch": "large_batch.csv",
+        "modes": [1, 2, 3, 4],
+        "fixture": "large_combat_mode{}.tsv",
     },
     "unbalanced": {
-        "input": "unbalanced_input.tsv", "batch": "unbalanced_batch.csv",
-        "modes": [1, 2, 3, 4], "fixture": "unbalanced_combat_mode{}.tsv",
+        "input": "unbalanced_input.tsv",
+        "batch": "unbalanced_batch.csv",
+        "modes": [1, 2, 3, 4],
+        "fixture": "unbalanced_combat_mode{}.tsv",
     },
     "minimal": {
-        "input": "minimal_input.tsv", "batch": "minimal_batch.csv",
+        "input": "minimal_input.tsv",
+        "batch": "minimal_batch.csv",
         # mode 1 fails in R too (2 features, convergence error), skip it
         # mode 4 is identical to mode 2 for this tiny dataset
-        "modes": [2, 3], "fixture": "minimal_combat_mode{}.tsv",
+        "modes": [2, 3],
+        "fixture": "minimal_combat_mode{}.tsv",
     },
     "highvar": {
-        "input": "highvar_input.tsv", "batch": "highvar_batch.csv",
-        "modes": [1, 2, 3, 4], "fixture": "highvar_combat_mode{}.tsv",
+        "input": "highvar_input.tsv",
+        "batch": "highvar_batch.csv",
+        "modes": [1, 2, 3, 4],
+        "fixture": "highvar_combat_mode{}.tsv",
     },
     "nearconstant": {
-        "input": "nearconstant_input.tsv", "batch": "nearconstant_batch.csv",
+        "input": "nearconstant_input.tsv",
+        "batch": "nearconstant_batch.csv",
         # Only mean_only modes (2, 4) for near-constant features
-        "modes": [2, 4], "fixture": "nearconstant_combat_mode{}.tsv",
+        "modes": [2, 4],
+        "fixture": "nearconstant_combat_mode{}.tsv",
     },
     "negative": {
-        "input": "negative_input.tsv", "batch": "negative_batch.csv",
-        "modes": [1, 2, 3, 4], "fixture": "negative_combat_mode{}.tsv",
+        "input": "negative_input.tsv",
+        "batch": "negative_batch.csv",
+        "modes": [1, 2, 3, 4],
+        "fixture": "negative_combat_mode{}.tsv",
     },
     "wide": {
-        "input": "wide_input.tsv", "batch": "wide_batch.csv",
-        "modes": [1, 2, 3, 4], "fixture": "wide_combat_mode{}.tsv",
+        "input": "wide_input.tsv",
+        "batch": "wide_batch.csv",
+        "modes": [1, 2, 3, 4],
+        "fixture": "wide_combat_mode{}.tsv",
     },
 }
 
@@ -166,23 +181,29 @@ class TestCombatRConcordanceExtended:
             unique_b = np.unique(batch)
             for r in nan_rows:
                 # Check within-batch variance (what R actually uses for pooled var)
-                within_vars = [data[r, batch == b].var(ddof=1)
-                               for b in unique_b if (batch == b).sum() > 1]
+                within_vars = [
+                    data[r, batch == b].var(ddof=1) for b in unique_b if (batch == b).sum() > 1
+                ]
                 max_within_var = max(within_vars) if within_vars else 0
                 assert max_within_var < 0.1, (
-                    f"R output NaN for row {r} but max within-batch "
-                    f"var={max_within_var:.2e}"
+                    f"R output NaN for row {r} but max within-batch var={max_within_var:.2e}"
                 )
             # Compare non-NaN portion
             valid = ~r_nan_mask
             if valid.any():
                 np.testing.assert_allclose(
-                    result[valid], expected[valid], rtol=rtol, atol=atol,
+                    result[valid],
+                    expected[valid],
+                    rtol=rtol,
+                    atol=atol,
                     err_msg=f"{dataset} mode {mode}: mismatch vs R sva::ComBat",
                 )
         else:
             np.testing.assert_allclose(
-                result, expected, rtol=rtol, atol=atol,
+                result,
+                expected,
+                rtol=rtol,
+                atol=atol,
                 err_msg=f"{dataset} mode {mode}: mismatch vs R sva::ComBat",
             )
 
@@ -216,8 +237,7 @@ class TestCombatRConcordanceExtended:
         spread_before = max(means_before) - min(means_before)
         spread_after = max(means_after) - min(means_after)
         assert spread_after < spread_before + 1e-10, (
-            f"{dataset} mode {mode}: spread not reduced "
-            f"{spread_before:.4f} → {spread_after:.4f}"
+            f"{dataset} mode {mode}: spread not reduced {spread_before:.4f} → {spread_after:.4f}"
         )
 
 
@@ -226,21 +246,33 @@ class TestCombatRConcordanceExtended:
 # ===================================================================
 
 _LIMMA_DATASETS = {
-    "large": {"input": "large_input.tsv", "batch": "large_batch.csv",
-              "fixture": "large_limma.tsv"},
-    "unbalanced": {"input": "unbalanced_input.tsv", "batch": "unbalanced_batch.csv",
-                   "fixture": "unbalanced_limma.tsv"},
-    "minimal": {"input": "minimal_input.tsv", "batch": "minimal_batch.csv",
-                "fixture": "minimal_limma.tsv"},
-    "highvar": {"input": "highvar_input.tsv", "batch": "highvar_batch.csv",
-                "fixture": "highvar_limma.tsv"},
-    "nearconstant": {"input": "nearconstant_input.tsv",
-                     "batch": "nearconstant_batch.csv",
-                     "fixture": "nearconstant_limma.tsv"},
-    "negative": {"input": "negative_input.tsv", "batch": "negative_batch.csv",
-                 "fixture": "negative_limma.tsv"},
-    "wide": {"input": "wide_input.tsv", "batch": "wide_batch.csv",
-             "fixture": "wide_limma.tsv"},
+    "large": {"input": "large_input.tsv", "batch": "large_batch.csv", "fixture": "large_limma.tsv"},
+    "unbalanced": {
+        "input": "unbalanced_input.tsv",
+        "batch": "unbalanced_batch.csv",
+        "fixture": "unbalanced_limma.tsv",
+    },
+    "minimal": {
+        "input": "minimal_input.tsv",
+        "batch": "minimal_batch.csv",
+        "fixture": "minimal_limma.tsv",
+    },
+    "highvar": {
+        "input": "highvar_input.tsv",
+        "batch": "highvar_batch.csv",
+        "fixture": "highvar_limma.tsv",
+    },
+    "nearconstant": {
+        "input": "nearconstant_input.tsv",
+        "batch": "nearconstant_batch.csv",
+        "fixture": "nearconstant_limma.tsv",
+    },
+    "negative": {
+        "input": "negative_input.tsv",
+        "batch": "negative_batch.csv",
+        "fixture": "negative_limma.tsv",
+    },
+    "wide": {"input": "wide_input.tsv", "batch": "wide_batch.csv", "fixture": "wide_limma.tsv"},
 }
 
 
@@ -266,7 +298,10 @@ class TestLimmaRConcordanceExtended:
         result = remove_batch_effect(data, batch)
 
         np.testing.assert_allclose(
-            result, expected, rtol=1e-10, atol=1e-10,
+            result,
+            expected,
+            rtol=1e-10,
+            atol=1e-10,
             err_msg=f"{dataset}: mismatch vs R limma",
         )
 
@@ -284,6 +319,7 @@ class TestLimmaRConcordanceExtended:
 # 3. HarmonizR pipeline R concordance — large + sparse + medium limma
 # ===================================================================
 
+
 @pytest.mark.skipif(
     not _fixture_exists("large_combat_mode1.tsv"),
     reason="Large R fixtures not generated",
@@ -299,10 +335,12 @@ class TestHarmonizRLargeConcordance:
 
     @pytest.mark.parametrize("mode", [1, 2, 3, 4])
     def test_combat_modes(self, mode):
-        expected = _load_tsv("large_combat_mode{}.tsv".format(mode))
+        expected = _load_tsv(f"large_combat_mode{mode}.tsv")
         result = harmonize(
-            self.data, self.desc,
-            algorithm="ComBat", combat_mode=mode,
+            self.data,
+            self.desc,
+            algorithm="ComBat",
+            combat_mode=mode,
         )
         rtol = 1e-4 if mode in (1, 3) else 1e-6
         atol = 1e-5 if mode in (1, 3) else 1e-8
@@ -311,7 +349,10 @@ class TestHarmonizRLargeConcordance:
             rtol = 5e-4
             atol = 1e-4
         np.testing.assert_allclose(
-            result.values, expected, rtol=rtol, atol=atol,
+            result.values,
+            expected,
+            rtol=rtol,
+            atol=atol,
             err_msg=f"Large HarmonizR ComBat mode {mode}",
         )
 
@@ -331,12 +372,12 @@ class TestHarmonizRSparseConcordance:
 
     @pytest.mark.parametrize("mode", [1, 2, 3, 4])
     def test_combat_modes(self, mode):
-        expected_df = _load_tsv_df(
-            "sparse_harmonizr_combat_mode{}.tsv".format(mode)
-        )
+        expected_df = _load_tsv_df(f"sparse_harmonizr_combat_mode{mode}.tsv")
         result = harmonize(
-            self.data, self.desc,
-            algorithm="ComBat", combat_mode=mode,
+            self.data,
+            self.desc,
+            algorithm="ComBat",
+            combat_mode=mode,
         )
         # Align by shared features (index) and columns
         shared_idx = result.index.intersection(expected_df.index)
@@ -353,7 +394,10 @@ class TestHarmonizRSparseConcordance:
         if valid.any():
             rtol = 5e-4 if mode in (1, 3) else 1e-5
             np.testing.assert_allclose(
-                r[valid], e[valid], rtol=rtol, atol=1e-4,
+                r[valid],
+                e[valid],
+                rtol=rtol,
+                atol=1e-4,
                 err_msg=f"Sparse HarmonizR ComBat mode {mode}",
             )
 
@@ -382,7 +426,10 @@ class TestHarmonizRMediumLimma:
         valid = ~nan_mask
         if valid.any():
             np.testing.assert_allclose(
-                r[valid], e[valid], rtol=1e-8, atol=1e-8,
+                r[valid],
+                e[valid],
+                rtol=1e-8,
+                atol=1e-8,
                 err_msg="Medium HarmonizR limma",
             )
 
@@ -407,8 +454,10 @@ class TestHarmonizRHighMissConcordance:
     def test_combat_modes(self, mode):
         expected_df = _load_tsv_df(f"highmiss_harmonizr_combat_mode{mode}.tsv")
         result = harmonize(
-            self.data, self.desc,
-            algorithm="ComBat", combat_mode=mode,
+            self.data,
+            self.desc,
+            algorithm="ComBat",
+            combat_mode=mode,
         )
         shared_idx = result.index.intersection(expected_df.index)
         shared_cols = result.columns.intersection(expected_df.columns)
@@ -423,7 +472,10 @@ class TestHarmonizRHighMissConcordance:
         if valid.any():
             rtol = 5e-4 if mode in (1, 3) else 1e-5
             np.testing.assert_allclose(
-                r[valid], e[valid], rtol=rtol, atol=1e-4,
+                r[valid],
+                e[valid],
+                rtol=rtol,
+                atol=1e-4,
                 err_msg=f"High-miss HarmonizR ComBat mode {mode}",
             )
 
@@ -443,7 +495,10 @@ class TestHarmonizRHighMissConcordance:
         valid = ~nan_mask
         if valid.any():
             np.testing.assert_allclose(
-                r[valid], e[valid], rtol=1e-8, atol=1e-8,
+                r[valid],
+                e[valid],
+                rtol=1e-8,
+                atol=1e-8,
                 err_msg="High-miss HarmonizR limma",
             )
 
@@ -476,8 +531,10 @@ class TestNeededValuesRConcordance:
         """nv=1 and nv=3 both match the R fixture (same as nv=2)."""
         expected_df = _load_tsv_df(f"medium_harmonizr_combat_mode{mode}.tsv")
         result = harmonize(
-            self.data, self.desc,
-            algorithm="ComBat", combat_mode=mode,
+            self.data,
+            self.desc,
+            algorithm="ComBat",
+            combat_mode=mode,
             needed_values=nv,
         )
         shared_idx = result.index.intersection(expected_df.index)
@@ -493,7 +550,10 @@ class TestNeededValuesRConcordance:
         if valid.any():
             rtol = 5e-4 if mode in (1, 3) else 1e-5
             np.testing.assert_allclose(
-                r[valid], e[valid], rtol=rtol, atol=1e-4,
+                r[valid],
+                e[valid],
+                rtol=rtol,
+                atol=1e-4,
                 err_msg=f"Medium nv={nv} ComBat mode {mode}",
             )
 
@@ -502,7 +562,8 @@ class TestNeededValuesRConcordance:
         """nv=1 and nv=3 both match the R limma fixture (same as nv=2)."""
         expected_df = _load_tsv_df("medium_harmonizr_limma.tsv")
         result = harmonize(
-            self.data, self.desc,
+            self.data,
+            self.desc,
             algorithm="limma",
             needed_values=nv,
         )
@@ -518,7 +579,10 @@ class TestNeededValuesRConcordance:
         valid = ~nan_mask
         if valid.any():
             np.testing.assert_allclose(
-                r[valid], e[valid], rtol=1e-8, atol=1e-8,
+                r[valid],
+                e[valid],
+                rtol=1e-8,
+                atol=1e-8,
                 err_msg=f"Medium nv={nv} limma",
             )
 
@@ -526,6 +590,7 @@ class TestNeededValuesRConcordance:
 # ===================================================================
 # 4. ComBat — failure modes and edge cases
 # ===================================================================
+
 
 class TestCombatFailureModes:
     """Verify combat raises clear errors on bad input."""
@@ -611,7 +676,8 @@ class TestCombatEdgeCaseBehavior:
             result = combat(data, batch, ref_batch=ref_b)
             ref_cols = batch == ref_b
             np.testing.assert_array_equal(
-                result[:, ref_cols], data[:, ref_cols],
+                result[:, ref_cols],
+                data[:, ref_cols],
                 err_msg=f"ref_batch={ref_b}: reference data changed",
             )
 
@@ -632,8 +698,9 @@ class TestCombatEdgeCaseBehavior:
         batch = np.array([0, 0, 0, 0, 1, 1, 1, 1])
         result = combat(data, batch, par_prior=True, mean_only=True)
         # Should be very close to input since no real batch effect
-        np.testing.assert_allclose(result, data, atol=1.0,
-                                   err_msg="Large change with no real batch effect")
+        np.testing.assert_allclose(
+            result, data, atol=1.0, err_msg="Large change with no real batch effect"
+        )
 
     def test_all_negative_data(self):
         """Negative data should work fine (e.g., log2FC)."""
@@ -710,6 +777,7 @@ class TestCombatEdgeCaseBehavior:
 # 5. limma — failure modes and edge cases
 # ===================================================================
 
+
 class TestLimmaFailureModes:
     def test_1d_rejected(self):
         with pytest.raises(ValueError, match="2-D"):
@@ -779,7 +847,7 @@ class TestLimmaEdgeCaseBehavior:
         assert not np.isnan(result).any()
 
     def test_large_scale(self):
-        """500 features × 30 samples — must not be slow or unstable."""
+        """500 features x 30 samples — must not be slow or unstable."""
         rng = np.random.default_rng(34)
         data = rng.normal(10, 2, size=(500, 30))
         batch = np.repeat(range(5), 6)
@@ -791,8 +859,7 @@ class TestLimmaEdgeCaseBehavior:
 
     def test_2_features_2_samples_per_batch(self):
         """Minimal valid limma case."""
-        data = np.array([[1.0, 2.0, 5.0, 6.0],
-                         [3.0, 4.0, 7.0, 8.0]])
+        data = np.array([[1.0, 2.0, 5.0, 6.0], [3.0, 4.0, 7.0, 8.0]])
         batch = np.array([0, 0, 1, 1])
         result = remove_batch_effect(data, batch)
         assert result.shape == (2, 4)
@@ -803,6 +870,7 @@ class TestLimmaEdgeCaseBehavior:
 # 6. Pipeline — failure modes and edge cases
 # ===================================================================
 
+
 class TestPipelineFailureModes:
     def test_mismatched_samples(self):
         """Description has different number of samples than data."""
@@ -810,12 +878,14 @@ class TestPipelineFailureModes:
             np.random.default_rng(1).normal(size=(5, 4)),
             columns=["s1", "s2", "s3", "s4"],
         )
-        desc = pd.DataFrame({
-            "ID": ["s1", "s2", "s3"],
-            "sample": [1, 2, 3],
-            "batch": [1, 1, 2],
-        })
-        with pytest.raises(ValueError, match="(?i)sample"):
+        desc = pd.DataFrame(
+            {
+                "ID": ["s1", "s2", "s3"],
+                "sample": [1, 2, 3],
+                "batch": [1, 1, 2],
+            }
+        )
+        with pytest.raises(ValueError, match=r"(?i)sample"):
             harmonize(data, desc)
 
     def test_all_missing_feature(self):
@@ -826,11 +896,13 @@ class TestPipelineFailureModes:
             columns=[f"s_{j}" for j in range(6)],
         )
         data.iloc[0, :] = np.nan
-        desc = pd.DataFrame({
-            "ID": data.columns.tolist(),
-            "sample": list(range(1, 7)),
-            "batch": [1, 1, 1, 2, 2, 2],
-        })
+        desc = pd.DataFrame(
+            {
+                "ID": data.columns.tolist(),
+                "sample": list(range(1, 7)),
+                "batch": [1, 1, 1, 2, 2, 2],
+            }
+        )
         result = harmonize(data, desc, algorithm="ComBat", combat_mode=2)
         assert np.isnan(result.iloc[0]).all(), "All-NaN feature should stay NaN"
         assert not np.isnan(result.iloc[1:]).all(axis=None), "Other features should not be all NaN"
@@ -844,11 +916,13 @@ class TestPipelineFailureModes:
         )
         # Make feature 0 missing in batch 3
         data.iloc[0, 6:] = np.nan
-        desc = pd.DataFrame({
-            "ID": data.columns.tolist(),
-            "sample": list(range(1, 10)),
-            "batch": [1, 1, 1, 2, 2, 2, 3, 3, 3],
-        })
+        desc = pd.DataFrame(
+            {
+                "ID": data.columns.tolist(),
+                "sample": list(range(1, 10)),
+                "batch": [1, 1, 1, 2, 2, 2, 3, 3, 3],
+            }
+        )
         result = harmonize(data, desc, algorithm="ComBat", combat_mode=2)
         # Feature 0 should have NaN in batch 3 columns
         assert np.isnan(result.iloc[0, 6:]).all()
@@ -862,11 +936,13 @@ class TestPipelineFailureModes:
             index=["p_0", "p_0", "p_1", "p_2"],
             columns=[f"s_{j}" for j in range(6)],
         )
-        desc = pd.DataFrame({
-            "ID": data.columns.tolist(),
-            "sample": list(range(1, 7)),
-            "batch": [1, 1, 1, 2, 2, 2],
-        })
+        desc = pd.DataFrame(
+            {
+                "ID": data.columns.tolist(),
+                "sample": list(range(1, 7)),
+                "batch": [1, 1, 1, 2, 2, 2],
+            }
+        )
         with pytest.raises(ValueError, match="duplicate feature names"):
             harmonize(data, desc, algorithm="ComBat", combat_mode=2)
 
@@ -879,11 +955,13 @@ class TestPipelineFailureModes:
             columns=[f"s_{j}" for j in range(6)],
         )
         data.iloc[:, 3:] += 3.0
-        desc = pd.DataFrame({
-            "ID": data.columns.tolist(),
-            "sample": list(range(1, 7)),
-            "batch": [1, 1, 1, 2, 2, 2],
-        })
+        desc = pd.DataFrame(
+            {
+                "ID": data.columns.tolist(),
+                "sample": list(range(1, 7)),
+                "batch": [1, 1, 1, 2, 2, 2],
+            }
+        )
         result = harmonize(data, desc, algorithm="ComBat", combat_mode=2)
         assert isinstance(result, pd.DataFrame)
         assert result.shape == data.shape
@@ -897,28 +975,35 @@ class TestPipelineFailureModes:
             columns=[f"s_{j}" for j in range(8)],
         )
         data.iloc[:, 4:] += 3.0
-        desc = pd.DataFrame({
-            "ID": data.columns.tolist(),
-            "sample": list(range(1, 9)),
-            "batch": [1, 1, 1, 1, 2, 2, 2, 2],
-        })
+        desc = pd.DataFrame(
+            {
+                "ID": data.columns.tolist(),
+                "sample": list(range(1, 9)),
+                "batch": [1, 1, 1, 1, 2, 2, 2, 2],
+            }
+        )
         result = harmonize(data, desc, algorithm="limma")
         assert isinstance(result, pd.DataFrame)
         assert not np.isnan(result).all(axis=None)
 
     def test_non_numeric_raises(self):
         """Data matrix with string column raises ValueError."""
-        data = pd.DataFrame({
-            "s0": [1.0, 2.0, 3.0],
-            "s1": ["a", "b", "c"],  # non-numeric
-            "s2": [4.0, 5.0, 6.0],
-            "s3": [7.0, 8.0, 9.0],
-        }, index=["p0", "p1", "p2"])
-        desc = pd.DataFrame({
-            "ID": ["s0", "s1", "s2", "s3"],
-            "sample": [1, 2, 3, 4],
-            "batch": [1, 1, 2, 2],
-        })
+        data = pd.DataFrame(
+            {
+                "s0": [1.0, 2.0, 3.0],
+                "s1": ["a", "b", "c"],  # non-numeric
+                "s2": [4.0, 5.0, 6.0],
+                "s3": [7.0, 8.0, 9.0],
+            },
+            index=["p0", "p1", "p2"],
+        )
+        desc = pd.DataFrame(
+            {
+                "ID": ["s0", "s1", "s2", "s3"],
+                "sample": [1, 2, 3, 4],
+                "batch": [1, 1, 2, 2],
+            }
+        )
         with pytest.raises(ValueError, match="non-numeric columns"):
             harmonize(data, desc)
 
@@ -932,15 +1017,18 @@ class TestPipelineFailureModes:
         )
         # Feature 0: missing in batches 2 and 3 entirely
         data.iloc[0, 3:] = np.nan
-        desc = pd.DataFrame({
-            "ID": data.columns.tolist(),
-            "sample": list(range(1, 10)),
-            "batch": [1, 1, 1, 2, 2, 2, 3, 3, 3],
-        })
+        desc = pd.DataFrame(
+            {
+                "ID": data.columns.tolist(),
+                "sample": list(range(1, 10)),
+                "batch": [1, 1, 1, 2, 2, 2, 3, 3, 3],
+            }
+        )
         result = harmonize(data, desc, algorithm="ComBat", combat_mode=2)
         # Feature 0 present only in batch 1 → single-batch passthrough → values unchanged
         np.testing.assert_array_equal(
-            result.iloc[0, :3].values, data.iloc[0, :3].values,
+            result.iloc[0, :3].values,
+            data.iloc[0, :3].values,
             err_msg="Single-batch feature values should be unchanged",
         )
         # Batch 2 and 3 remain NaN
@@ -955,11 +1043,13 @@ class TestPipelineFailureModes:
             index=["p0", "p1", "p2"],
             columns=["s0", "s1", "s2", "s3"],
         )
-        desc = pd.DataFrame({
-            "ID": ["s0", "s1", "s2", "s3"],
-            "sample": [1, 2, 3, 4],
-            "batch": [1, 1, 2, 2],
-        })
+        desc = pd.DataFrame(
+            {
+                "ID": ["s0", "s1", "s2", "s3"],
+                "sample": [1, 2, 3, 4],
+                "batch": [1, 1, 2, 2],
+            }
+        )
         result = harmonize(data, desc, algorithm="ComBat", combat_mode=1)
         assert result.shape == data.shape
         assert np.isnan(result.values).all(), "Expected all-NaN when all features are missing"
@@ -971,11 +1061,13 @@ class TestPipelineFailureModes:
             {"s0": [1.0, 2.0, 3.0], "s1": [4.0, 5.0, 6.0]},
             index=["p0", "p1", "p2"],
         )
-        desc = pd.DataFrame({
-            "ID": ["s0", "s1"],
-            "sample": [1, 2],
-            "batch": [1, 2],
-        })
+        desc = pd.DataFrame(
+            {
+                "ID": ["s0", "s1"],
+                "sample": [1, 2],
+                "batch": [1, 2],
+            }
+        )
         result = harmonize(data, desc, algorithm="ComBat", combat_mode=1, needed_values=2)
         # Each batch has only 1 sample, so needed_values=2 is never met → all NaN
         assert result.shape == data.shape
@@ -985,6 +1077,7 @@ class TestPipelineFailureModes:
 # ===================================================================
 # 7. Numerical stability and determinism
 # ===================================================================
+
 
 class TestNumericalStability:
     def test_deterministic_combat(self):
@@ -996,8 +1089,7 @@ class TestNumericalStability:
 
         result1 = combat(data, batch, par_prior=True, mean_only=False)
         result2 = combat(data, batch, par_prior=True, mean_only=False)
-        np.testing.assert_array_equal(result1, result2,
-                                      err_msg="ComBat not deterministic")
+        np.testing.assert_array_equal(result1, result2, err_msg="ComBat not deterministic")
 
     def test_deterministic_limma(self):
         rng = np.random.default_rng(51)
@@ -1007,8 +1099,7 @@ class TestNumericalStability:
 
         result1 = remove_batch_effect(data, batch)
         result2 = remove_batch_effect(data, batch)
-        np.testing.assert_array_equal(result1, result2,
-                                      err_msg="limma not deterministic")
+        np.testing.assert_array_equal(result1, result2, err_msg="limma not deterministic")
 
     def test_combat_float32_input(self):
         """float32 input should be promoted to float64 without issues."""
@@ -1061,11 +1152,13 @@ class TestNumericalStability:
 
     def test_combat_uniform_features(self):
         """Features constant within each batch should not blow up."""
-        data = np.array([
-            [10.0, 10.0, 10.0, 20.0, 20.0, 20.0],
-            [5.0, 5.0, 5.0, 15.0, 15.0, 15.0],
-            [1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
-        ])
+        data = np.array(
+            [
+                [10.0, 10.0, 10.0, 20.0, 20.0, 20.0],
+                [5.0, 5.0, 5.0, 15.0, 15.0, 15.0],
+                [1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            ]
+        )
         batch = np.array([0, 0, 0, 1, 1, 1])
         # mean_only=True should handle this (variance=0 clamped)
         result = combat(data, batch, par_prior=True, mean_only=True)
@@ -1076,6 +1169,7 @@ class TestNumericalStability:
 # ===================================================================
 # 8. Spotting logic unit tests
 # ===================================================================
+
 
 class TestSpottingEdgeCases:
     def test_no_missing(self):
@@ -1123,7 +1217,7 @@ class TestSpottingEdgeCases:
         result_nv1 = build_affiliation_list(data, batch, batch, needed_values=1)
         result_nv2 = build_affiliation_list(data, batch, batch, needed_values=2)
         assert result_nv1[0] == (1, 2)  # 1 value in batch 1 suffices
-        assert result_nv2[0] == (2,)    # Not enough in batch 1
+        assert result_nv2[0] == (2,)  # Not enough in batch 1
 
     def test_three_batches_partial_missing(self):
         """Feature present in only 2 of 3 batches."""
@@ -1140,6 +1234,7 @@ class TestSpottingEdgeCases:
 # 9. Splitting integration
 # ===================================================================
 
+
 class TestSplittingRebuild:
     def test_no_missing_single_group(self):
         """Complete data → one sub-df, result matches direct combat."""
@@ -1154,8 +1249,7 @@ class TestSplittingRebuild:
         block = batch.copy()
         affiliation = build_affiliation_list(data, batch, block, needed_values=2)
 
-        sub_dfs = splitting(affiliation, data, batch, block,
-                            algorithm="ComBat", combat_mode=2)
+        sub_dfs = splitting(affiliation, data, batch, block, algorithm="ComBat", combat_mode=2)
         result = pd.concat(sub_dfs, axis=0)
 
         # Should match direct combat
@@ -1175,8 +1269,7 @@ class TestSplittingRebuild:
         block = batch.copy()
         affiliation = build_affiliation_list(data, batch, block, needed_values=2)
 
-        sub_dfs = splitting(affiliation, data, batch, block,
-                            algorithm="ComBat", combat_mode=2)
+        sub_dfs = splitting(affiliation, data, batch, block, algorithm="ComBat", combat_mode=2)
         result = pd.concat(sub_dfs, axis=0)
 
         # Feature 0: NaN in batch 3 columns
@@ -1197,8 +1290,7 @@ class TestSplittingRebuild:
         block = batch.copy()
         affiliation = build_affiliation_list(data, batch, block, needed_values=2)
 
-        sub_dfs = splitting(affiliation, data, batch, block,
-                            algorithm="limma")
+        sub_dfs = splitting(affiliation, data, batch, block, algorithm="limma")
         result = pd.concat(sub_dfs, axis=0)
         assert np.isnan(result.iloc[0]).all()
 
@@ -1226,6 +1318,7 @@ class TestSplittingRebuild:
 # 10. Singleton batch (R forces mean_only)
 # ===================================================================
 
+
 @pytest.mark.skipif(
     not _fixture_exists("singleton_combat_mode2.tsv"),
     reason="Singleton fixtures not generated",
@@ -1249,7 +1342,10 @@ class TestSingletonBatch:
         params = _MODE_PARAMS[mode]
         result = combat(self.data, self.batch, **params)
         np.testing.assert_allclose(
-            result, expected, rtol=1e-4, atol=1e-6,
+            result,
+            expected,
+            rtol=1e-4,
+            atol=1e-6,
             err_msg=f"Singleton mode {mode} mismatch",
         )
 
@@ -1257,6 +1353,7 @@ class TestSingletonBatch:
 # ===================================================================
 # 11. needed_values parameter (Step 3)
 # ===================================================================
+
 
 class TestNeededValuesParameter:
     """Step 3: verify needed_values threshold and auto-select logic.
@@ -1271,7 +1368,7 @@ class TestNeededValuesParameter:
 
     @staticmethod
     def _batch_data_9():
-        """5 features × 9 samples; batches [4, 4, 1]; no NaN; batch effects applied."""
+        """5 features x 9 samples; batches [4, 4, 1]; no NaN; batch effects applied."""
         rng = np.random.default_rng(40)
         data = pd.DataFrame(
             rng.normal(10, 1, size=(5, 9)),
@@ -1280,16 +1377,18 @@ class TestNeededValuesParameter:
         )
         data.iloc[:, 4:8] += 2.0
         data.iloc[:, 8] += 4.0
-        desc = pd.DataFrame({
-            "ID": data.columns.tolist(),
-            "sample": list(range(1, 10)),
-            "batch": [1] * 4 + [2] * 4 + [3] * 1,
-        })
+        desc = pd.DataFrame(
+            {
+                "ID": data.columns.tolist(),
+                "sample": list(range(1, 10)),
+                "batch": [1] * 4 + [2] * 4 + [3] * 1,
+            }
+        )
         return data, desc
 
     @staticmethod
     def _batch_data_10():
-        """5 features × 10 samples; batches [4, 4, 2]; no NaN; batch effects applied."""
+        """5 features x 10 samples; batches [4, 4, 2]; no NaN; batch effects applied."""
         rng = np.random.default_rng(41)
         data = pd.DataFrame(
             rng.normal(10, 1, size=(5, 10)),
@@ -1298,16 +1397,18 @@ class TestNeededValuesParameter:
         )
         data.iloc[:, 4:8] += 2.0
         data.iloc[:, 8:] += 4.0
-        desc = pd.DataFrame({
-            "ID": data.columns.tolist(),
-            "sample": list(range(1, 11)),
-            "batch": [1] * 4 + [2] * 4 + [3] * 2,
-        })
+        desc = pd.DataFrame(
+            {
+                "ID": data.columns.tolist(),
+                "sample": list(range(1, 11)),
+                "batch": [1] * 4 + [2] * 4 + [3] * 2,
+            }
+        )
         return data, desc
 
     @staticmethod
     def _monotonic_data():
-        """6 features × 6 samples; batches [3, 2, 1]; structural absences.
+        """6 features x 6 samples; batches [3, 2, 1]; structural absences.
 
         Absence pattern (whole-batch NaN):
           Features 0-1: present in all 3 batches
@@ -1328,13 +1429,15 @@ class TestNeededValuesParameter:
         )
         data.iloc[:, 3:5] += 2.0
         data.iloc[:, 5] += 4.0
-        data.iloc[2:4, 5] = np.nan   # features 2-3 absent in batch 3
-        data.iloc[4:, 3:] = np.nan   # features 4-5 absent in batches 2+3
-        desc = pd.DataFrame({
-            "ID": data.columns.tolist(),
-            "sample": list(range(1, 7)),
-            "batch": [1, 1, 1, 2, 2, 3],
-        })
+        data.iloc[2:4, 5] = np.nan  # features 2-3 absent in batch 3
+        data.iloc[4:, 3:] = np.nan  # features 4-5 absent in batches 2+3
+        desc = pd.DataFrame(
+            {
+                "ID": data.columns.tolist(),
+                "sample": list(range(1, 7)),
+                "batch": [1, 1, 1, 2, 2, 3],
+            }
+        )
         return data, desc
 
     # ------------------------------------------------------------------
@@ -1383,7 +1486,8 @@ class TestNeededValuesParameter:
         result_auto = harmonize(data, desc, algorithm="ComBat", combat_mode=1, needed_values=None)
         result_two = harmonize(data, desc, algorithm="ComBat", combat_mode=1, needed_values=2)
         np.testing.assert_array_equal(
-            np.isnan(result_auto.values), np.isnan(result_two.values),
+            np.isnan(result_auto.values),
+            np.isnan(result_two.values),
             err_msg="NaN patterns must match: mode 1 auto vs explicit nv=2",
         )
 
@@ -1393,7 +1497,8 @@ class TestNeededValuesParameter:
         result_auto = harmonize(data, desc, algorithm="ComBat", combat_mode=2, needed_values=None)
         result_one = harmonize(data, desc, algorithm="ComBat", combat_mode=2, needed_values=1)
         np.testing.assert_array_equal(
-            np.isnan(result_auto.values), np.isnan(result_one.values),
+            np.isnan(result_auto.values),
+            np.isnan(result_one.values),
             err_msg="NaN patterns must match: mode 2 auto vs explicit nv=1",
         )
 
@@ -1403,7 +1508,8 @@ class TestNeededValuesParameter:
         result_auto = harmonize(data, desc, algorithm="limma", needed_values=None)
         result_two = harmonize(data, desc, algorithm="limma", needed_values=2)
         np.testing.assert_array_equal(
-            np.isnan(result_auto.values), np.isnan(result_two.values),
+            np.isnan(result_auto.values),
+            np.isnan(result_two.values),
             err_msg="NaN patterns must match: limma auto vs explicit nv=2",
         )
 
@@ -1465,6 +1571,7 @@ class TestNeededValuesParameter:
 # 12. NaN propagation audit (Step 4)
 # ===================================================================
 
+
 class TestNaNPropagation:
     """Step 4: verify the NaN firewall between the pipeline and adjusters.
 
@@ -1475,7 +1582,7 @@ class TestNaNPropagation:
 
     @staticmethod
     def _structural_nan_data():
-        """10 features × 9 samples; 3 batches of 3; structured whole-batch NaN.
+        """10 features x 9 samples; 3 batches of 3; structured whole-batch NaN.
 
         Feature 0: absent in batch 3. Feature 1: absent in batches 2+3.
         Features 2-9: fully present.
@@ -1488,13 +1595,15 @@ class TestNaNPropagation:
         )
         data.iloc[:, 3:6] += 2.0
         data.iloc[:, 6:] += 4.0
-        data.iloc[0, 6:] = np.nan   # feature 0 absent in batch 3
-        data.iloc[1, 3:] = np.nan   # feature 1 absent in batches 2+3
-        desc = pd.DataFrame({
-            "ID": data.columns.tolist(),
-            "sample": list(range(1, 10)),
-            "batch": [1] * 3 + [2] * 3 + [3] * 3,
-        })
+        data.iloc[0, 6:] = np.nan  # feature 0 absent in batch 3
+        data.iloc[1, 3:] = np.nan  # feature 1 absent in batches 2+3
+        desc = pd.DataFrame(
+            {
+                "ID": data.columns.tolist(),
+                "sample": list(range(1, 10)),
+                "batch": [1] * 3 + [2] * 3 + [3] * 3,
+            }
+        )
         return data, desc
 
     # ------------------------------------------------------------------
@@ -1556,11 +1665,13 @@ class TestNaNPropagation:
             columns=[f"s_{j}" for j in range(8)],
         )
         data.iloc[:, 4:] += 3.0
-        desc = pd.DataFrame({
-            "ID": data.columns.tolist(),
-            "sample": list(range(1, 9)),
-            "batch": [1] * 4 + [2] * 4,
-        })
+        desc = pd.DataFrame(
+            {
+                "ID": data.columns.tolist(),
+                "sample": list(range(1, 9)),
+                "batch": [1] * 4 + [2] * 4,
+            }
+        )
         result = harmonize(data, desc, algorithm="ComBat", combat_mode=2)
         assert not np.isnan(result.values).any(), "Clean input must produce no NaN in output"
 
@@ -1573,11 +1684,13 @@ class TestNaNPropagation:
             columns=[f"s_{j}" for j in range(8)],
         )
         data.iloc[:, 4:] += 3.0
-        desc = pd.DataFrame({
-            "ID": data.columns.tolist(),
-            "sample": list(range(1, 9)),
-            "batch": [1] * 4 + [2] * 4,
-        })
+        desc = pd.DataFrame(
+            {
+                "ID": data.columns.tolist(),
+                "sample": list(range(1, 9)),
+                "batch": [1] * 4 + [2] * 4,
+            }
+        )
         result = harmonize(data, desc, algorithm="limma")
         assert not np.isnan(result.values).any(), "Clean input must produce no NaN in output"
 
@@ -1607,6 +1720,7 @@ class TestNaNPropagation:
 # Phase 2 — blocking, sort+block, unique-removal R concordance
 # ============================================================================
 
+
 def _concordance_check(result, expected, rtol, atol, label):
     """Shared NaN + allclose assertion for all Phase 2 concordance tests."""
     shared_idx = result.index.intersection(expected.index)
@@ -1618,8 +1732,7 @@ def _concordance_check(result, expected, rtol, atol, label):
     assert not np.isnan(r[~nan_mask]).any(), f"{label}: extra NaN in Python output"
     valid = ~nan_mask
     if valid.any():
-        np.testing.assert_allclose(r[valid], e[valid], rtol=rtol, atol=atol,
-                                   err_msg=label)
+        np.testing.assert_allclose(r[valid], e[valid], rtol=rtol, atol=atol, err_msg=label)
 
 
 @pytest.mark.skipif(
@@ -1639,53 +1752,63 @@ class TestBlockingRConcordance:
     def _load(self):
         self.med_data = _load_tsv_df("medium_input.tsv")
         self.med_desc = pd.read_csv(FIXTURE_DIR / "medium_batch.csv")
-        self.hm_data  = _load_tsv_df("highmiss_input.tsv")
-        self.hm_desc  = pd.read_csv(FIXTURE_DIR / "highmiss_batch.csv")
-        self.lg_data  = _load_tsv_df("large_input.tsv")
-        self.lg_desc  = pd.read_csv(FIXTURE_DIR / "large_batch.csv")
+        self.hm_data = _load_tsv_df("highmiss_input.tsv")
+        self.hm_desc = pd.read_csv(FIXTURE_DIR / "highmiss_batch.csv")
+        self.lg_data = _load_tsv_df("large_input.tsv")
+        self.lg_desc = pd.read_csv(FIXTURE_DIR / "large_batch.csv")
 
     @pytest.mark.parametrize("mode", [1, 2, 3, 4])
     def test_medium_block2_combat(self, mode):
         expected = _load_tsv_df(f"medium_block2_combat_mode{mode}.tsv")
         result = harmonize(
-            self.med_data, self.med_desc,
-            algorithm="ComBat", combat_mode=mode, block=2,
+            self.med_data,
+            self.med_desc,
+            algorithm="ComBat",
+            combat_mode=mode,
+            block=2,
         )
         rtol = 5e-4 if mode in (1, 3) else 1e-5
-        _concordance_check(result, expected, rtol=rtol, atol=1e-4,
-                           label=f"medium block=2 ComBat mode {mode}")
+        _concordance_check(
+            result, expected, rtol=rtol, atol=1e-4, label=f"medium block=2 ComBat mode {mode}"
+        )
 
     def test_medium_block2_limma(self):
         expected = _load_tsv_df("medium_block2_limma.tsv")
         result = harmonize(self.med_data, self.med_desc, algorithm="limma", block=2)
-        _concordance_check(result, expected, rtol=1e-8, atol=1e-8,
-                           label="medium block=2 limma")
+        _concordance_check(result, expected, rtol=1e-8, atol=1e-8, label="medium block=2 limma")
 
     @pytest.mark.parametrize("mode", [1, 2, 3, 4])
     def test_highmiss_block2_combat(self, mode):
         expected = _load_tsv_df(f"highmiss_block2_combat_mode{mode}.tsv")
         result = harmonize(
-            self.hm_data, self.hm_desc,
-            algorithm="ComBat", combat_mode=mode, block=2,
+            self.hm_data,
+            self.hm_desc,
+            algorithm="ComBat",
+            combat_mode=mode,
+            block=2,
         )
         rtol = 5e-4 if mode in (1, 3) else 1e-5
-        _concordance_check(result, expected, rtol=rtol, atol=1e-4,
-                           label=f"highmiss block=2 ComBat mode {mode}")
+        _concordance_check(
+            result, expected, rtol=rtol, atol=1e-4, label=f"highmiss block=2 ComBat mode {mode}"
+        )
 
     def test_highmiss_block2_limma(self):
         expected = _load_tsv_df("highmiss_block2_limma.tsv")
         result = harmonize(self.hm_data, self.hm_desc, algorithm="limma", block=2)
-        _concordance_check(result, expected, rtol=1e-8, atol=1e-8,
-                           label="highmiss block=2 limma")
+        _concordance_check(result, expected, rtol=1e-8, atol=1e-8, label="highmiss block=2 limma")
 
     def test_large_block4_combat_mode1(self):
         expected = _load_tsv_df("large_block4_combat_mode1.tsv")
         result = harmonize(
-            self.lg_data, self.lg_desc,
-            algorithm="ComBat", combat_mode=1, block=4,
+            self.lg_data,
+            self.lg_desc,
+            algorithm="ComBat",
+            combat_mode=1,
+            block=4,
         )
-        _concordance_check(result, expected, rtol=5e-4, atol=1e-4,
-                           label="large block=4 ComBat mode 1")
+        _concordance_check(
+            result, expected, rtol=5e-4, atol=1e-4, label="large block=4 ComBat mode 1"
+        )
 
 
 @pytest.mark.skipif(
@@ -1703,66 +1826,99 @@ class TestSortBlockRConcordance:
     def _load(self):
         self.med_data = _load_tsv_df("medium_input.tsv")
         self.med_desc = pd.read_csv(FIXTURE_DIR / "medium_batch.csv")
-        self.hm_data  = _load_tsv_df("highmiss_input.tsv")
-        self.hm_desc  = pd.read_csv(FIXTURE_DIR / "highmiss_batch.csv")
-        self.lg_data  = _load_tsv_df("large_input.tsv")
-        self.lg_desc  = pd.read_csv(FIXTURE_DIR / "large_batch.csv")
+        self.hm_data = _load_tsv_df("highmiss_input.tsv")
+        self.hm_desc = pd.read_csv(FIXTURE_DIR / "highmiss_batch.csv")
+        self.lg_data = _load_tsv_df("large_input.tsv")
+        self.lg_desc = pd.read_csv(FIXTURE_DIR / "large_batch.csv")
 
     @pytest.mark.parametrize("mode", [1, 2, 3, 4])
     def test_medium_sparsity_block2_combat(self, mode):
         expected = _load_tsv_df(f"medium_sparsity_block2_combat_mode{mode}.tsv")
         result = harmonize(
-            self.med_data, self.med_desc,
-            algorithm="ComBat", combat_mode=mode, sort="sparsity", block=2,
+            self.med_data,
+            self.med_desc,
+            algorithm="ComBat",
+            combat_mode=mode,
+            sort="sparsity",
+            block=2,
         )
         rtol = 5e-4 if mode in (1, 3) else 1e-5
-        _concordance_check(result, expected, rtol=rtol, atol=1e-4,
-                           label=f"medium sparsity block=2 ComBat mode {mode}")
+        _concordance_check(
+            result,
+            expected,
+            rtol=rtol,
+            atol=1e-4,
+            label=f"medium sparsity block=2 ComBat mode {mode}",
+        )
 
     def test_medium_sparsity_block2_limma(self):
         expected = _load_tsv_df("medium_sparsity_block2_limma.tsv")
         result = harmonize(
-            self.med_data, self.med_desc,
-            algorithm="limma", sort="sparsity", block=2,
+            self.med_data,
+            self.med_desc,
+            algorithm="limma",
+            sort="sparsity",
+            block=2,
         )
-        _concordance_check(result, expected, rtol=1e-8, atol=1e-8,
-                           label="medium sparsity block=2 limma")
+        _concordance_check(
+            result, expected, rtol=1e-8, atol=1e-8, label="medium sparsity block=2 limma"
+        )
 
     def test_medium_jaccard_block2_combat_mode1(self):
         expected = _load_tsv_df("medium_jaccard_block2_combat_mode1.tsv")
         result = harmonize(
-            self.med_data, self.med_desc,
-            algorithm="ComBat", combat_mode=1, sort="jaccard", block=2,
+            self.med_data,
+            self.med_desc,
+            algorithm="ComBat",
+            combat_mode=1,
+            sort="jaccard",
+            block=2,
         )
-        _concordance_check(result, expected, rtol=5e-4, atol=1e-4,
-                           label="medium jaccard block=2 ComBat mode 1")
+        _concordance_check(
+            result, expected, rtol=5e-4, atol=1e-4, label="medium jaccard block=2 ComBat mode 1"
+        )
 
     def test_medium_seriation_block2_combat_mode1(self):
         expected = _load_tsv_df("medium_seriation_block2_combat_mode1.tsv")
         result = harmonize(
-            self.med_data, self.med_desc,
-            algorithm="ComBat", combat_mode=1, sort="seriation", block=2,
+            self.med_data,
+            self.med_desc,
+            algorithm="ComBat",
+            combat_mode=1,
+            sort="seriation",
+            block=2,
         )
-        _concordance_check(result, expected, rtol=5e-4, atol=1e-4,
-                           label="medium seriation block=2 ComBat mode 1")
+        _concordance_check(
+            result, expected, rtol=5e-4, atol=1e-4, label="medium seriation block=2 ComBat mode 1"
+        )
 
     def test_large_sparsity_block4_combat_mode1(self):
         expected = _load_tsv_df("large_sparsity_block4_combat_mode1.tsv")
         result = harmonize(
-            self.lg_data, self.lg_desc,
-            algorithm="ComBat", combat_mode=1, sort="sparsity", block=4,
+            self.lg_data,
+            self.lg_desc,
+            algorithm="ComBat",
+            combat_mode=1,
+            sort="sparsity",
+            block=4,
         )
-        _concordance_check(result, expected, rtol=5e-4, atol=1e-4,
-                           label="large sparsity block=4 ComBat mode 1")
+        _concordance_check(
+            result, expected, rtol=5e-4, atol=1e-4, label="large sparsity block=4 ComBat mode 1"
+        )
 
     def test_highmiss_sparsity_block2_combat_mode1(self):
         expected = _load_tsv_df("highmiss_sparsity_block2_combat_mode1.tsv")
         result = harmonize(
-            self.hm_data, self.hm_desc,
-            algorithm="ComBat", combat_mode=1, sort="sparsity", block=2,
+            self.hm_data,
+            self.hm_desc,
+            algorithm="ComBat",
+            combat_mode=1,
+            sort="sparsity",
+            block=2,
         )
-        _concordance_check(result, expected, rtol=5e-4, atol=1e-4,
-                           label="highmiss sparsity block=2 ComBat mode 1")
+        _concordance_check(
+            result, expected, rtol=5e-4, atol=1e-4, label="highmiss sparsity block=2 ComBat mode 1"
+        )
 
 
 @pytest.mark.skipif(
@@ -1791,31 +1947,41 @@ class TestUniqueRemovalRConcordance:
         """ur=True (default) matches R ur=TRUE fixture."""
         expected = _load_tsv_df("highmiss_harmonizr_combat_mode1.tsv")
         result = harmonize(
-            self.hm_data, self.hm_desc,
-            algorithm="ComBat", combat_mode=1, unique_removal=True,
+            self.hm_data,
+            self.hm_desc,
+            algorithm="ComBat",
+            combat_mode=1,
+            unique_removal=True,
         )
-        _concordance_check(result, expected, rtol=5e-4, atol=1e-4,
-                           label="highmiss ur=True ComBat mode 1")
+        _concordance_check(
+            result, expected, rtol=5e-4, atol=1e-4, label="highmiss ur=True ComBat mode 1"
+        )
 
     def test_ur_false_matches_r(self):
         """ur=False matches R ur=FALSE fixture (feature count and values)."""
         expected = _load_tsv_df("highmiss_nour_combat_mode1.tsv")
         result = harmonize(
-            self.hm_data, self.hm_desc,
-            algorithm="ComBat", combat_mode=1, unique_removal=False,
+            self.hm_data,
+            self.hm_desc,
+            algorithm="ComBat",
+            combat_mode=1,
+            unique_removal=False,
         )
         assert len(result) == len(expected), (
             f"Feature count: Python={len(result)}, R={len(expected)}"
         )
-        _concordance_check(result, expected, rtol=5e-4, atol=1e-4,
-                           label="highmiss ur=False ComBat mode 1")
+        _concordance_check(
+            result, expected, rtol=5e-4, atol=1e-4, label="highmiss ur=False ComBat mode 1"
+        )
 
     def test_ur_true_retains_at_least_as_many_features_as_ur_false(self):
         """ur=True retains >= features than ur=False."""
-        result_ur   = harmonize(self.hm_data, self.hm_desc,
-                                algorithm="ComBat", combat_mode=1, unique_removal=True)
-        result_nour = harmonize(self.hm_data, self.hm_desc,
-                                algorithm="ComBat", combat_mode=1, unique_removal=False)
+        result_ur = harmonize(
+            self.hm_data, self.hm_desc, algorithm="ComBat", combat_mode=1, unique_removal=True
+        )
+        result_nour = harmonize(
+            self.hm_data, self.hm_desc, algorithm="ComBat", combat_mode=1, unique_removal=False
+        )
         assert len(result_ur) >= len(result_nour), (
             f"ur=True:{len(result_ur)} < ur=False:{len(result_nour)}"
         )
@@ -1823,8 +1989,9 @@ class TestUniqueRemovalRConcordance:
     def test_ur_true_feature_count_equals_r(self):
         """ur=True feature count matches R ur=TRUE."""
         expected = _load_tsv_df("highmiss_harmonizr_combat_mode1.tsv")
-        result = harmonize(self.hm_data, self.hm_desc,
-                           algorithm="ComBat", combat_mode=1, unique_removal=True)
+        result = harmonize(
+            self.hm_data, self.hm_desc, algorithm="ComBat", combat_mode=1, unique_removal=True
+        )
         assert len(result) == len(expected), (
             f"Python ur=True: {len(result)}, R ur=True: {len(expected)}"
         )
@@ -1832,8 +1999,9 @@ class TestUniqueRemovalRConcordance:
     def test_ur_false_feature_count_equals_r(self):
         """ur=False feature count matches R ur=FALSE."""
         expected = _load_tsv_df("highmiss_nour_combat_mode1.tsv")
-        result = harmonize(self.hm_data, self.hm_desc,
-                           algorithm="ComBat", combat_mode=1, unique_removal=False)
+        result = harmonize(
+            self.hm_data, self.hm_desc, algorithm="ComBat", combat_mode=1, unique_removal=False
+        )
         assert len(result) == len(expected), (
             f"Python ur=False: {len(result)}, R ur=False: {len(expected)}"
         )

@@ -14,8 +14,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from harmonizepy.blocking import build_block_list, _unique_ordered
-
+from harmonizepy.blocking import _unique_ordered, build_block_list
 
 # ---------------------------------------------------------------------------
 # 1. TestBuildBlockList
@@ -148,8 +147,8 @@ class TestEdgeCases:
         batch = np.array([1, 2, 2, 3, 3, 3, 4, 4, 4, 4])
         result = build_block_list(batch, block_size=2)
         # batches {1,2}→block 1, {3,4}→block 2
-        assert result[0] == result[1] == result[2] == 1    # batch 1 and 2
-        assert result[3] == result[6] == 2                 # batch 3 and 4
+        assert result[0] == result[1] == result[2] == 1  # batch 1 and 2
+        assert result[3] == result[6] == 2  # batch 3 and 4
 
 
 # ---------------------------------------------------------------------------
