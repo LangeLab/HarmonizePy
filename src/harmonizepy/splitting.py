@@ -75,20 +75,18 @@ def splitting(
     # Group features by affiliation using the shared reducer
     affil_to_features = reduce_to_unique_groups(affiliation_list)
 
-    results: list[pd.DataFrame] = []
+    # Pre-allocate a single output array (n_features, n_samples) filled with NaN.
+    # This avoids allocating one full-width DataFrame per affiliation group,
+    # reducing peak memory from ~3x input to ~1x input.
+    n_features, n_samples = data.shape
+    output = np.full((n_features, n_samples), np.nan, dtype=np.float64)
 
     for affil, row_indices in affil_to_features.items():
-        sub_data = data.iloc[row_indices]
+        row_idx = np.array(row_indices, dtype=np.intp)
+        sub_data = data.iloc[row_idx]
 
         if len(affil) == 0:
-            # Feature has insufficient data — keep as all-NaN row(s)
-            nan_df = pd.DataFrame(
-                np.nan,
-                index=sub_data.index,
-                columns=data.columns,
-            )
-            results.append(nan_df)
-            continue
+            continue  # rows stay NaN
 
         # Select columns belonging to the blocks in this affiliation
         col_mask = np.isin(block_arr, affil)
@@ -101,14 +99,8 @@ def splitting(
         # Only adjust if ≥2 batches and ≥2 features
         unique_batches = np.unique(sub_batch)
         if len(unique_batches) < 2 or sub_df.shape[0] < 2:
-            # Can't adjust — return as-is within the full column space
-            full_df = pd.DataFrame(
-                np.nan,
-                index=sub_data.index,
-                columns=data.columns,
-            )
-            full_df.iloc[:, col_indices] = sub_df.values
-            results.append(full_df)
+            # Can't adjust — copy raw values into output
+            output[np.ix_(row_idx, col_indices)] = sub_df.values
             continue
 
         # Apply adjustment
@@ -117,13 +109,18 @@ def splitting(
         else:
             corrected = adjust_combat(sub_df, sub_batch, mode=combat_mode)
 
-        # Place corrected values back into full-width frame (NaN elsewhere)
-        full_df = pd.DataFrame(
-            np.nan,
-            index=sub_data.index,
+        output[np.ix_(row_idx, col_indices)] = corrected.values
+
+    # Build the result list for backward compatibility with downstream concat.
+    # Each non-empty group becomes its own sub-DataFrame.
+    results: list[pd.DataFrame] = []
+    for _, row_indices in affil_to_features.items():
+        row_idx = np.array(row_indices, dtype=np.intp)
+        sub = pd.DataFrame(
+            output[np.ix_(row_idx, np.arange(n_samples))],
+            index=data.index[row_idx],
             columns=data.columns,
         )
-        full_df.iloc[:, col_indices] = corrected.values
-        results.append(full_df)
+        results.append(sub)
 
     return results

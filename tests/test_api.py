@@ -378,6 +378,69 @@ class TestHarmonizeConfig:
         with pytest.raises(ValueError, match="needed_values"):
             HarmonizeConfig(needed_values=0)
 
+    def test_sort_strategy_sparsity(self):
+        from harmonizepy import HarmonizeConfig
+
+        cfg = HarmonizeConfig(sort_strategy="sparsity")
+        assert cfg.sort_strategy == "sparsity"
+
+    def test_sort_strategy_jaccard(self):
+        from harmonizepy import HarmonizeConfig
+
+        cfg = HarmonizeConfig(sort_strategy="jaccard")
+        assert cfg.sort_strategy == "jaccard"
+
+    def test_sort_strategy_seriation(self):
+        from harmonizepy import HarmonizeConfig
+
+        cfg = HarmonizeConfig(sort_strategy="seriation")
+        assert cfg.sort_strategy == "seriation"
+
+    def test_block_size(self):
+        from harmonizepy import HarmonizeConfig
+
+        cfg = HarmonizeConfig(block_size=2)
+        assert cfg.block_size == 2
+        cfg = HarmonizeConfig(block_size=4)
+        assert cfg.block_size == 4
+
+    def test_unique_removal_false(self):
+        from harmonizepy import HarmonizeConfig
+
+        cfg = HarmonizeConfig(unique_removal=False)
+        assert cfg.unique_removal is False
+
+    def test_sort_and_block_combination(self):
+        from harmonizepy import HarmonizeConfig
+
+        cfg = HarmonizeConfig(sort_strategy="sparsity", block_size=3)
+        assert cfg.sort_strategy == "sparsity"
+        assert cfg.block_size == 3
+
+    def test_invalid_sort_strategy(self):
+        from harmonizepy import HarmonizeConfig
+
+        with pytest.raises(ValueError, match="sort_strategy"):
+            HarmonizeConfig(sort_strategy="unknown")
+
+    def test_invalid_block_size_zero(self):
+        from harmonizepy import HarmonizeConfig
+
+        with pytest.raises(ValueError, match="block_size"):
+            HarmonizeConfig(block_size=0)
+
+    def test_invalid_block_size_one(self):
+        from harmonizepy import HarmonizeConfig
+
+        with pytest.raises(ValueError, match="block_size"):
+            HarmonizeConfig(block_size=1)
+
+    def test_unique_removal_not_bool(self):
+        from harmonizepy import HarmonizeConfig
+
+        with pytest.raises(TypeError, match="unique_removal"):
+            HarmonizeConfig(unique_removal="true")  # type: ignore[arg-type]
+
 
 # ---------------------------------------------------------------------------
 # 7. harmonize() config= parameter

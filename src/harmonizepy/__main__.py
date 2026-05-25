@@ -530,22 +530,22 @@ def main(argv: Sequence[str] | None = None) -> None:
             )
             batch_arr = np.array([sample_to_batch[col] for col in data.columns], dtype=np.int64)
             n_batches = int(np.unique(batch_arr).size)
-            validate_harmonize_args(
-                args.algorithm,
-                args.combat_mode,
-                args.needed_values if args.needed_values is not None else 2,
-                sort_strategy=args.sort,
-                block_size=args.block,
-                unique_removal=args.unique_removal,
-                n_batches=n_batches,
-            )
-            # Resolve effective needed_values for affiliation spotting
+            # Resolve effective needed_values once for both validation and spotting
             if args.needed_values is not None:
                 nv_eff = args.needed_values
             elif args.algorithm == "limma" or args.combat_mode in (1, 3):
                 nv_eff = 2
             else:
                 nv_eff = 1
+            validate_harmonize_args(
+                args.algorithm,
+                args.combat_mode,
+                nv_eff,
+                sort_strategy=args.sort,
+                block_size=args.block,
+                unique_removal=args.unique_removal,
+                n_batches=n_batches,
+            )
             # Build block list
             if args.block is not None:
                 block_list = build_block_list(batch_arr, block_size=args.block)

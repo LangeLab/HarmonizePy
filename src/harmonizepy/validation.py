@@ -87,7 +87,11 @@ def validate_description(desc: pd.DataFrame, data: pd.DataFrame) -> None:
             f"got {desc.shape[1]}. Check the description file format."
         )
 
-    desc_ids = set(desc.iloc[:, 0].astype(str))
+    if "ID" in desc.columns:
+        id_series = desc["ID"].astype(str)
+    else:
+        id_series = desc.iloc[:, 0].astype(str)
+    desc_ids = set(id_series)
     data_ids = set(data.columns.astype(str))
 
     if desc_ids != data_ids:
@@ -100,7 +104,7 @@ def validate_description(desc: pd.DataFrame, data: pd.DataFrame) -> None:
             parts.append(f"in data but not description: {sorted(extra_data)[:5]}")
         raise ValueError(
             f"Sample IDs in description do not match data columns — {'; '.join(parts)}. "
-            f"The first column of description must list the exact column names of data."
+            f"The first column (or a column named 'ID') of description must list the exact column names of data."
         )
 
 

@@ -50,6 +50,8 @@ def _aprior(gamma_hat: _Array) -> float:
     """Hyper-prior *a* for the inverse-gamma on delta (scale effect)."""
     m = float(gamma_hat.mean())
     s2 = float(gamma_hat.var(ddof=1))
+    if s2 <= 0.0 or np.isnan(s2):
+        return 1.0  # flat prior when variance cannot be estimated
     return float((2.0 * s2 + m * m) / s2)
 
 
@@ -57,6 +59,8 @@ def _bprior(gamma_hat: _Array) -> float:
     """Hyper-prior *b* for the inverse-gamma on delta (scale effect)."""
     m = float(gamma_hat.mean())
     s2 = float(gamma_hat.var(ddof=1))
+    if s2 <= 0.0 or np.isnan(s2):
+        return 1.0  # flat prior when variance cannot be estimated
     return float((m * s2 + m**3) / s2)
 
 
@@ -174,6 +178,11 @@ def _int_eprior(
         mask[i] = False
         g = g_hat[mask]  # (n_genes-1,)
         d = d_hat[mask]  # (n_genes-1,)
+
+        # Guard against zero/negative d (constant feature within batch):
+        # clamp to a small positive value so np.log does not produce -inf.
+        d = np.maximum(d, 1e-12)
+
         x = s_data[i]  # (n_samples,)
 
         # Squared residuals: (n_genes-1, n_samples)
@@ -291,6 +300,12 @@ def combat(
     batches_ind = [np.where(batch_int == i)[0] for i in range(n_batch)]
     batch_sizes = np.array([len(b) for b in batches_ind], dtype=np.float64)
 
+    # Force mean_only when any batch has < 2 samples (mirrors R sva::ComBat).
+    # Variance cannot be estimated from a single observation, so scale
+    # correction is impossible.  Override the caller's setting silently.
+    if not mean_only and np.any(batch_sizes < 2):
+        mean_only = True
+
     # ---- Design matrix (one-hot) -------------------------------------------
     design = _make_design(batch_int, n_batch)  # (n_batch, n_samples)
 
@@ -315,7 +330,9 @@ def combat(
         residuals = data.T - fitted  # (n_samples, n_features)
         var_pooled = (residuals**2).mean(axis=0)  # (n_features,)
 
-    # Avoid division by zero for constant features
+    # Avoid division by zero for near-constant features.
+    # Features with essentially zero variance are clamped to a small
+    # positive value so standardisation does not produce Inf.
     var_pooled = np.maximum(var_pooled, 1e-12)
     std_pooled = np.sqrt(var_pooled)  # (n_features,)
 
@@ -394,9 +411,10 @@ def combat(
     # ---- Adjust data -------------------------------------------------------
     corrected = s_data.copy()
     for i, idx in enumerate(batches_ind):
-        corrected[:, idx] = (corrected[:, idx] - gamma_star[i][:, np.newaxis]) / np.sqrt(
-            delta_star[i][:, np.newaxis]
-        )
+        # Guard against negative delta_star (possible from _postvar with
+        # pathological data) which would make np.sqrt return NaN.
+        sqrt_delta = np.sqrt(np.maximum(delta_star[i], 1e-12))[:, np.newaxis]
+        corrected[:, idx] = (corrected[:, idx] - gamma_star[i][:, np.newaxis]) / sqrt_delta
 
     # De-standardise
     corrected = corrected * std_pooled[:, np.newaxis] + stand_mean

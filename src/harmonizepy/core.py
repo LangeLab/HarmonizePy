@@ -115,11 +115,18 @@ def harmonize(
         block = config.block_size
         unique_removal = config.unique_removal
 
+    # --- Determine needed_values (before validation) ------------------------
+    if needed_values is None:
+        if algorithm == "limma" or combat_mode in (1, 3):
+            needed_values = 2
+        else:
+            needed_values = 1
+
     # --- Validate basic arguments (before data load) ----------------------
     validate_harmonize_args(
         algorithm,
         combat_mode,
-        needed_values if needed_values is not None else 2,
+        needed_values,
         sort_strategy=sort,
         unique_removal=unique_removal,
     )
@@ -149,8 +156,16 @@ def harmonize(
     )
 
     # --- Extract batch labels aligned to data column order -----------------
+    # Look up ID and batch columns by name (robust to column reordering),
+    # falling back to positional indexing for backwards compatibility.
+    if "ID" in description.columns and "batch" in description.columns:
+        id_col = description["ID"]
+        batch_col = description["batch"]
+    else:
+        id_col = description.iloc[:, 0]
+        batch_col = description.iloc[:, 2]
     sample_to_batch = dict(
-        zip(description.iloc[:, 0].astype(str), description.iloc[:, 2].astype(int), strict=True)
+        zip(id_col.astype(str), batch_col.astype(int), strict=True)
     )
     batch_list = np.array([sample_to_batch[col] for col in data.columns], dtype=np.int64)
 
@@ -159,17 +174,10 @@ def harmonize(
     validate_harmonize_args(
         algorithm,
         combat_mode,
-        needed_values if needed_values is not None else 2,
+        needed_values,
         block_size=block,
         n_batches=n_batches,
     )
-
-    # --- Determine needed_values -------------------------------------------
-    if needed_values is None:
-        if algorithm == "limma" or combat_mode in (1, 3):
-            needed_values = 2
-        else:
-            needed_values = 1
 
     logger.info(
         "Algorithm: %s%s | batches: %d | needed_values: %d",
@@ -232,7 +240,7 @@ def harmonize(
     result = pd.concat(sub_dfs, axis=0) if sub_dfs else pd.DataFrame()
 
     # --- Re-sort columns to original order ---------------------------------
-    if col_order is not None:
+    if col_order is not None and result.shape[1] > 0:
         result = result.iloc[:, np.argsort(col_order)]
 
     # --- Write output ------------------------------------------------------
