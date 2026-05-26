@@ -34,6 +34,7 @@ from .validation import validate_data_matrix, validate_description, validate_har
 # ---------------------------------------------------------------------------
 
 _LOG_FORMAT = "%(levelname)s [harmonizepy] %(message)s"
+_FILE_LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
 _FORMATS = ("tsv", "csv", "feather")
 
@@ -261,6 +262,24 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Suppress all progress messages; only warnings and errors are shown.",
     )
 
+    # -- Log file (optional override / disable) -----------------------------
+    parser.add_argument(
+        "--log-file",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Write a detailed execution log to PATH (default: <output_stem>.log). "
+            "Includes timestamps and module-level information. "
+            "Use --no-log to disable file logging entirely."
+        ),
+    )
+    parser.add_argument(
+        "--no-log",
+        action="store_true",
+        help="Disable automatic log file creation. By default a .log file is "
+        "written alongside the output with full DEBUG information.",
+    )
+
     # -- Version ------------------------------------------------------------
     parser.add_argument(
         "--version",
@@ -291,6 +310,20 @@ def _infer_format(path: str, fmt_arg: str | None) -> str:
     return _EXT_TO_FMT.get(Path(path).suffix.lower(), "tsv")
 
 
+def _resolve_log_path(output_path: str) -> str:
+    """Return the default log path: same directory and stem as *output_path* with ``.log``.
+
+    Examples
+    --------
+    >>> _resolve_log_path("/out/corrected.tsv")
+    '/out/corrected.log'
+    >>> _resolve_log_path("result.csv")
+    'result.log'
+    """
+    p = Path(output_path)
+    return str(p.parent / f"{p.stem}.log")
+
+
 def _load_config(path: str) -> dict[str, object]:
     """Load a TOML, JSON, or YAML config file and return the parsed mapping.
 
@@ -310,10 +343,10 @@ def _load_config(path: str) -> dict[str, object]:
 
     elif ext == ".toml":
         try:
-            import tomllib  # type: ignore[import-not-found]  # stdlib ≥ 3.11
+            import tomllib  # stdlib >= 3.11
         except ImportError:
             try:
-                import tomli as tomllib  # type: ignore[import-not-found]
+                import tomli as tomllib  # type: ignore[no-redef,import-not-found]
             except ImportError:
                 raise ImportError(
                     "TOML config requires 'tomllib' (Python ≥ 3.11) "
@@ -494,19 +527,47 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     args = parser.parse_args(argv)
 
+    # -- Resolve output path and format -------------------------------------
+    output_path = _resolve_output_path(args.data, args.output)
+    output_fmt = _infer_format(output_path, args.output_format)
+
     # -- Logging setup ------------------------------------------------------
-    # --json suppresses INFO so that stdout contains only the JSON object.
+    # Configure the root harmonizepy logger so all child modules
+    # (harmonizepy.combat, harmonizepy.core, etc.) inherit the settings.
+    # --json suppresses INFO so stdout contains only the JSON object.
     if args.verbose:
         level = logging.DEBUG
     elif args.quiet or args.json_output:
         level = logging.WARNING
     else:
         level = logging.INFO
-    logging.basicConfig(format=_LOG_FORMAT, level=level, force=True)
 
-    # -- Resolve output path and format -------------------------------------
-    output_path = _resolve_output_path(args.data, args.output)
-    output_fmt = _infer_format(output_path, args.output_format)
+    root_logger = logging.getLogger("harmonizepy")
+    root_logger.setLevel(logging.DEBUG)
+    root_logger.propagate = False
+
+    # Terminal handler: clean format, no timestamps, respects --verbose/--quiet.
+    console = logging.StreamHandler(sys.stderr)
+    console.setLevel(level)
+    console.setFormatter(logging.Formatter(_LOG_FORMAT))
+    root_logger.addHandler(console)
+
+    # File handler: always-on by default, writes DEBUG with timestamps.
+    # Log path is derived from the output path (e.g. corrected.tsv -> corrected.log)
+    # unless overridden via --log-file, or disabled via --no-log.
+    if not args.no_log:
+        log_path = args.log_file if args.log_file else _resolve_log_path(output_path)
+        try:
+            fh = logging.FileHandler(log_path, mode="w", encoding="utf-8")
+            fh.setLevel(logging.DEBUG)
+            fh.setFormatter(logging.Formatter(_FILE_LOG_FORMAT))
+            root_logger.addHandler(fh)
+        except OSError:
+            # If the log file cannot be created, warn and continue without it.
+            logging.getLogger("harmonizepy").warning(
+                "Could not create log file at %s; proceeding without file logging.",
+                log_path,
+            )
 
     # -- File existence pre-check (fast fail before any loading) ------------
     if not Path(args.data).is_file():
@@ -515,7 +576,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         parser.error(f"description file not found: '{args.description}'")
 
     # -- Dry-run path -------------------------------------------------------
+    # Suppress pipeline logging during dry-run so the plan output is clean.
     if args.dry_run:
+        _prev_level = console.level
+        console.setLevel(logging.WARNING)
         try:
             data = read_main_data(args.data)
             description = read_description(args.description)
@@ -558,6 +622,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         except (ValueError, TypeError, KeyError) as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
             sys.exit(1)
+        finally:
+            console.setLevel(_prev_level)
 
         n_features, n_samples = data.shape
         _print_dry_run(

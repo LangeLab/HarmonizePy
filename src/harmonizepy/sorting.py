@@ -14,11 +14,15 @@ This mirrors R ``HarmonizR:::sorting``.
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
 from .validation import _VALID_SORT_STRATEGIES
+
+logger = logging.getLogger(__name__)
 
 
 def sort_batches(
@@ -93,6 +97,13 @@ def sort_batches(
 
     unique_batches = _unique_batches_ordered(batch_list)
     presence = _build_presence_matrix(data, batch_list, unique_batches, needed_values)
+    logger.debug(
+        "Sorting %d batches by '%s' (presence matrix: %d features x %d batches)",
+        len(unique_batches),
+        strategy,
+        presence.shape[0],
+        presence.shape[1],
+    )
 
     if strategy == "sparsity":
         batch_order = _sparsity_order(presence)

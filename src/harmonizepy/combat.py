@@ -17,8 +17,8 @@ Mode  ``par_prior``  ``mean_only``
 References
 ----------
 .. [1] Johnson WE, Li C, Rabinovic A. "Adjusting batch effects in
-   microarray expression data using empirical Bayes methods."
-   *Biostatistics* 8(1):118-127, 2007.
+    microarray expression data using empirical Bayes methods."
+    *Biostatistics* 8(1):118-127, 2007.
 
 Acknowledgements
 ----------------
@@ -29,12 +29,15 @@ Algorithm logic cross-referenced against:
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import numpy as np
 import numpy.typing as npt
 
 from .validation import validate_combat_input
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Type aliases
@@ -139,7 +142,14 @@ def _it_sol(
         d_old = d_new
 
         if change < conv:
+            logger.debug("Converged in %d iterations (change=%.2e)", _ + 1, change)
             break
+    else:
+        logger.warning(
+            "Batch did not converge after %d iterations (final change=%.2e)",
+            max_iter,
+            change,
+        )
 
     return g_new, d_new
 
@@ -276,12 +286,24 @@ def combat(
     # ---- Input validation --------------------------------------------------
     validate_combat_input(data, batch_int)
 
-    _, n_samples = data.shape
+    n_features, n_samples = data.shape
 
     unique_batches = np.unique(batch_int)
     n_batch = len(unique_batches)
     if n_batch < 2:
-        return data.copy()  # type: ignore[no-any-return]
+        logger.debug("Single batch input, returning copy")
+        return data.copy()
+
+    mod_label = "parametric" if par_prior else "non-parametric"
+    scale_label = "location+scale" if not mean_only else "location only"
+    logger.info(
+        "ComBat %s, %s: %d features x %d samples across %d batches",
+        mod_label,
+        scale_label,
+        n_features,
+        n_samples,
+        n_batch,
+    )
 
     # Remap batch labels to 0..n_batch-1 (in case the caller passes e.g. [1,1,2,2])
     label_map = {old: new for new, old in enumerate(unique_batches)}
@@ -293,6 +315,7 @@ def combat(
                 f"ref_batch={ref_batch!r} not found in batch labels {sorted(label_map.keys())}"
             )
         ref_idx = label_map[ref_batch]
+        logger.debug("Reference batch: original %s -> remapped %d", ref_batch, ref_idx)
     else:
         ref_idx = None
 
@@ -304,6 +327,7 @@ def combat(
     # Variance cannot be estimated from a single observation, so scale
     # correction is impossible.  Override the caller's setting silently.
     if not mean_only and np.any(batch_sizes < 2):
+        logger.debug("Forcing mean_only=True: batch with < 2 samples detected")
         mean_only = True
 
     # ---- Design matrix (one-hot) -------------------------------------------

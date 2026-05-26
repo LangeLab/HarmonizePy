@@ -11,6 +11,7 @@ This mirrors the R ``HarmonizR::harmonizR()`` function.
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 from typing import Literal
 
@@ -121,6 +122,8 @@ def harmonize(
             needed_values = 2
         else:
             needed_values = 1
+
+    _start_time = time.monotonic()
 
     # --- Validate basic arguments (before data load) ----------------------
     validate_harmonize_args(
@@ -241,10 +244,20 @@ def harmonize(
     if col_order is not None and result.shape[1] > 0:
         result = result.iloc[:, np.argsort(col_order)]
 
+    # --- Warn if all features were dropped --------------------------------
+    if n_empty == n_features:
+        logger.warning(
+            "All %d features dropped: no feature meets needed_values=%d "
+            "in any batch. Output is all-NaN.",
+            n_features,
+            needed_values,
+        )
+
     # --- Write output ------------------------------------------------------
     if output_file is not None:
         logger.info("Writing output to %s", output_file)
         write_output(result, str(output_file))
 
-    logger.info("Done.")
+    _elapsed = time.monotonic() - _start_time
+    logger.info("Done (%.2fs).", _elapsed)
     return result

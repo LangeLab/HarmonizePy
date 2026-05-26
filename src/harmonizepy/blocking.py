@@ -14,8 +14,12 @@ This mirrors R ``HarmonizR:::blocking``.
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import numpy.typing as npt
+
+logger = logging.getLogger(__name__)
 
 
 def build_block_list(
@@ -89,6 +93,13 @@ def build_block_list(
     for j, bid in enumerate(batch_arr):
         block_arr[j] = batch_to_block[int(bid)]
 
+    n_blocks = len(np.unique(block_arr))
+    logger.debug(
+        "Built %d blocks of size %d from %d batches",
+        n_blocks,
+        block_size,
+        n_batches,
+    )
     return block_arr
 
 

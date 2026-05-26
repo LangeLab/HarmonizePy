@@ -13,10 +13,13 @@ combines both responsibilities.
 from __future__ import annotations
 
 import itertools
+import logging
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 def build_affiliation_list(
@@ -100,6 +103,13 @@ def build_affiliation_list(
 
         affiliation_list.append(tuple(sorted(blocks_present)))
 
+    n_empty = sum(1 for a in affiliation_list if len(a) == 0)
+    logger.debug(
+        "Affiliation: %d features across %d blocks; %d with insufficient data",
+        n_features,
+        len(unique_blocks),
+        n_empty,
+    )
     return affiliation_list
 
 
@@ -199,20 +209,21 @@ def remove_unique_combinations(
     non_unique = {affil for affil, cnt in counts.items() if cnt > 1}
 
     if not non_unique:
-        # Nothing to rescue to; leave list unchanged
+        logger.debug("No shared patterns available for rescue")
         return result
 
+    rescued = 0
     for i, affil in enumerate(result):
         if not affil or affil in non_unique:
-            continue  # empty or already non-unique, nothing to do
+            continue
 
-        # Find the reachable non-unique pattern with fewest blocks removed.
-        # Search all non-empty subsets of affil (in descending size order)
-        # until we hit one that is non-unique.
         best = _find_best_crop(frozenset(affil), non_unique)
         if best is not None:
             result[i] = best
+            rescued += 1
 
+    if rescued > 0:
+        logger.debug("Unique removal rescued %d feature(s)", rescued)
     return result
 
 

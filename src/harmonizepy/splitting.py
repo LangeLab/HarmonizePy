@@ -10,12 +10,16 @@ This mirrors R ``HarmonizR:::splitting``.
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import pandas as pd
 
 from .affiliation import reduce_to_unique_groups
 from .combat_wrapper import adjust_combat
 from .limma_wrapper import adjust_limma
+
+logger = logging.getLogger(__name__)
 
 
 def splitting(
@@ -74,6 +78,14 @@ def splitting(
 
     # Group features by affiliation using the shared reducer
     affil_to_features = reduce_to_unique_groups(affiliation_list)
+
+    n_groups = sum(1 for affil in affil_to_features if affil)
+    logger.debug(
+        "Splitting %d features into %d group(s) across %d columns",
+        data.shape[0],
+        n_groups,
+        data.shape[1],
+    )
 
     # Pre-allocate a single output array (n_features, n_samples) filled with NaN.
     # This avoids allocating one full-width DataFrame per affiliation group,

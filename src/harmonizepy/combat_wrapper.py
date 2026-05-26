@@ -6,12 +6,14 @@ underlying ``harmonizepy.combat.combat`` parameters.
 
 from __future__ import annotations
 
-from typing import cast
+import logging
 
 import numpy as np
 import pandas as pd
 
 from .combat import combat
+
+logger = logging.getLogger(__name__)
 
 _MODE_MAP: dict[int, dict[str, bool]] = {
     1: {"par_prior": True, "mean_only": False},
@@ -70,8 +72,19 @@ def adjust_combat(
 
     batch_labels = np.asarray(batch_labels, dtype=np.intp).ravel()
     if len(np.unique(batch_labels)) < 2:
-        return cast(pd.DataFrame, sub_df.copy())
+        logger.debug(
+            "Single batch in sub-matrix (%d x %d), passing through",
+            sub_df.shape[0],
+            sub_df.shape[1],
+        )
+        return sub_df.copy()
 
+    logger.debug(
+        "Adjusting sub-matrix (%d x %d) with combat mode %d",
+        sub_df.shape[0],
+        sub_df.shape[1],
+        mode,
+    )
     corrected = combat(
         sub_df.to_numpy(dtype=np.float64),
         batch_labels,

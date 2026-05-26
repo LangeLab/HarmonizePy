@@ -21,6 +21,7 @@ pip-wheel-metadata/
 # TODO: When making the repo-public stop ignoring for better transparency.
 tests/fixtures/*.tsv
 tests/fixtures/*.csv
+tests/fixtures/*.log
 
 # Test, lint, and coverage artifacts.
 .coverage

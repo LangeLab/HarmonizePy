@@ -16,6 +16,7 @@ RNA-sequencing and microarray studies." *Nucleic Acids Research*
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import numpy as np
@@ -23,6 +24,8 @@ import numpy.typing as npt
 import pandas as pd
 
 from .validation import validate_limma_input
+
+logger = logging.getLogger(__name__)
 
 _Array = npt.NDArray[np.floating[Any]]
 
@@ -70,7 +73,8 @@ def remove_batch_effect(
     unique_batches = np.unique(batch)
     n_batch = len(unique_batches)
     if n_batch < 2:
-        return data.copy()  # type: ignore[no-any-return]
+        logger.debug("Single batch input, returning copy")
+        return data.copy()
 
     # --- Sum-to-zero contrasts (R's contr.sum) ---
     # For k levels, produces (n_samples, k-1) matrix.
@@ -132,5 +136,10 @@ def adjust_limma(
     ...                     "s3": [5.0, 6.0], "s4": [7.0, 8.0]})
     >>> corrected = adjust_limma(df, [0, 0, 1, 1])
     """
+    logger.debug(
+        "Adjusting sub-matrix (%d x %d) with limma",
+        sub_df.shape[0],
+        sub_df.shape[1],
+    )
     result = remove_batch_effect(sub_df.values, np.asarray(batch_labels))
     return pd.DataFrame(result, index=sub_df.index, columns=sub_df.columns)
