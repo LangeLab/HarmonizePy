@@ -7,27 +7,12 @@
 #
 # Prints R_TIME: <seconds> to stdout as the last line for the harness to parse.
 
-# Limit threading to prevent R from hijacking all cores
-Sys.setenv(OMP_NUM_THREADS = "1")
-Sys.setenv(OPENBLAS_NUM_THREADS = "1")
-Sys.setenv(MKL_NUM_THREADS = "1")
-Sys.setenv(BLIS_NUM_THREADS = "1")
-Sys.setenv(NETLIB_BLAS_NUM_THREADS = "1")
-options(mc.cores = 1)
-options(Ncpus = 1)
-
 suppressPackageStartupMessages({
     if (requireNamespace("renv", quietly = TRUE)) {
         renv::load()
     }
     library(HarmonizR)
 })
-
-# Force foreach to sequential execution
-if (requireNamespace("foreach", quietly = TRUE)) {
-    library(foreach)
-    registerDoSEQ()
-}
 
 args <- commandArgs(trailingOnly = TRUE)
 data_path <- args[1]
@@ -56,7 +41,7 @@ result <- harmonizR(
     ur = TRUE,
     output_file = FALSE,
     verbosity = 0,
-    cores = FALSE,
+    cores = 16,
 )
 
 write.table(result, file = output_path, sep = "\t", quote = FALSE, col.names = NA)

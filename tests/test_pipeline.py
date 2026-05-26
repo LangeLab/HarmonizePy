@@ -294,3 +294,261 @@ class TestPipelineEdgeCases:
         )
         result = harmonize(data, desc)
         np.testing.assert_array_equal(result.values, data.values)
+
+
+# ---------------------------------------------------------------------------
+# Pipeline invariants: blocked and unblocked modes
+# ---------------------------------------------------------------------------
+
+
+class TestPipelineInvariants:
+    """Invariant tests for ``harmonize()`` that must hold for any valid input,
+    across both blocked and unblocked modes.
+
+    These tests use synthetic data with controlled batch effects and
+    structural missingness, not R fixtures.
+    """
+
+    @staticmethod
+    def _make_data(
+        n_features: int = 20,
+        n_batches: int = 5,
+        n_per_batch: int = 4,
+        missing_frac: float = 0.2,
+        seed: int = 42,
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Create synthetic data with known batch effects and optional missingness."""
+        rng = np.random.default_rng(seed)
+        n_samples = n_batches * n_per_batch
+
+        data = rng.normal(10, 2, size=(n_features, n_samples))
+
+        batch_labels = np.repeat(np.arange(1, n_batches + 1), n_per_batch)
+        for b in range(1, n_batches + 1):
+            mask = batch_labels == b
+            data[:, mask] += rng.normal(0, 2)
+
+        if missing_frac > 0:
+            n_present = max(2, n_features - int(n_features * missing_frac))
+            for b in range(1, n_batches + 1):
+                absent = rng.choice(n_features, size=n_features - n_present, replace=False)
+                mask = batch_labels == b
+                if np.any(mask):
+                    data[np.ix_(absent, mask)] = np.nan
+
+        df = pd.DataFrame(
+            data,
+            index=[f"f{i}" for i in range(n_features)],
+            columns=[f"s{j}" for j in range(n_samples)],
+        )
+
+        desc = pd.DataFrame({
+            "ID": df.columns.tolist(),
+            "sample": list(range(1, n_samples + 1)),
+            "batch": batch_labels,
+        })
+
+        return df, desc
+
+    # ------------------------------------------------------------------
+    # Shape preservation
+    # ------------------------------------------------------------------
+
+    @pytest.mark.parametrize("block", [None, 2])
+    @pytest.mark.parametrize("algorithm", ["ComBat", "limma"])
+    def test_shape_preserved(self, algorithm, block):
+        """Output shape must match input shape.
+
+        Failure condition: a dimension is dropped or added during
+        correction, regardless of algorithm or blocking.
+        """
+        df, desc = self._make_data()
+        kwargs = {"algorithm": algorithm}
+        if algorithm == "ComBat":
+            kwargs["combat_mode"] = 1
+        if block is not None:
+            kwargs["block"] = block
+        result = harmonize(df, desc, **kwargs)
+        assert result.shape == df.shape
+
+    # ------------------------------------------------------------------
+    # Batch mean spread reduction
+    # ------------------------------------------------------------------
+
+    @pytest.mark.parametrize("block", [None, 2])
+    @pytest.mark.parametrize("mode", [1, 2, 3, 4])
+    def test_batch_spread_reduced_combat(self, mode, block):
+        """ComBat must reduce batch mean spread for all 4 modes.
+
+        Failure condition: batch means are not pulled closer together
+        after correction.
+        """
+        df, desc = self._make_data(n_batches=4, n_per_batch=4)
+        batch_arr = desc["batch"].to_numpy()
+        unique_b = np.unique(batch_arr)
+        result = harmonize(df, desc, algorithm="ComBat", combat_mode=mode, block=block)
+        for b in unique_b:
+            mask = batch_arr == b
+            before = df.values[:, mask]
+            after = result.values[:, mask]
+            # Skip if no data in this batch
+            if np.isnan(before).all() or np.isnan(after).all():
+                continue
+            spread_before = np.nanmean(before)
+            spread_after = np.nanmean(after)
+        # Full batch mean spread
+        means_before = [np.nanmean(df.values[:, batch_arr == b].ravel()) for b in unique_b]
+        means_after = [np.nanmean(result.values[:, batch_arr == b].ravel()) for b in unique_b]
+        spread_before = max(means_before) - min(means_before)
+        spread_after = max(means_after) - min(means_after)
+        assert spread_after < spread_before, (
+            f"Mode {mode} block={block}: spread {spread_before:.3f} -> {spread_after:.3f}"
+        )
+
+    @pytest.mark.parametrize("block", [None, 2])
+    def test_batch_spread_reduced_limma(self, block):
+        """limma must reduce batch mean spread.
+
+        Failure condition: batch means are not pulled closer.
+        """
+        df, desc = self._make_data(n_batches=4, n_per_batch=4)
+        batch_arr = desc["batch"].to_numpy()
+        unique_b = np.unique(batch_arr)
+        result = harmonize(df, desc, algorithm="limma", block=block)
+        means_before = [np.nanmean(df.values[:, batch_arr == b].ravel()) for b in unique_b]
+        means_after = [np.nanmean(result.values[:, batch_arr == b].ravel()) for b in unique_b]
+        spread_before = max(means_before) - min(means_before)
+        spread_after = max(means_after) - min(means_after)
+        assert spread_after < spread_before, (
+            f"limma block={block}: spread {spread_before:.3f} -> {spread_after:.3f}"
+        )
+
+    # ------------------------------------------------------------------
+    # NaN propagation
+    # ------------------------------------------------------------------
+
+    @pytest.mark.parametrize("block", [None, 2])
+    def test_all_nan_feature_stays_nan(self, block):
+        """An entirely NaN feature must remain all-NaN in output.
+
+        Failure condition: a feature with no valid data gets filled
+        with non-NaN values.
+        """
+        df, desc = self._make_data(n_features=10, n_batches=4, n_per_batch=3)
+        df.iloc[0, :] = np.nan
+        result = harmonize(df, desc, algorithm="ComBat", combat_mode=1, block=block)
+        assert result.iloc[0].isna().all(), "All-NaN feature should stay NaN"
+        assert not result.iloc[1:].isna().all(axis=None), "Other features should have data"
+
+    @pytest.mark.parametrize("block", [None, 2])
+    def test_feature_missing_one_batch(self, block):
+        """Feature missing entirely in one batch must have NaN in that batch's columns.
+
+        With blocking, an entire block is excluded if any batch within it
+        has insufficient data. The NaN may extend to other batches in the
+        same block.
+
+        Failure condition: a batch where the feature has valid data is
+        incorrectly NaN'd despite being in a valid block.
+        """
+        df, desc = self._make_data(n_features=10, n_batches=4, n_per_batch=3)
+        batch_arr = desc["batch"].to_numpy()
+        df.iloc[0, batch_arr == 3] = np.nan
+        result = harmonize(df, desc, algorithm="ComBat", combat_mode=1, block=block)
+        # The missing batch (3) must be NaN
+        assert result.iloc[0, batch_arr == 3].isna().all(), (
+            "Missing batch should be NaN"
+        )
+        # Batches that are in valid blocks should have data
+        # Without blocking: batches 1, 2, 4 are independent, all valid
+        # With block=2: blocks {1,2} and {3,4}. Block 3 is excluded (batch 3 NaN),
+        #   so batch 4 may also be NaN. Only check batches not in the excluded block.
+        if block == 2:
+            # Block 2 = batches {3,4}. Block 1 = batches {1,2}.
+            valid_mask = batch_arr <= 2  # batches 1, 2
+        else:
+            valid_mask = (batch_arr != 3)  # all except batch 3
+        assert not result.iloc[0, valid_mask].isna().any(), (
+            "Batches in valid blocks should not be NaN"
+        )
+
+    # ------------------------------------------------------------------
+    # Output is not a copy of input (correction happened)
+    # ------------------------------------------------------------------
+
+    @pytest.mark.parametrize("block", [None, 2])
+    def test_output_changed(self, block):
+        """Corrected features must differ from input.
+
+        Failure condition: the pipeline returns a copy of the input
+        without applying any correction.
+        """
+        df, desc = self._make_data(n_features=20, n_batches=4, n_per_batch=4, missing_frac=0.0)
+        result = harmonize(df, desc, algorithm="ComBat", combat_mode=1, block=block)
+        # For non-blocked: all 20 features should be corrected
+        # For blocked with 4 batches and block=2: both blocks have 2 batches,
+        # so all features should be corrected (no pass-through)
+        diff = np.abs(result.values - df.values)
+        n_changed = (diff > 1e-10).sum()
+        assert n_changed > 0, "No feature values changed"
+
+    # ------------------------------------------------------------------
+    # Pass-through features: single-batch groups
+    # ------------------------------------------------------------------
+
+    def test_single_batch_block_passes_through(self):
+        """Features present ONLY in a single-batch block must pass through unchanged.
+
+        Failure condition: a feature that cannot be adjusted due to
+        insufficient batches is modified or dropped.
+
+        Data: 5 batches, block=2 -> blocks {1,2}, {3,4}, {5}.
+        Block {5} has only 1 batch. Features exclusive to block 5
+        must pass through unchanged.
+        """
+        df, desc = self._make_data(n_features=10, n_batches=5, n_per_batch=3, missing_frac=0.0)
+        batch_arr = desc["batch"].to_numpy()
+        # Make feature 0 present ONLY in batch 5 (block 3, single-batch block)
+        df.iloc[0, :] = np.nan
+        df.iloc[0, batch_arr == 5] = 7.0
+        result = harmonize(df, desc, algorithm="ComBat", combat_mode=1, block=2)
+        # Feature 0 should pass through unchanged in batch 5 columns
+        pt_mask = batch_arr == 5
+        np.testing.assert_array_equal(
+            result.iloc[0, pt_mask].values,
+            df.iloc[0, pt_mask].values,
+            err_msg="Single-batch block features changed",
+        )
+        # Feature 0 should remain NaN elsewhere
+        assert result.iloc[0, ~pt_mask].isna().all(), (
+            "Feature should remain NaN outside its block"
+        )
+
+    # ------------------------------------------------------------------
+    # Pass-through features: single-feature groups
+    # ------------------------------------------------------------------
+
+    def test_single_feature_group_passes_through(self):
+        """A group with only 1 feature must pass through unchanged.
+
+        Failure condition: a single-feature group is adjusted instead
+        of being passed through with raw values.
+
+        Data: create a feature with a unique affiliation pattern.
+        """
+        df, desc = self._make_data(n_features=10, n_batches=3, n_per_batch=4, missing_frac=0.0)
+        batch_arr = desc["batch"].to_numpy()
+        # Make feature 0 absent in batch 2, so it has a unique pattern vs feature 9
+        df.iloc[0, batch_arr == 2] = np.nan
+        result = harmonize(df, desc, algorithm="ComBat", combat_mode=1)
+        # Feature 0 is in batch set {1, 3} which no other feature shares
+        # It should pass through unchanged
+        pt_mask = batch_arr != 2  # columns where feature 0 has data
+        np.testing.assert_array_equal(
+            result.iloc[0, pt_mask].values, df.iloc[0, pt_mask].values,
+            err_msg="Single-feature group values changed",
+        )
+        # The single-batch columns (batch 2) should be NaN
+        assert result.iloc[0, batch_arr == 2].isna().all(), (
+            "Missing batch should be NaN for passed-through feature"
+        )

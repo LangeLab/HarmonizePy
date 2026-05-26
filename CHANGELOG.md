@@ -17,6 +17,9 @@ All notable changes to this project are documented in this file. The format is b
 - **TESTING.md**: test standards covering chain-of-thought docstrings, invariant/contract/failure testing, array assertion rules, and mock boundaries.
 - **FEATURE_PARITY.md**: R HarmonizR v1.10.0 vs HarmonizePy v0.2.0 comparison across core algorithms, pipeline parameters, I/O, sorting, and compute model.
 - **Invariant tests**: output isolation, determinism, and input non-mutation added to `test_api.py`.
+- **Benchmark suite**: `benchmarks/generate_data.py` for synthetic data, `benchmarks/run_benchmarks.py` for timing/memory/R comparison, `benchmarks/template_run.R` for R HarmonizR integration. Generates human-readable `benchmarks/RESULTS.md` with per-scenario tables.
+- **Pass-through logging**: single-feature and single-batch groups that skip correction are now logged at INFO level (total count) and DEBUG level (individual feature names).
+- **Corrected vs pass-through reporting**: benchmark results table now shows corrected and pass-through feature counts alongside timing and memory.
 
 ### Changed
 
@@ -27,6 +30,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Fixed
 
+- `benchmarks/generate_data.py`: Zipfian batch size distribution created batches with 1 sample, making them unable to satisfy `needed_values=2`. Increased minimum to 4 samples per batch.
+- `benchmarks/run_benchmarks.py`: output filenames did not include mode/block/sort parameters, causing overwrites between different benchmark scenarios. Fixed to use unique tagged filenames.
 - `combat.py`: removed stale `# type: ignore[no-any-return]` no longer needed after mypy inference improvements.
 - `io.py` and `combat_wrapper.py`: removed redundant `cast()` calls.
 - `splitting.py`: removed duplicate import block introduced during logging refactor.

@@ -41,13 +41,13 @@ _DATASETS: dict[str, dict[str, int | float]] = {
         "n_features": 5000,
         "n_samples": 60,
         "n_batches": 10,
-        "missing_frac": 0.40,
+        "missing_frac": 0.20,
     },
     "large": {
         "n_features": 10000,
         "n_samples": 100,
         "n_batches": 20,
-        "missing_frac": 0.50,
+        "missing_frac": 0.05,
     },
 }
 

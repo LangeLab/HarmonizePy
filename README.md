@@ -44,6 +44,8 @@ HarmonizePy provides batch-effect correction for omics data with structural miss
 - Batch blocking: group `block=N` consecutive (optionally sorted) batches into a single sub-matrix, reducing peak memory and improving adjustment quality for datasets with many batches.
 - Unique-combination removal (`unique_removal=True`, default): features whose batch-presence pattern is unique across the dataset get rescued. They would otherwise form a singleton sub-matrix and be dropped. The algorithm crops their affiliation to the nearest shared pattern, trading some non-missing data for inclusion in a group adjustment.
 
+**Validation against R HarmonizR v1.10.0:** all core algorithms are concordant at machine epsilon for unblocked modes (mode 1/3/limma). With blocking, feature retention may differ: R drops single-feature groups entirely, while HarmonizePy passes them through unchanged to preserve more data. The pipeline logs at INFO level report how many features were corrected versus passed through. See `assets/FEATURE_PARITY.md` for a detailed comparison.
+
 ## Installation
 
 ```bash

@@ -101,7 +101,21 @@ __Testing:__
 
 ---
 
-## Feature Summary: Python-Only vs R-Only
+## Feature Retention Policy
+
+R HarmonizR drops features that form single-feature affiliation groups (groups with exactly one feature and two or more batches). The `splitting()` function returns an empty list for these groups, removing the feature from the output entirely.
+
+HarmonizePy passes single-feature groups through unchanged (raw values are copied to the output without adjustment). This preserves data that R loses. The trade-off is that passed-through features retain their original batch effects.
+
+When blocking is used, single-batch blocks (blocks containing only one batch) also pass through unchanged in both implementations, but R may additionally drop samples from blocks that were excluded.
+
+The pipeline logs at INFO level report how many features passed through without correction. A DEBUG-level log identifies individual feature names.
+
+### Available in R HarmonizR only (continued)
+
+- R dependencies: `sva`, `limma`, `seriation`, `doParallel`, `foreach`, `janitor`, `plyr`, `SummarizedExperiment`
+- Sorting via `seriation` package
+- Matrix input support directly (not just DataFrame)
 
 ### Available in HarmonizePy only
 
@@ -117,6 +131,12 @@ __Testing:__
 - Pure Python implementation, no R required
 - Pathlib support for file paths
 - Self-contained seriation via NumPy SVD (no external library)
+- Feature retention policy: passes through single-feature groups (R drops them entirely)
+- INFO/DEBUG logging for passed-through features with per-feature identification
+- Automatic `.log` file written alongside output with full DEBUG trace
+- Module-level logging across all pipeline stages
+- Benchmark suite (`benchmarks/`) with timing, memory, feature retention, and R comparison
+- 22 invariant tests covering blocked and unblocked modes for spread reduction, NaN propagation, and pass-through behavior
 
 ### Available in R HarmonizR only
 
