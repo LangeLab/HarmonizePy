@@ -70,8 +70,8 @@ def validate_description(desc: pd.DataFrame, data: pd.DataFrame) -> None:
     Raises
     ------
     ValueError
-        If sample IDs do not match data columns or the batch column has
-        fewer than 2 unique values.
+        If sample IDs do not match data columns or the description has
+        fewer than 3 columns.
 
     Examples
     --------

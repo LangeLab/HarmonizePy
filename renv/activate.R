@@ -34,7 +34,7 @@ local({
       return(override)
 
     # if we're being run in a context where R_LIBS is already set,
-    # don't load -- presumably we're being run as a sub-process and
+    # don't load; presumably we're being run as a sub-process and
     # the parent process has already set up library paths for us
     rcmd <- Sys.getenv("R_CMD", unset = NA)
     rlibs <- Sys.getenv("R_LIBS", unset = NA)
@@ -89,7 +89,7 @@ local({
   # signal that we've consented to use renv
   options(renv.consent = TRUE)
 
-  # load the 'utils' package eagerly -- this ensures that renv shims, which
+  # load the 'utils' package eagerly; this ensures that renv shims, which
   # mask 'utils' packages, will come first on the search path
   library(utils, lib.loc = .Library)
 
@@ -450,7 +450,7 @@ local({
         # build arguments for utils::available.packages() call
         args <- list(type = type, repos = repos)
   
-        # add custom headers if available -- note that
+        # add custom headers if available. Note that
         # utils::available.packages() will pass this to download.file()
         if ("headers" %in% names(formals(utils::download.file))) {
           headers <- renv_bootstrap_download_custom_headers(repos)
@@ -1307,7 +1307,7 @@ local({
     # evaluate in safe environment
     result <- eval(json, envir = renv_json_read_envir())
   
-    # fix up strings if necessary -- do so only with reversible patterns
+    # fix up strings if necessary. Do so only with reversible patterns
     patterns <- Filter(function(pattern) pattern[[3L]], patterns)
     renv_json_read_remap(result, patterns)
   

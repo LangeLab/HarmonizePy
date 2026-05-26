@@ -7,14 +7,14 @@ handling for unknown strategies.
 
 Sections
 --------
-1. TestSparsitySort    — ordering by completeness count
-2. TestJaccardSort     — greedy nearest-neighbour ordering
-3. TestSeriationSort   — PCA seriation ordering
-4. TestInversePermutation  — col_order restores original columns
-5. TestNoDataMutation  — input DataFrame unchanged
-6. TestReturnTypes     — shapes and dtypes of return values
-7. TestEdgeCases       — two batches, all-NaN features, intra-batch order
-8. TestValidation      — ValueError on unknown strategy
+1. TestSparsitySort: ordering by completeness count
+2. TestJaccardSort: greedy nearest-neighbour ordering
+3. TestSeriationSort: PCA seriation ordering
+4. TestInversePermutation: col_order restores original columns
+5. TestNoDataMutation: input DataFrame unchanged
+6. TestReturnTypes: shapes and dtypes of return values
+7. TestEdgeCases: two batches, all-NaN features, intra-batch order
+8. TestValidation: ValueError on unknown strategy
 """
 
 from __future__ import annotations
@@ -445,7 +445,7 @@ class TestUniqueOrderedBatches:
 
 class TestJaccardDegenerateCases:
     def test_all_batches_identical_presence(self):
-        """All batches have the same features present — Jaccard sim = 1 everywhere.
+        """All batches have the same features present. Jaccard sim = 1 everywhere.
 
         Greedy traversal must still produce a valid full permutation.
         """
@@ -457,7 +457,7 @@ class TestJaccardDegenerateCases:
         np.testing.assert_array_equal(np.sort(co), np.arange(df.shape[1]))
 
     def test_all_batches_empty_presence(self):
-        """All features NaN in every batch — all Jaccard similarities are 0.
+        """All features NaN in every batch. All Jaccard similarities are 0.
 
         Greedy traversal must still produce a valid full permutation.
         """

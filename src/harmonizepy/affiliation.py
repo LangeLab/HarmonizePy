@@ -111,7 +111,7 @@ def reduce_to_unique_groups(
     Parameters
     ----------
     affiliation_list : list[tuple[int, ...]]
-        One tuple per feature from :func:`build_affiliation_list`.
+        One tuple per feature from ``build_affiliation_list``.
 
     Returns
     -------
@@ -148,7 +148,7 @@ def remove_unique_combinations(
     adjust a single feature, so it would otherwise be dropped.
 
     For each such singleton, this function finds the closest non-unique
-    affiliation  -  the one reachable by removing the fewest batches  -  and
+    affiliation (the one reachable by removing the fewest batches) and
     replaces the singleton's affiliation with that pattern.  Empty
     affiliations (features with no data anywhere) are left unchanged.
 
@@ -158,7 +158,7 @@ def remove_unique_combinations(
     Parameters
     ----------
     affiliation_list : list[tuple[int, ...]]
-        One tuple per feature from :func:`build_affiliation_list`.
+        One tuple per feature from ``build_affiliation_list``.
         Each tuple contains sorted block IDs where the feature has
         sufficient data.
 
@@ -175,7 +175,7 @@ def remove_unique_combinations(
     ValueError
         If all non-empty affiliations are unique (no shared pattern exists
         to crop to).  This indicates a dataset too fragmented for unique
-        removal to help  -  in practice this cannot happen when n_features > 1.
+        removal to help. In practice this cannot happen when n_features > 1.
 
     Examples
     --------
@@ -195,7 +195,7 @@ def remove_unique_combinations(
         if affil:
             counts[affil] = counts.get(affil, 0) + 1
 
-    # Collect the non-unique (shared) patterns  -  used as rescue targets
+    # Collect the non-unique (shared) patterns used as rescue targets
     non_unique = {affil for affil, cnt in counts.items() if cnt > 1}
 
     if not non_unique:
@@ -204,7 +204,7 @@ def remove_unique_combinations(
 
     for i, affil in enumerate(result):
         if not affil or affil in non_unique:
-            continue  # empty or already non-unique  -  nothing to do
+            continue  # empty or already non-unique, nothing to do
 
         # Find the reachable non-unique pattern with fewest blocks removed.
         # Search all non-empty subsets of affil (in descending size order)

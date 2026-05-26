@@ -20,7 +20,7 @@ class HarmonizeConfig:
     needed_values : int or None
         Minimum non-missing values per batch for a feature to be included.
         ``None`` (default) auto-selects: 2 for modes 1, 3 and limma; 1 for
-        modes 2, 4.  Mirrors the *needed_values* default in :func:`harmonize`.
+        modes 2, 4.  Mirrors the *needed_values* default in ``harmonize``.
     sort_strategy : str or None
         Batch sorting strategy: ``"sparsity"``, ``"jaccard"``,
         ``"seriation"``, or ``None`` (no sort).

@@ -1,7 +1,7 @@
 """ComBat integration layer.
 
 Thin public API that maps HarmonizR-style integer modes (1-4) to the
-underlying :func:`harmonizepy.combat.combat` parameters.
+underlying ``harmonizepy.combat.combat`` parameters.
 """
 
 from __future__ import annotations

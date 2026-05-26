@@ -52,7 +52,8 @@ class TestReadMainData:
     def test_fallback_extension_tsv(self, tmp_path: Path) -> None:
         """Unrecognised extension falls back to tab-separated."""
         expected = pd.DataFrame(
-            {"s1": [1.0]}, index=["f1"],
+            {"s1": [1.0]},
+            index=["f1"],
         )
         path = _write_tsv(tmp_path / "data.txt", expected)
         result = read_main_data(str(path))
@@ -81,6 +82,7 @@ class TestReadMainData:
         assert result["s2"].isna().all()
 
     def test_file_not_found(self) -> None:
+        """Reading a non-existent TSV raises FileNotFoundError."""
         with pytest.raises(FileNotFoundError):
             read_main_data("/nonexistent/file.tsv")
 
@@ -99,6 +101,7 @@ class TestReadMainData:
 
 class TestReadDescription:
     def test_basic_read(self, tmp_path: Path) -> None:
+        """Read a CSV description file correctly."""
         desc = pd.DataFrame(
             {"ID": ["s1", "s2"], "sample": [1, 2], "batch": [1, 1]},
         )
@@ -108,6 +111,7 @@ class TestReadDescription:
         pd.testing.assert_frame_equal(result, desc)
 
     def test_file_not_found(self) -> None:
+        """Reading a non-existent CSV raises FileNotFoundError."""
         with pytest.raises(FileNotFoundError):
             read_description("/nonexistent/desc.csv")
 

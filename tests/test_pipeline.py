@@ -4,6 +4,8 @@ Tests the complete spotting → splitting → adjust → concat flow via
 ``harmonize()`` and validates against R HarmonizR fixtures.
 """
 
+from __future__ import annotations
+
 from pathlib import Path
 
 import numpy as np
@@ -19,7 +21,7 @@ _has_medium = (FIXTURE_DIR / "medium_harmonizr_combat_mode1.tsv").exists()
 
 
 # ---------------------------------------------------------------------------
-# Small test case — no missing data
+# Small test case: no missing data
 # ---------------------------------------------------------------------------
 
 
@@ -72,7 +74,7 @@ class TestSmallPipeline:
 
 
 # ---------------------------------------------------------------------------
-# Medium test case — 30% structural missingness
+# Medium test case: 30% structural missingness
 # ---------------------------------------------------------------------------
 
 

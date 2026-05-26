@@ -2,11 +2,11 @@
 
 Sections
 --------
-1. TestSingletonRescue        — singletons are cropped to nearest shared pattern
-2. TestNonSingletonUnchanged  — non-singleton and empty tuples are not modified
-3. TestMinimalCropping        — fewest batches removed (greedy largest-first)
-4. TestEdgeCases              — all unique, single feature, already shared
-5. TestHelperFunctions        — _find_best_crop
+1. TestSingletonRescue: singletons are cropped to nearest shared pattern
+2. TestNonSingletonUnchanged: non-singleton and empty tuples are not modified
+3. TestMinimalCropping: fewest batches removed (greedy largest-first)
+4. TestEdgeCases: all unique, single feature, already shared
+5. TestHelperFunctions: _find_best_crop
 """
 
 from __future__ import annotations
@@ -82,7 +82,7 @@ class TestNonSingletonUnchanged:
         assert result[3] == ()
 
     def test_empty_tuple_not_counted_as_singleton(self):
-        """An empty tuple is not a singleton — it represents dropped features."""
+        """An empty tuple is not a singleton. It represents dropped features."""
         affil = [(), (), (1, 2), (1, 2)]
         result = remove_unique_combinations(affil)
         # The shared pattern (1,2) should not be considered for rescuing ()
@@ -128,22 +128,21 @@ class TestMinimalCropping:
 class TestEdgeCases:
     def test_all_non_empty_unique_no_change(self):
         """When all non-empty affiliations are unique, return list unchanged."""
-        affil = [(1, 2), (1, 3), (2, 3)]
+        affil: list[tuple[int, ...]] = [(1, 2), (1, 3), (2, 3)]
         result = remove_unique_combinations(affil)
         assert result == [(1, 2), (1, 3), (2, 3)]
 
     def test_single_non_empty_feature(self):
-        """Only one non-empty feature — it is unique by definition, no rescue."""
-        affil = [(1, 2)]
+        """Only one non-empty feature. It is unique by definition, no rescue."""
+        affil: list[tuple[int, ...]] = [(1, 2)]
         result = remove_unique_combinations(affil)
         assert result == [(1, 2)]
 
     def test_singleton_unreachable_stays_as_is(self):
         """If no subset of a singleton's blocks is shared, it stays unchanged."""
-        # (1, 4) has no subsets that are shared (only (2,3) is shared)
-        affil = [(1, 4), (2, 3), (2, 3)]
+        affil: list[tuple[int, ...]] = [(1, 4), (2, 3), (2, 3)]
         result = remove_unique_combinations(affil)
-        # (1, 4) subsets are (1,) and (4,) — neither is shared → unchanged
+        # (1, 4) subsets are (1,) and (4,). Neither is shared, so unchanged.
         assert result[0] == (1, 4)
 
     def test_empty_list(self):
@@ -151,7 +150,7 @@ class TestEdgeCases:
         assert result == []
 
     def test_all_empty_affiliations(self):
-        affil = [(), (), ()]
+        affil: list[tuple[int, ...]] = [(), (), ()]
         result = remove_unique_combinations(affil)
         assert result == [(), (), ()]
 
@@ -170,23 +169,23 @@ class TestEdgeCases:
 
 class TestFindBestCrop:
     def test_finds_largest_matching_subset(self):
-        non_unique = {(1, 2, 3), (1, 2)}
+        non_unique: set[tuple[int, ...]] = {(1, 2, 3), (1, 2)}
         best = _find_best_crop(frozenset({1, 2, 3, 4}), non_unique)
         assert best == (1, 2, 3)
 
     def test_returns_none_when_no_match(self):
-        non_unique = {(5, 6)}
+        non_unique: set[tuple[int, ...]] = {(5, 6)}
         best = _find_best_crop(frozenset({1, 2}), non_unique)
         assert best is None
 
     def test_single_element_subset(self):
-        non_unique = {(3,)}
+        non_unique: set[tuple[int, ...]] = {(3,)}
         best = _find_best_crop(frozenset({1, 2, 3}), non_unique)
         assert best == (3,)
 
     def test_exact_match_not_searched(self):
         """_find_best_crop only searches strict subsets (size < n)."""
-        non_unique = {(1, 2, 3), (1, 2)}
+        non_unique: set[tuple[int, ...]] = {(1, 2, 3), (1, 2)}
         # Input is already (1,2,3); best crop would be (1,2)
         best = _find_best_crop(frozenset({1, 2, 3}), non_unique)
         assert best == (1, 2)

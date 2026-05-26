@@ -2,11 +2,11 @@
 
 Sections
 --------
-1. TestBuildBlockList        — grouping, remainder, dtype, 1-indexing
-2. TestBlockListValues       — exact output for hand-crafted inputs
-3. TestEdgeCases             — minimum block_size=2, non-contiguous batch IDs
-4. TestValidation            — ValueError on bad block_size
-5. TestHelperFunctions       — _unique_ordered
+1. TestBuildBlockList: grouping, remainder, dtype, 1-indexing
+2. TestBlockListValues: exact output for hand-crafted inputs
+3. TestEdgeCases: minimum block_size=2, non-contiguous batch IDs
+4. TestValidation: ValueError on bad block_size
+5. TestHelperFunctions: _unique_ordered
 """
 
 from __future__ import annotations

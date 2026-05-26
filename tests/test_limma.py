@@ -6,6 +6,8 @@ Validates:
 3. Edge cases.
 """
 
+from __future__ import annotations
+
 from pathlib import Path
 
 import numpy as np
@@ -19,6 +21,7 @@ _has_r_fixtures = (FIXTURE_DIR / "small_limma.tsv").exists()
 
 
 def make_test_data(n_proteins=50, n_samples_per_batch=5, n_batches=3, seed=42):
+    """Generate synthetic data with known batch shifts."""
     rng = np.random.default_rng(seed)
     n_samples = n_samples_per_batch * n_batches
     data = rng.normal(loc=10, scale=2, size=(n_proteins, n_samples))
@@ -115,7 +118,7 @@ class TestRLimmaConcordance:
         df = pd.read_csv(FIXTURE_DIR / "small_input.tsv", sep="\t", index_col=0)
         self.data = df.values
         batch_csv = pd.read_csv(FIXTURE_DIR / "small_batch.csv")
-        self.batches = batch_csv["batch"].values
+        self.batches = batch_csv["batch"].to_numpy()
 
     def test_vs_r_limma(self):
         expected = pd.read_csv(FIXTURE_DIR / "small_limma.tsv", sep="\t", index_col=0).values

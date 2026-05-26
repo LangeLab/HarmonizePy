@@ -37,7 +37,7 @@ _LOG_FORMAT = "%(levelname)s [harmonizepy] %(message)s"
 
 _FORMATS = ("tsv", "csv", "feather")
 
-# Map file extensions to output formats  -  anything unrecognised falls back to tsv
+# Map file extensions to output formats. Anything unrecognised falls back to tsv.
 _EXT_TO_FMT: dict[str, str] = {
     ".tsv": "tsv",
     ".txt": "tsv",
@@ -76,7 +76,7 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "examples:\n"
-            "  # Minimal  -  ComBat mode 1, auto settings\n"
+            "  # Minimal: ComBat mode 1, auto settings\n"
             "  harmonizepy data.tsv batch.csv -o corrected.tsv\n\n"
             "  # Sort by sparsity then block into pairs before correction\n"
             "  harmonizepy data.tsv batch.csv --sort sparsity --block 2 -o corrected.tsv\n\n"
@@ -142,7 +142,7 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="{1,2,3,4}",
         help=(
             "ComBat variant (ignored when --algorithm limma). "
-            "1 = parametric, full correction (default  -  best for most datasets). "
+            "1 = parametric, full correction (default, best for most datasets). "
             "2 = non-parametric, full correction (use for very small batches, n < 10). "
             "3 = parametric, location-only (no variance correction). "
             "4 = non-parametric, location-only."
@@ -155,7 +155,7 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="N",
         help=(
             "Minimum non-missing values a feature must have in every batch it enters. "
-            "Default: auto  -  2 for ComBat modes 1/3 and limma (parametric estimators "
+            "Default: auto, 2 for ComBat modes 1/3 and limma (parametric estimators "
             "need ≥ 2 observations); 1 for modes 2/4 (non-parametric can handle "
             "single observations). Override only if you have specific quality requirements."
         ),
@@ -197,7 +197,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Rescue features whose batch-presence pattern is unique (a singleton) by "
             "cropping to the nearest shared pattern before correction. "
-            "Enabled by default  -  keeps more features in the output. "
+            "Enabled by default; keeps more features in the output. "
             "Disable only if you want strict pattern matching (--no-unique-removal)."
         ),
     )
@@ -210,7 +210,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Write a JSON run summary to PATH after completion. "
             "Contains all resolved parameters, input/output dimensions, and the "
-            "package version  -  useful for reproducibility and lab notebooks."
+            "package version, useful for reproducibility and lab notebooks."
         ),
     )
     parser.add_argument(
@@ -241,7 +241,7 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="json_output",
         help=(
             "Print the run summary as JSON to stdout after completion. "
-            "For programmatic consumption  -  pipe to jq or capture in a shell script. "
+            "For programmatic consumption: pipe to jq or capture in a shell script. "
             "Suppresses INFO log messages so stdout contains only the JSON object."
         ),
     )
@@ -296,9 +296,9 @@ def _load_config(path: str) -> dict[str, object]:
 
     Supported formats
     -----------------
-    ``.json``         -  stdlib, always available.
-    ``.toml``         -  ``tomllib`` (Python ≥ 3.11 stdlib) or ``tomli`` package.
-    ``.yaml``/``.yml``  -  requires ``pyyaml``: ``pip install pyyaml``.
+    ``.json``         (stdlib, always available)
+    ``.toml``         (``tomllib`` on Python >= 3.11, or ``tomli`` package)
+    ``.yaml``/``.yml`` (requires ``pyyaml``: ``pip install pyyaml``)
     """
     p = Path(path)
     ext = p.suffix.lower()
@@ -432,7 +432,7 @@ def _print_dry_run(
 
     lines = [
         "",
-        f"  HarmonizePy {version('harmonizepy')}  -  dry run",
+        f"  HarmonizePy {version('harmonizepy')} dry run",
         f"  {rule}",
         f"  Input data:      {data_file}",
         f"  Description:     {description_file}",
@@ -576,7 +576,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             n_batches=n_batches,
             n_submatrices=n_submatrices,
         )
-        return  # exit 0 implicitly  -  no correction performed
+        return  # exit 0 implicitly, no correction performed
 
     # -- Full pipeline run --------------------------------------------------
     try:

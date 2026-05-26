@@ -1,3 +1,7 @@
+"""Smoke test checking the package version string."""
+
+from __future__ import annotations
+
 from harmonizepy import __version__
 
 

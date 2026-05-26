@@ -2,7 +2,7 @@
 
 Blocking collapses *N* consecutive batches into a single block ID for
 the purpose of dissection (deciding which samples enter which sub-matrix
-during splitting).  It is purely a indexing operation  -  the original
+during splitting). It is purely a indexing operation. The original
 ``batch_list`` is kept unchanged and still drives the ComBat/limma
 adjustment step.
 

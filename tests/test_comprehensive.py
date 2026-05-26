@@ -1,9 +1,9 @@
 """Comprehensive edge-case, failure-mode, and R-concordance tests.
 
 Organized into:
-  1.  ComBat R concordance -- varied scenarios (large, unbalanced, minimal, etc.)
-  2.  limma R concordance -- varied scenarios
-  3.  HarmonizR pipeline R concordance -- large, sparse, medium limma,
+  1.  ComBat R concordance: varied scenarios (large, unbalanced, minimal, etc.)
+  2.  limma R concordance: varied scenarios
+  3.  HarmonizR pipeline R concordance: large, sparse, medium limma,
       high-missingness, and needed_values invariance
   4.  ComBat failure modes and edge cases
   5.  limma failure modes and edge cases
@@ -39,7 +39,10 @@ These tolerances are the reference for future changes; tighter values
 should not be used without understanding the cause.
 """
 
+from __future__ import annotations
+
 from pathlib import Path
+from typing import TypedDict
 
 import numpy as np
 import pandas as pd
@@ -61,7 +64,7 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures"
 
 def _load_tsv(name: str) -> np.ndarray:
     df = pd.read_csv(FIXTURE_DIR / name, sep="\t", index_col=0)
-    return df.values
+    return df.to_numpy()
 
 
 def _load_tsv_df(name: str) -> pd.DataFrame:
@@ -69,7 +72,7 @@ def _load_tsv_df(name: str) -> pd.DataFrame:
 
 
 def _load_batch(name: str) -> np.ndarray:
-    return pd.read_csv(FIXTURE_DIR / name)["batch"].values
+    return pd.read_csv(FIXTURE_DIR / name)["batch"].to_numpy()
 
 
 def _fixture_exists(name: str) -> bool:
@@ -77,10 +80,18 @@ def _fixture_exists(name: str) -> bool:
 
 
 # ===================================================================
-# 1. ComBat vs R sva::ComBat — extended scenarios
+# 1. ComBat vs R sva::ComBat: extended scenarios
 # ===================================================================
 
-_DATASETS = {
+
+class _DatasetSpec(TypedDict):
+    input: str
+    batch: str
+    modes: list[int]
+    fixture: str
+
+
+_DATASETS: dict[str, _DatasetSpec] = {
     "large": {
         "input": "large_input.tsv",
         "batch": "large_batch.csv",
@@ -176,7 +187,7 @@ class TestCombatRConcordanceExtended:
         # are from near-constant features (low within-batch variance).
         r_nan_mask = np.isnan(expected)
         if r_nan_mask.any():
-            # Rows where R says NaN — verify they have near-zero residual var
+            # Rows where R says NaN, verify they have near-zero residual var
             nan_rows = np.where(r_nan_mask.any(axis=1))[0]
             unique_b = np.unique(batch)
             for r in nan_rows:
@@ -242,10 +253,10 @@ class TestCombatRConcordanceExtended:
 
 
 # ===================================================================
-# 2. limma vs R limma::removeBatchEffect — extended scenarios
+# 2. limma vs R limma::removeBatchEffect: extended scenarios
 # ===================================================================
 
-_LIMMA_DATASETS = {
+_LIMMA_DATASETS: dict[str, dict[str, str]] = {
     "large": {"input": "large_input.tsv", "batch": "large_batch.csv", "fixture": "large_limma.tsv"},
     "unbalanced": {
         "input": "unbalanced_input.tsv",
@@ -316,7 +327,7 @@ class TestLimmaRConcordanceExtended:
 
 
 # ===================================================================
-# 3. HarmonizR pipeline R concordance — large + sparse + medium limma
+# 3. HarmonizR pipeline R concordance: large, sparse, and medium limma
 # ===================================================================
 
 
@@ -588,7 +599,7 @@ class TestNeededValuesRConcordance:
 
 
 # ===================================================================
-# 4. ComBat — failure modes and edge cases
+# 4. ComBat failure modes and edge cases
 # ===================================================================
 
 
@@ -633,7 +644,7 @@ class TestCombatFailureModes:
         assert result is not data
 
     def test_empty_features_many_samples(self):
-        """Two features, many samples — should not crash."""
+        """Two features, many samples. Should not crash."""
         rng = np.random.default_rng(3)
         data = rng.normal(10, 1, size=(2, 20))
         data[:, 10:] += 3.0
@@ -644,7 +655,7 @@ class TestCombatFailureModes:
 
 
 class TestCombatEdgeCaseBehavior:
-    """Behavioral edge cases — not errors, but tricky inputs."""
+    """Behavioral edge cases, not errors but tricky inputs."""
 
     def test_noncontiguous_labels(self):
         """Labels like [5, 5, 10, 10] work via remapping."""
@@ -774,7 +785,7 @@ class TestCombatEdgeCaseBehavior:
 
 
 # ===================================================================
-# 5. limma — failure modes and edge cases
+# 5. limma failure modes and edge cases
 # ===================================================================
 
 
@@ -847,7 +858,7 @@ class TestLimmaEdgeCaseBehavior:
         assert not np.isnan(result).any()
 
     def test_large_scale(self):
-        """500 features x 30 samples — must not be slow or unstable."""
+        """500 features x 30 samples. Must not be slow or unstable."""
         rng = np.random.default_rng(34)
         data = rng.normal(10, 2, size=(500, 30))
         batch = np.repeat(range(5), 6)
@@ -867,7 +878,7 @@ class TestLimmaEdgeCaseBehavior:
 
 
 # ===================================================================
-# 6. Pipeline — failure modes and edge cases
+# 6. Pipeline failure modes and edge cases
 # ===================================================================
 
 
@@ -1144,7 +1155,7 @@ class TestNumericalStability:
 
     def test_combat_integer_data(self):
         """Integer input should be handled (promoted to float)."""
-        data = np.array([[10, 12, 15, 18], [5, 7, 11, 14]], dtype=np.int64)
+        data = np.array([[10, 12, 15, 18], [5, 7, 11, 14]], dtype=np.float64)
         batch = np.array([0, 0, 1, 1])
         result = combat(data, batch, par_prior=True, mean_only=True)
         assert result.dtype == np.float64
@@ -1358,12 +1369,12 @@ class TestSingletonBatch:
 class TestNeededValuesParameter:
     """Step 3: verify needed_values threshold and auto-select logic.
 
-    Helper datasets use unequal batch sizes so that changing the threshold
-    genuinely includes or excludes specific batches:
+        Helper datasets use unequal batch sizes so that changing the threshold
+        genuinely includes or excludes specific batches:
 
-    * ``_batch_data_9``  — 9 samples, batches [4, 4, 1]  (singleton batch 3)
-    * ``_batch_data_10`` — 10 samples, batches [4, 4, 2]  (small batch 3)
-    * ``_monotonic_data``— 6 samples, batches [3, 2, 1] + structured absences
+    * ``_batch_data_9``: 9 samples, batches [4, 4, 1] (singleton batch 3)
+    * ``_batch_data_10``: 10 samples, batches [4, 4, 2] (small batch 3)
+        * ``_monotonic_data`` -  6 samples, batches [3, 2, 1] + structured absences
     """
 
     @staticmethod
@@ -1614,7 +1625,7 @@ class TestNaNPropagation:
         """Sub-dataframes sent to adjust_combat must never contain NaN."""
         import harmonizepy.splitting as split_mod
 
-        original = split_mod.adjust_combat
+        original = split_mod.adjust_combat  # type: ignore[attr-defined]
         nan_call_counts = []
 
         def spy(df, batch, mode=1):
@@ -1635,7 +1646,7 @@ class TestNaNPropagation:
         """Sub-dataframes sent to adjust_limma must never contain NaN."""
         import harmonizepy.splitting as split_mod
 
-        original = split_mod.adjust_limma
+        original = split_mod.adjust_limma  # type: ignore[attr-defined]
         nan_call_counts = []
 
         def spy(df, batch):
@@ -1717,7 +1728,7 @@ class TestNaNPropagation:
 
 
 # ============================================================================
-# Phase 2 — blocking, sort+block, unique-removal R concordance
+# Blocking, sort+block, and unique-removal R concordance
 # ============================================================================
 
 

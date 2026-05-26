@@ -308,7 +308,7 @@ class TestCLIDryRun:
     ) -> None:
         monkeypatch.chdir(tmp_path)
         main([DATA, BATCH, "--dry-run"])
-        # Only the dry-run — no corrected file should be written
+        # Only the dry-run; no corrected file should be written
         assert not (tmp_path / "small_input_corrected.tsv").exists()
 
     def test_dry_run_prints_summary(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -336,9 +336,8 @@ class TestCLIDryRun:
 
     def test_dry_run_exits_zero(self) -> None:
         """dry-run returns normally (exit code 0 implicitly)."""
-        # main() returns None on success — no SystemExit is raised
-        result = main([DATA, BATCH, "--dry-run"])
-        assert result is None
+        # main() returns None on success; no SystemExit is raised
+        main([DATA, BATCH, "--dry-run"])
 
     def test_dry_run_invalid_block_exits_nonzero(self) -> None:
         """--dry-run with --block 1 (< 2) should exit with code 1."""
@@ -717,7 +716,7 @@ class TestCLIJson:
     def test_json_suppresses_info_logging(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """stdout must contain only JSON — no log lines mixed in."""
+        """stdout must contain only JSON, no log lines mixed in."""
         out = str(tmp_path / "r.tsv")
         main([DATA, BATCH, "-o", out, "--json"])
         stdout = capsys.readouterr().out.strip()
@@ -795,7 +794,7 @@ class TestCLIJson:
     def test_config_dry_run_exits_zero(self, tmp_path: Path) -> None:
         cfg = tmp_path / "cfg.json"
         cfg.write_text('{"combat_mode": 2}', encoding="utf-8")
-        # SystemExit is not raised on success — function returns normally
+        # SystemExit is not raised on success. Function returns normally.
         main([DATA, BATCH, "--config", str(cfg), "--dry-run"])
 
 

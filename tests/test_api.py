@@ -197,7 +197,7 @@ class TestHarmonizePipeline:
 
         df, desc = _make_df_and_desc()
         with pytest.raises(ValueError, match="algorithm"):
-            harmonize(df, desc, algorithm="wrong")
+            harmonize(df, desc, algorithm="wrong")  # type: ignore[arg-type]
 
     def test_invalid_mode_raises(self):
         from harmonizepy import harmonize
@@ -358,7 +358,7 @@ class TestHarmonizeConfig:
 
         cfg = HarmonizeConfig()
         with pytest.raises(AttributeError):
-            cfg.algorithm = "limma"
+            cfg.algorithm = "limma"  # type: ignore[misc]
 
     def test_invalid_algorithm(self):
         from harmonizepy import HarmonizeConfig
@@ -494,7 +494,7 @@ class TestHarmonizeWithConfig:
 
         data, desc = small_inputs
         cfg = HarmonizeConfig(algorithm="limma")
-        # Pass algorithm="ComBat" as kwarg — config should win
+        # Pass algorithm="ComBat" as kwarg, but config should win
         result_cfg = harmonize(data, desc, config=cfg, algorithm="ComBat")
         result_limma = harmonize(data, desc, algorithm="limma")
         pd.testing.assert_frame_equal(result_cfg, result_limma)

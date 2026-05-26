@@ -11,7 +11,9 @@ from .core import harmonize
 from .limma_wrapper import adjust_limma, remove_batch_effect
 from .types import HarmonizeConfig
 
-__all__ = [  # noqa: RUF022; grouped by semantic tier, not alphabetical
+# __all__ intentionally grouped by semantic tier, not alphabetical.
+# ruff: noqa: RUF022
+__all__ = [
     "__version__",
     # Pipeline
     "harmonize",

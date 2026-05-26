@@ -10,6 +10,8 @@ References
 Algorithm: Johnson WE, Li C, Rabinovic A. Biostatistics 8(1):118-127, 2007.
 """
 
+from __future__ import annotations
+
 from pathlib import Path
 
 import numpy as np
@@ -181,9 +183,9 @@ class TestRConcordance:
     def _load_input(self):
         """Load shared small test case input and batch labels."""
         df = pd.read_csv(FIXTURE_DIR / "small_input.tsv", sep="\t", index_col=0)
-        self.data = df.values
+        self.data = df.to_numpy()
         batch_csv = pd.read_csv(FIXTURE_DIR / "small_batch.csv")
-        self.batches = batch_csv["batch"].values
+        self.batches = batch_csv["batch"].to_numpy()
 
     @pytest.mark.parametrize(
         "mode,par_prior,mean_only",

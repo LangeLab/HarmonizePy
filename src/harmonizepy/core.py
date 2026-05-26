@@ -77,8 +77,8 @@ def harmonize(
         strictly less than the total number of unique batches.
         ``None`` (default) disables blocking.
     unique_removal : bool
-        When ``True`` (default), singleton features  -  those whose
-        batch-presence pattern is unique across all features  -  are
+        When ``True`` (default), singleton features (those whose
+        batch-presence pattern is unique across all features) are
         rescued by cropping to the nearest shared pattern before
         splitting.  Mirrors R's ``ur=TRUE`` default.
     output_file : str, Path, or None
@@ -164,9 +164,7 @@ def harmonize(
     else:
         id_col = description.iloc[:, 0]
         batch_col = description.iloc[:, 2]
-    sample_to_batch = dict(
-        zip(id_col.astype(str), batch_col.astype(int), strict=True)
-    )
+    sample_to_batch = dict(zip(id_col.astype(str), batch_col.astype(int), strict=True))
     batch_list = np.array([sample_to_batch[col] for col in data.columns], dtype=np.int64)
 
     # --- Validate block_size now that we know n_batches --------------------

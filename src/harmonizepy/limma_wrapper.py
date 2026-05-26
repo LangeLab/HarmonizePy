@@ -1,4 +1,4 @@
-"""limma-style batch correction (removeBatchEffect)  -  pure NumPy.
+"""limma-style batch correction (removeBatchEffect), pure NumPy.
 
 Reimplements the algorithm from R limma::removeBatchEffect:
 
@@ -105,7 +105,7 @@ def adjust_limma(
     sub_df: pd.DataFrame,
     batch_labels: _Array,
 ) -> pd.DataFrame:
-    """DataFrame wrapper around :func:`remove_batch_effect`.
+    """DataFrame wrapper around ``remove_batch_effect``.
 
     Parameters
     ----------

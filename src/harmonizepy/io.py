@@ -58,8 +58,8 @@ def read_main_data(path: str) -> pd.DataFrame:
         # Default: tab-separated (.tsv, .txt, or unrecognised extension)
         df = pd.read_csv(path, sep="\t", index_col=0)
 
-    # Drop completely empty rows (all-NaN features).  Do NOT drop empty
-    # columns  -  an all-NaN sample is genuine structural missingness that
+    # Drop completely empty rows (all-NaN features). Do NOT drop empty
+    # columns. An all-NaN sample is genuine structural missingness that
     # should be validated and handled by the pipeline, not silently removed.
     df = cast(pd.DataFrame, df.dropna(how="all", axis=0))
     return df
