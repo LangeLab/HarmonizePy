@@ -790,6 +790,11 @@ class TestCombatEdgeCaseBehavior:
 
 
 class TestLimmaFailureModes:
+    """limma raises clear errors on invalid inputs.
+
+    Failure condition: bad input is silently accepted or produces
+    a misleading exception type/message.
+    """
     def test_1d_rejected(self):
         with pytest.raises(ValueError, match="2-D"):
             remove_batch_effect(np.array([1, 2, 3]), np.array([0, 0, 1]))
@@ -813,6 +818,11 @@ class TestLimmaFailureModes:
 
 
 class TestLimmaEdgeCaseBehavior:
+    """limma handles edge cases without crashing or producing NaN.
+
+    Failure condition: an unusual input shape or value causes
+    a crash or NaN in the output.
+    """
     def test_many_batches(self):
         """limma handles 5 batches."""
         rng = np.random.default_rng(30)
@@ -883,6 +893,11 @@ class TestLimmaEdgeCaseBehavior:
 
 
 class TestPipelineFailureModes:
+    """Pipeline raises clear errors on invalid inputs and edge cases.
+
+    Failure condition: bad input silently passes through or crashes
+    with an uninformative exception.
+    """
     def test_mismatched_samples(self):
         """Description has different number of samples than data."""
         data = pd.DataFrame(
@@ -1091,6 +1106,11 @@ class TestPipelineFailureModes:
 
 
 class TestNumericalStability:
+    """Numerical properties: determinism, float32 promotion, memory isolation.
+
+    Failure condition: output changes across identical runs, dtype
+    promotion fails, or mutating the output affects the input.
+    """
     def test_deterministic_combat(self):
         """Same input always gives same output."""
         rng = np.random.default_rng(50)
@@ -1183,6 +1203,11 @@ class TestNumericalStability:
 
 
 class TestSpottingEdgeCases:
+    """Edge cases for per-feature batch presence detection.
+
+    Failure condition: an all-NaN feature, partial batch absence, or
+    needed_values threshold produces an incorrect affiliation tuple.
+    """
     def test_no_missing(self):
         """All data present → every feature sees all batches."""
         data = pd.DataFrame(np.ones((5, 6)))
@@ -1247,6 +1272,11 @@ class TestSpottingEdgeCases:
 
 
 class TestSplittingRebuild:
+    """Splitting produces correct sub-DataFrames and reassembles them.
+
+    Failure condition: NaN placement is wrong, groups are split
+    incorrectly, or the output does not match direct adjustment.
+    """
     def test_no_missing_single_group(self):
         """Complete data → one sub-df, result matches direct combat."""
         rng = np.random.default_rng(60)

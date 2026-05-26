@@ -40,37 +40,79 @@ MED_BATCH = str(_FIXTURES / "medium_batch.csv")
 
 class TestResolveOutputPath:
     def test_explicit_output_returned_unchanged(self) -> None:
+        """Explicit output path is returned as-is.
+
+        Failure condition: the explicit path is modified or ignored.
+        """
         assert _resolve_output_path("data.tsv", "/out/result.tsv") == "/out/result.tsv"
 
     def test_default_placed_next_to_input(self) -> None:
+        """Default output path lives next to the input file with ``_corrected`` suffix.
+
+        Failure condition: the default path uses a different directory or suffix.
+        """
         result = _resolve_output_path("/data/my_file.tsv", None)
         assert result == "/data/my_file_corrected.tsv"
 
     def test_default_stem_preservation(self) -> None:
+        """Input filename stem is preserved in the default output path.
+
+        Failure condition: the stem is modified or dropped.
+        """
         result = _resolve_output_path("proteins.tsv", None)
         assert result == "proteins_corrected.tsv"
 
 
 class TestInferFormat:
     def test_explicit_flag_wins(self) -> None:
+        """Explicit --output-format flag overrides the file extension.
+
+        Failure condition: extension inference takes priority over
+        the explicit flag.
+        """
         assert _infer_format("result.tsv", "csv") == "csv"
 
     def test_tsv_extension(self) -> None:
+        """.tsv extension maps to ``"tsv"`` format.
+
+        Failure condition: .tsv maps to a different format.
+        """
         assert _infer_format("result.tsv", None) == "tsv"
 
     def test_csv_extension(self) -> None:
+        """.csv extension maps to ``"csv"`` format.
+
+        Failure condition: .csv maps to a different format.
+        """
         assert _infer_format("result.csv", None) == "csv"
 
     def test_feather_extension(self) -> None:
+        """.feather extension maps to ``"feather"`` format.
+
+        Failure condition: .feather maps to a different format.
+        """
         assert _infer_format("result.feather", None) == "feather"
 
     def test_ftr_extension(self) -> None:
+        """.ftr extension maps to ``"feather"`` format.
+
+        Failure condition: .ftr maps to a different format.
+        """
         assert _infer_format("result.ftr", None) == "feather"
 
     def test_unknown_extension_falls_back_to_tsv(self) -> None:
+        """Unrecognised extension falls back to ``"tsv"`` format.
+
+        Failure condition: an unknown extension raises or maps to
+        a different format.
+        """
         assert _infer_format("result.dat", None) == "tsv"
 
     def test_txt_extension_is_tsv(self) -> None:
+        """.txt extension maps to ``"tsv"`` format (tab-separated default).
+
+        Failure condition: .txt maps to a different format.
+        """
         assert _infer_format("result.txt", None) == "tsv"
 
 
@@ -81,18 +123,32 @@ class TestInferFormat:
 
 class TestCLIMinimal:
     def test_creates_output_file(self, tmp_path: Path) -> None:
+        """CLI must create a valid output file.
+
+        Failure condition: the output file is not created.
+        """
         out = str(tmp_path / "result.tsv")
         main([DATA, BATCH, "-o", out])
         assert Path(out).exists()
 
     def test_output_is_nonempty_dataframe(self, tmp_path: Path) -> None:
+        """CLI output must be a non-empty DataFrame.
+
+        Failure condition: the output file is empty or unreadable.
+        """
         out = str(tmp_path / "result.tsv")
         main([DATA, BATCH, "-o", out])
         df = pd.read_csv(out, sep="\t", index_col=0)
         assert not df.empty
 
     def test_output_matches_harmonize_api(self, tmp_path: Path) -> None:
-        """CLI result must be numerically identical to calling harmonize() directly."""
+        """CLI result must be numerically identical to calling harmonize().
+
+        Failure condition: the CLI code path diverges from the API
+        code path.
+
+        Tolerances: atol=1e-10 for identical float64 pipeline output.
+        """
         out = str(tmp_path / "result.tsv")
         main([DATA, BATCH, "-o", out])
         cli_result = pd.read_csv(out, sep="\t", index_col=0)
@@ -102,7 +158,11 @@ class TestCLIMinimal:
     def test_default_output_path_next_to_input(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """When -o is omitted the output file lands alongside the input data."""
+        """With ``-o`` omitted, output lands next to the input file.
+
+        Failure condition: the output is written to the current directory
+        instead of next to the input.
+        """
         import shutil
 
         local_data = str(tmp_path / "small_input.tsv")
@@ -114,9 +174,12 @@ class TestCLIMinimal:
         assert (tmp_path / "small_input_corrected.tsv").exists()
 
     def test_python_m_invocation(self, tmp_path: Path) -> None:
-        """Ensure __main__.py is importable and callable as python -m harmonizepy."""
+        """__main__.py must work when invoked as ``python -m harmonizepy``.
+
+        Failure condition: the module entry point fails when called
+        via ``main()`` (which mirrors ``-m`` invocation).
+        """
         out = str(tmp_path / "result.tsv")
-        # main() is the same as `python -m harmonizepy` when called with argv
         main([DATA, BATCH, "-o", out])
         assert Path(out).is_file()
 

@@ -34,12 +34,21 @@ def make_test_data(n_proteins=50, n_samples_per_batch=5, n_batches=3, seed=42):
 
 class TestLimmaBasic:
     def test_shape_and_no_nan(self):
+        """Output shape must match input and must not contain NaN.
+
+        Failure condition: a dimension is dropped or NaN is produced.
+        """
         data, batches = make_test_data()
         result = remove_batch_effect(data, batches)
         assert result.shape == data.shape
         assert not np.isnan(result).any()
 
     def test_batch_mean_reduction(self):
+        """limma must reduce batch mean spread after correction.
+
+        Failure condition: the OLS fit does not subtract batch effects,
+        leaving the original spread intact.
+        """
         data, batches = make_test_data()
         result = remove_batch_effect(data, batches)
         n_batches = 3
@@ -50,6 +59,14 @@ class TestLimmaBasic:
         assert spread_after < spread_before
 
     def test_dataframe_wrapper(self):
+        """DataFrame wrapper preserves index and columns and matches low-level API.
+
+        Failure condition: the wrapper drops or reorders index/columns
+        or produces different values than the raw array path.
+
+        Tolerances: rtol=1e-12 for identical float64 values through
+        the same compute path.
+        """
         data, batches = make_test_data(n_proteins=10, n_samples_per_batch=3, n_batches=2)
         df = pd.DataFrame(
             data,
@@ -63,18 +80,33 @@ class TestLimmaBasic:
         np.testing.assert_allclose(result.values, remove_batch_effect(data, batches), rtol=1e-12)
 
     def test_two_batches(self):
+        """After correction with 2 batches, batch means must converge.
+
+        Failure condition: the OLS fit with 2 batches fails to bring
+        means within a small tolerance.
+
+        Tolerances: spread < 0.5 for this specific seed (7) where
+        the batch shift is 3.0 units.
+        """
         rng = np.random.default_rng(7)
         data = rng.normal(10, 2, size=(20, 8))
         data[:, 4:] += 3.0
         batches = np.array([0, 0, 0, 0, 1, 1, 1, 1])
         result = remove_batch_effect(data, batches)
         assert result.shape == data.shape
-        # After correction, batch means should be close
         m0 = result[:, :4].mean()
         m1 = result[:, 4:].mean()
         assert abs(m0 - m1) < 0.5
 
     def test_three_batches(self):
+        """After correction with 3 batches, batch means must converge.
+
+        Failure condition: the OLS fit with 3 batches fails to bring
+        means within tolerance.
+
+        Tolerances: spread < 0.5 for seed (11) where batch shifts
+        are 2.0 and -1.5 units.
+        """
         rng = np.random.default_rng(11)
         data = rng.normal(10, 2, size=(30, 9))
         data[:, 3:6] += 2.0
@@ -87,12 +119,21 @@ class TestLimmaBasic:
 
 class TestLimmaEdgeCases:
     def test_nan_rejected(self):
+        """Input containing NaN must raise ValueError.
+
+        Failure condition: NaN values are silently accepted.
+        """
         data = np.array([[1.0, 2.0, np.nan, 4.0], [5.0, 6.0, 7.0, 8.0]])
         batches = np.array([0, 0, 1, 1])
         with pytest.raises(ValueError, match="NaN"):
             remove_batch_effect(data, batches)
 
     def test_single_batch_passthrough(self):
+        """Single batch input must be returned unchanged.
+
+        Failure condition: the function crashes or modifies data
+        when only one batch is present.
+        """
         rng = np.random.default_rng(3)
         data = rng.normal(10, 2, size=(10, 5))
         batches = np.zeros(5, dtype=int)
@@ -100,6 +141,11 @@ class TestLimmaEdgeCases:
         np.testing.assert_array_equal(result, data)
 
     def test_noncontiguous_labels(self):
+        """Non-contiguous batch labels must not crash.
+
+        Failure condition: labels like [10, 10, 20] that are not
+        0-indexed cause a failure in contrast encoding.
+        """
         rng = np.random.default_rng(5)
         data = rng.normal(10, 2, size=(15, 6))
         data[:, 3:] += 2.0
@@ -121,6 +167,14 @@ class TestRLimmaConcordance:
         self.batches = batch_csv["batch"].to_numpy()
 
     def test_vs_r_limma(self):
+        """Output must match R limma::removeBatchEffect.
+
+        Failure condition: the OLS contrast encoding differs from R
+        reference, producing different corrected values.
+
+        Tolerances: rtol=1e-10/atol=1e-10 for closed-form OLS;
+        no iteration, so agreement should be at machine epsilon.
+        """
         expected = pd.read_csv(FIXTURE_DIR / "small_limma.tsv", sep="\t", index_col=0).values
         result = remove_batch_effect(self.data, self.batches)
         np.testing.assert_allclose(

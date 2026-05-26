@@ -76,24 +76,29 @@ class TestCombatModes:
         ],
     )
     def test_mode(self, mode, par_prior, mean_only):
+        """Each ComBat mode must reduce batch mean spread and produce no NaN.
+
+        Failure condition: a mode produces NaN, does not correct batch
+        effects, or the wrapper API diverges from the low-level API.
+
+        Tolerances: rtol=1e-12 for comparing wrapper vs low-level;
+        both use the same combat() path so agreement is near epsilon.
+        """
         df, batches = make_test_data()
 
-        # Via low-level API
         result = combat(df.values, batches, par_prior=par_prior, mean_only=mean_only)
         assert result.shape == df.shape
         assert not np.isnan(result).any(), "NaN in output"
 
-        # Batch mean spread should shrink
         n_batches = 3
         means_before = [df.values[:, batches == b].mean() for b in range(n_batches)]
         means_after = [result[:, batches == b].mean() for b in range(n_batches)]
         spread_before = max(means_before) - min(means_before)
         spread_after = max(means_after) - min(means_after)
         assert spread_after < spread_before, (
-            f"Mode {mode}: spread not reduced {spread_before:.3f} → {spread_after:.3f}"
+            f"Mode {mode}: spread not reduced {spread_before:.3f} -> {spread_after:.3f}"
         )
 
-        # Via wrapper API
         df_result = adjust_combat(df, batches, mode=mode)
         assert isinstance(df_result, pd.DataFrame)
         np.testing.assert_allclose(df_result.values, result, rtol=1e-12)
@@ -106,6 +111,11 @@ class TestCombatModes:
 
 class TestEdgeCases:
     def test_nan_rejected(self):
+        """Input containing NaN must raise ValueError.
+
+        Failure condition: NaN values are silently accepted or
+        produce incorrect results instead of raising.
+        """
         df, batches = make_test_data(n_proteins=10, n_samples_per_batch=3, n_batches=2)
         data = df.values.copy()
         data[0, 0] = np.nan
@@ -113,33 +123,53 @@ class TestEdgeCases:
             combat(data, batches)
 
     def test_single_batch_passthrough(self):
+        """Single batch input must be returned unchanged.
+
+        Failure condition: the function crashes or modifies data
+        when only one batch is present.
+        """
         df, _ = make_test_data(n_proteins=10, n_samples_per_batch=6, n_batches=1)
         batches = np.zeros(6, dtype=int)
         result = combat(df.values, batches)
         np.testing.assert_array_equal(result, df.values)
 
     def test_too_few_features(self):
-        data = np.array([[1.0, 2.0, 3.0]])  # 1 row
+        """Fewer than 2 features must raise ValueError.
+
+        Failure condition: single-feature input is accepted.
+        """
+        data = np.array([[1.0, 2.0, 3.0]])
         batches = np.array([0, 0, 1])
         with pytest.raises(ValueError, match="at least 2 features"):
             combat(data, batches)
 
     def test_wrapper_invalid_mode(self):
+        """Invalid combat mode passed to wrapper must raise ValueError.
+
+        Failure condition: an out-of-range mode is accepted.
+        """
         df, batches = make_test_data(n_proteins=5, n_samples_per_batch=3, n_batches=2)
         with pytest.raises(ValueError, match="mode"):
             adjust_combat(df, batches, mode=5)
 
     def test_ref_batch(self):
+        """Reference batch data must be left unchanged.
+
+        Failure condition: the reference batch is adjusted or the
+        output shape is wrong.
+        """
         df, batches = make_test_data()
         result = combat(df.values, batches, ref_batch=0)
-        # Reference batch columns should be unchanged
         ref_cols = batches == 0
         np.testing.assert_array_equal(result[:, ref_cols], df.values[:, ref_cols])
-        # Other batches should still be adjusted
         assert result.shape == df.shape
 
     def test_noncontiguous_batch_labels(self):
-        """Batch labels [5, 5, 10, 10, 10] should work via remapping."""
+        """Non-contiguous batch labels like [5, 5, 10, 10] must work via remapping.
+
+        Failure condition: the label-remapping step crashes or
+        produces incorrect results for non-0-indexed labels.
+        """
         rng = np.random.default_rng(99)
         data = rng.normal(10, 2, size=(20, 5))
         data[:, 2:] += 3.0
@@ -149,7 +179,10 @@ class TestEdgeCases:
         assert not np.isnan(result).any()
 
     def test_adjust_combat_ref_batch(self):
-        """Wrapper-level ref_batch leaves reference batch unchanged."""
+        """Wrapper-level ref_batch must leave the reference batch unchanged.
+
+        Failure condition: the reference batch is adjusted.
+        """
         from harmonizepy import adjust_combat
 
         df, batches = make_test_data()
@@ -198,7 +231,15 @@ class TestRConcordance:
         ids=["mode1", "mode2", "mode3", "mode4"],
     )
     def test_sva_combat(self, mode, par_prior, mean_only):
-        """Compare against direct sva::ComBat output."""
+        """Output must match R sva::ComBat for all 4 modes.
+
+        Failure condition: the Python implementation diverges from R
+        reference beyond documented tolerances.
+
+        Tolerances: rtol=1e-4/atol=1e-6 for parametric iterative
+        modes (1, 3); closed-form modes are tighter but this
+        tolerance covers all modes.
+        """
         expected = _load_fixture(f"small_combat_mode{mode}.tsv")
         result = combat(self.data, self.batches, par_prior=par_prior, mean_only=mean_only)
         np.testing.assert_allclose(

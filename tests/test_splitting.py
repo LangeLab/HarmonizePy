@@ -36,6 +36,11 @@ def _make_data(n_features: int = 6, n_samples: int = 6) -> pd.DataFrame:
 
 class TestSplittingBasic:
     def test_all_features_one_group(self) -> None:
+        """All features in one affiliation group produce a single sub-DataFrame.
+
+        Failure condition: features are split across multiple groups
+        when they share the same affiliation.
+        """
         data = _make_data()
         batch = np.array([1, 1, 1, 2, 2, 2])
         block = batch.copy()
@@ -47,6 +52,10 @@ class TestSplittingBasic:
         assert not concat.isna().any().any()
 
     def test_two_groups(self) -> None:
+        """Two affiliation groups produce two sub-DataFrames.
+
+        Failure condition: groups are merged or dropped.
+        """
         data = _make_data(4, 6)
         batch = np.array([1, 1, 1, 2, 2, 2])
         block = batch.copy()
@@ -57,6 +66,11 @@ class TestSplittingBasic:
         assert concat.shape == data.shape
 
     def test_empty_affiliation_stays_nan(self) -> None:
+        """Features with empty affiliation remain all-NaN in output.
+
+        Failure condition: an empty-affiliation feature is dropped
+        or filled with non-NaN values.
+        """
         data = _make_data(4, 6)
         batch = np.array([1, 1, 1, 2, 2, 2])
         block = batch.copy()
@@ -67,6 +81,10 @@ class TestSplittingBasic:
         assert concat.iloc[0].isna().all()
 
     def test_single_batch_group_copies_raw(self) -> None:
+        """Single-batch groups pass raw values through, no adjustment.
+
+        Failure condition: a single-batch group is adjusted or zeroed out.
+        """
         data = _make_data(4, 6)
         batch = np.array([1, 1, 1, 2, 2, 2])
         block = batch.copy()
@@ -77,6 +95,11 @@ class TestSplittingBasic:
         assert concat.iloc[:, 3:].isna().all().all()
 
     def test_single_feature_group_copies_raw(self) -> None:
+        """Single-feature groups pass raw values through, no adjustment.
+
+        Failure condition: a single feature is adjusted instead of
+        passed through unchanged.
+        """
         data = _make_data(4, 6)
         batch = np.array([1, 1, 1, 2, 2, 2])
         block = batch.copy()
@@ -88,7 +111,12 @@ class TestSplittingBasic:
 
 class TestSplittingNanAudit:
     def test_combat_subframes_are_nan_free(self, monkeypatch: Any) -> None:
-        import harmonizepy.splitting as splitting_mod
+        """Sub-DataFrames sent to adjust_combat must never contain NaN.
+
+        Failure condition: a NaN leaks into the adjustment step,
+        which would cause the engine to raise ValueError.
+        """
+        import harmonizepy.splitting as split_mod
 
         called_with_nan = False
 
@@ -98,7 +126,7 @@ class TestSplittingNanAudit:
                 called_with_nan = True
             return _adjust_combat(sub_df, batch_labels, **kwargs)
 
-        monkeypatch.setattr(splitting_mod, "adjust_combat", tracking)
+        monkeypatch.setattr(split_mod, "adjust_combat", tracking)
 
         data = _make_data(6, 6)
         data.iloc[0, 0:3] = np.nan
@@ -110,7 +138,12 @@ class TestSplittingNanAudit:
         assert not called_with_nan
 
     def test_limma_subframes_are_nan_free(self, monkeypatch: Any) -> None:
-        import harmonizepy.splitting as splitting_mod
+        """Sub-DataFrames sent to adjust_limma must never contain NaN.
+
+        Failure condition: a NaN leaks into the adjustment step,
+        which would cause the engine to raise ValueError.
+        """
+        import harmonizepy.splitting as split_mod
 
         called_with_nan = False
 
@@ -120,7 +153,7 @@ class TestSplittingNanAudit:
                 called_with_nan = True
             return _adjust_limma(sub_df, batch_labels)
 
-        monkeypatch.setattr(splitting_mod, "adjust_limma", tracking)
+        monkeypatch.setattr(split_mod, "adjust_limma", tracking)
 
         data = _make_data(6, 6)
         data.iloc[0, 0:3] = np.nan
@@ -134,6 +167,10 @@ class TestSplittingNanAudit:
 
 class TestSplittingIntegration:
     def test_no_missing_data_produces_one_group(self) -> None:
+        """Complete data yields a single affiliation group and one sub-DataFrame.
+
+        Failure condition: complete data is split into multiple groups.
+        """
         data = _make_data(6, 6)
         batch = np.array([1, 1, 1, 2, 2, 2])
         block = batch.copy()
@@ -144,6 +181,11 @@ class TestSplittingIntegration:
         assert concat.shape == data.shape
 
     def test_partial_missing_produces_multiple_groups(self) -> None:
+        """Partial missing data produces multiple affiliation groups.
+
+        Failure condition: features with different missing patterns
+        are forced into the same adjustment group.
+        """
         data = _make_data(6, 6)
         data.iloc[0, 0:3] = np.nan
         data.iloc[1, 3:6] = np.nan

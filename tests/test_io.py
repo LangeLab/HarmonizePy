@@ -30,7 +30,11 @@ def _write_csv(path: Path, df: pd.DataFrame) -> Path:
 
 class TestReadMainData:
     def test_tsv_file(self, tmp_path: Path) -> None:
-        """TSV file is read correctly with feature names as index."""
+        """TSV file is read correctly with feature names as index.
+
+        Failure condition: the TSV parser fails, the index is not set
+        from column 0, or the wrong separator is used.
+        """
         expected = pd.DataFrame(
             {"s1": [1.0, 2.0], "s2": [3.0, 4.0]},
             index=["f1", "f2"],
@@ -40,7 +44,11 @@ class TestReadMainData:
         pd.testing.assert_frame_equal(result, expected)
 
     def test_csv_file(self, tmp_path: Path) -> None:
-        """CSV file uses comma separator."""
+        """CSV file uses comma separator.
+
+        Failure condition: the wrong delimiter is used or the index
+        is not set from the first column.
+        """
         expected = pd.DataFrame(
             {"s1": [1.0, 2.0], "s2": [3.0, 4.0]},
             index=["f1", "f2"],
@@ -50,7 +58,11 @@ class TestReadMainData:
         pd.testing.assert_frame_equal(result, expected)
 
     def test_fallback_extension_tsv(self, tmp_path: Path) -> None:
-        """Unrecognised extension falls back to tab-separated."""
+        """Unrecognised extension falls back to tab-separated.
+
+        Failure condition: a non-standard extension like ``.txt`` is
+        rejected or not treated as tab-separated.
+        """
         expected = pd.DataFrame(
             {"s1": [1.0]},
             index=["f1"],
@@ -60,7 +72,11 @@ class TestReadMainData:
         pd.testing.assert_frame_equal(result, expected)
 
     def test_drops_all_nan_rows(self, tmp_path: Path) -> None:
-        """Rows that are entirely NaN are removed."""
+        """Rows that are entirely NaN are removed on read.
+
+        Failure condition: all-NaN rows are kept in the returned
+        DataFrame, violating the documented contract.
+        """
         df = pd.DataFrame(
             {"s1": [1.0, np.nan], "s2": [2.0, np.nan]},
             index=["keep", "drop"],
@@ -71,7 +87,11 @@ class TestReadMainData:
         assert "keep" in result.index
 
     def test_preserves_all_nan_columns(self, tmp_path: Path) -> None:
-        """All-NaN sample columns are kept (structural missingness)."""
+        """All-NaN sample columns are kept as structural missingness.
+
+        Failure condition: an all-NaN column is silently dropped,
+        which would remove genuine missing data from the output.
+        """
         df = pd.DataFrame(
             {"s1": [1.0, 2.0], "s2": [np.nan, np.nan]},
             index=["f1", "f2"],
@@ -82,12 +102,20 @@ class TestReadMainData:
         assert result["s2"].isna().all()
 
     def test_file_not_found(self) -> None:
-        """Reading a non-existent TSV raises FileNotFoundError."""
+        """Reading a non-existent TSV raises FileNotFoundError.
+
+        Failure condition: a missing file returns a partial result
+        or raises a different exception type.
+        """
         with pytest.raises(FileNotFoundError):
             read_main_data("/nonexistent/file.tsv")
 
     def test_empty_file_after_dropna(self, tmp_path: Path) -> None:
-        """File with only all-NaN rows returns empty DataFrame."""
+        """File with only all-NaN rows returns an empty DataFrame.
+
+        Failure condition: all-NaN rows are dropped and the result
+        is an empty structure, or the function crashes on empty input.
+        """
         df = pd.DataFrame({"s1": [np.nan], "s2": [np.nan]}, index=["f1"])
         path = _write_tsv(tmp_path / "empty.tsv", df)
         result = read_main_data(str(path))
@@ -101,7 +129,11 @@ class TestReadMainData:
 
 class TestReadDescription:
     def test_basic_read(self, tmp_path: Path) -> None:
-        """Read a CSV description file correctly."""
+        """Read a CSV description file correctly.
+
+        Failure condition: the CSV is not parsed, columns are misnamed,
+        or the row count does not match.
+        """
         desc = pd.DataFrame(
             {"ID": ["s1", "s2"], "sample": [1, 2], "batch": [1, 1]},
         )
@@ -111,7 +143,11 @@ class TestReadDescription:
         pd.testing.assert_frame_equal(result, desc)
 
     def test_file_not_found(self) -> None:
-        """Reading a non-existent CSV raises FileNotFoundError."""
+        """Reading a non-existent CSV raises FileNotFoundError.
+
+        Failure condition: a missing file does not raise or raises
+        a different exception type.
+        """
         with pytest.raises(FileNotFoundError):
             read_description("/nonexistent/desc.csv")
 
@@ -123,6 +159,11 @@ class TestReadDescription:
 
 class TestWriteOutput:
     def test_basic_write(self, tmp_path: Path) -> None:
+        """Write a TSV and verify it can be read back.
+
+        Failure condition: the file is not created, or the round-tripped
+        data does not match the original.
+        """
         df = pd.DataFrame({"s1": [1.0, 2.0]}, index=["f1", "f2"])
         path = tmp_path / "out.tsv"
         write_output(df, str(path))
@@ -131,6 +172,11 @@ class TestWriteOutput:
         pd.testing.assert_frame_equal(restored, df)
 
     def test_write_empty_df(self, tmp_path: Path) -> None:
+        """Write an empty DataFrame results in a header-only file.
+
+        Failure condition: the function crashes on an empty DataFrame
+        or no file is produced.
+        """
         df = pd.DataFrame()
         path = tmp_path / "empty.tsv"
         write_output(df, str(path))

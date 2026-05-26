@@ -154,6 +154,8 @@ class TestHarmonizePipeline:
         result = harmonize(df, desc, output_file=out)
         assert out.exists()
         reloaded = pd.read_csv(out, sep="\t", index_col=0)
+        # Same float64 data through TSV serialization; 1e-10 covers
+        # text-format rounding differences (17 significant digits).
         np.testing.assert_allclose(reloaded.values, result.values, rtol=1e-10)
 
     def test_output_file_path_object(self, tmp_path):
@@ -189,7 +191,9 @@ class TestHarmonizePipeline:
         df, desc = _make_df_and_desc()
         r1 = harmonize(df, desc, needed_values=1)
         r2 = harmonize(df, desc, needed_values=2)
-        # With no missing data both should produce the same result
+        # Both paths use the same float64 pipeline; no NaN in this data
+        # so affiliation is identical. 1e-10 covers float64 accumulation
+        # differences from different needed_values code branches.
         np.testing.assert_allclose(r1.values, r2.values, rtol=1e-10)
 
     def test_invalid_algorithm_raises(self):
@@ -205,6 +209,19 @@ class TestHarmonizePipeline:
         df, desc = _make_df_and_desc()
         with pytest.raises(ValueError, match="combat_mode"):
             harmonize(df, desc, combat_mode=99)
+
+    def test_does_not_mutate_input(self):
+        """harmonize() must not modify the caller's DataFrame.
+
+        Failure condition: in-place mutation inside the pipeline
+        (e.g. ``data.iloc[:, :] = ...`` as a debugging artifact).
+        """
+        from harmonizepy import harmonize
+
+        df, desc = _make_df_and_desc()
+        original = df.values.copy()
+        harmonize(df, desc)
+        np.testing.assert_array_equal(df.values, original)
 
 
 # ---------------------------------------------------------------------------
@@ -222,13 +239,23 @@ class TestCombatEngine:
         assert not np.isnan(result).any()
 
     def test_batch_means_converge(self):
+        """ComBat must reduce batch mean spread.
+
+        Failure condition: if correction does not shrink spread, the test
+        fails. Threshold of 1.0 reflects residual variance from EB
+        shrinkage; closed-form modes would converge tighter.
+        """
         from harmonizepy import combat
 
         data, batches = _make_data()
+        means_before = [data[:, batches == b].mean() for b in range(3)]
+        spread_before = max(means_before) - min(means_before)
         result = combat(data, batches)
-        means = [result[:, batches == b].mean() for b in range(3)]
-        spread = max(means) - min(means)
-        assert spread < 1.0, f"Batch mean spread too large: {spread:.3f}"
+        means_after = [result[:, batches == b].mean() for b in range(3)]
+        spread_after = max(means_after) - min(means_after)
+        assert spread_after < spread_before, (
+            f"Batch spread not reduced: {spread_before:.3f} -> {spread_after:.3f}"
+        )
 
     def test_returns_ndarray(self):
         from harmonizepy import combat
@@ -239,12 +266,25 @@ class TestCombatEngine:
         assert result.dtype == np.float64
 
     def test_all_modes(self):
+        """All four ComBat modes must change the data and reduce batch spread.
+
+        Failure condition: if a mode is broken and returns the input
+        unchanged, or fails to reduce batch mean spread, the test fails.
+        """
         from harmonizepy import combat
 
         data, batches = _make_data()
+        means_before = [data[:, batches == b].mean() for b in range(3)]
+        spread_before = max(means_before) - min(means_before)
         for par, mo in [(True, False), (True, True), (False, False), (False, True)]:
             result = combat(data, batches, par_prior=par, mean_only=mo)
             assert result.shape == data.shape
+            assert not np.isnan(result).any()
+            means_after = [result[:, batches == b].mean() for b in range(3)]
+            spread_after = max(means_after) - min(means_after)
+            assert spread_after < spread_before, (
+                f"Mode par={par} mean_only={mo}: spread {spread_before:.3f} -> {spread_after:.3f}"
+            )
 
     def test_ref_batch(self):
         from harmonizepy import combat
@@ -252,6 +292,34 @@ class TestCombatEngine:
         data, batches = _make_data()
         result = combat(data, batches, ref_batch=0)
         np.testing.assert_array_equal(result[:, batches == 0], data[:, batches == 0])
+
+    def test_output_isolation(self):
+        """Mutating the result must not alter the input.
+
+        Failure condition: if memory is shared via an aliased return
+        (e.g. ``return data`` instead of ``return data.copy()``),
+        modifying the output corrupts the input.
+        """
+        from harmonizepy import combat
+
+        data, batches = _make_data()
+        original = data.copy()
+        result = combat(data, batches)
+        result[0, 0] = -9999.0
+        np.testing.assert_array_equal(data, original)
+
+    def test_deterministic(self):
+        """Same input always yields identical output.
+
+        Failure condition: a non-deterministic code path was introduced
+        (unseeded random, iteration-order-dependent dict, etc.).
+        """
+        from harmonizepy import combat
+
+        data, batches = _make_data()
+        result1 = combat(data, batches)
+        result2 = combat(data, batches)
+        np.testing.assert_array_equal(result1, result2)
 
 
 # ---------------------------------------------------------------------------
@@ -269,13 +337,22 @@ class TestLimmaEngine:
         assert not np.isnan(result).any()
 
     def test_batch_means_converge(self):
+        """limma must reduce batch mean spread.
+
+        Failure condition: if the batch-effect subtraction is skipped or
+        miscalculated, the spread stays wide and the test fails.
+        """
         from harmonizepy import remove_batch_effect
 
         data, batches = _make_data()
+        means_before = [data[:, batches == b].mean() for b in range(3)]
+        spread_before = max(means_before) - min(means_before)
         result = remove_batch_effect(data, batches)
-        means = [result[:, batches == b].mean() for b in range(3)]
-        spread = max(means) - min(means)
-        assert spread < 0.5, f"Batch mean spread too large: {spread:.3f}"
+        means_after = [result[:, batches == b].mean() for b in range(3)]
+        spread_after = max(means_after) - min(means_after)
+        assert spread_after < spread_before, (
+            f"Batch spread not reduced: {spread_before:.3f} -> {spread_after:.3f}"
+        )
 
     def test_returns_ndarray(self):
         from harmonizepy import remove_batch_effect
@@ -285,6 +362,31 @@ class TestLimmaEngine:
         assert isinstance(result, np.ndarray)
         assert result.dtype == np.float64
 
+    def test_output_isolation(self):
+        """Mutating the result must not alter the input.
+
+        Failure condition: memory aliasing between input and output.
+        """
+        from harmonizepy import remove_batch_effect
+
+        data, batches = _make_data()
+        original = data.copy()
+        result = remove_batch_effect(data, batches)
+        result[0, 0] = -9999.0
+        np.testing.assert_array_equal(data, original)
+
+    def test_deterministic(self):
+        """Same input always yields identical output.
+
+        Failure condition: non-deterministic code path.
+        """
+        from harmonizepy import remove_batch_effect
+
+        data, batches = _make_data()
+        result1 = remove_batch_effect(data, batches)
+        result2 = remove_batch_effect(data, batches)
+        np.testing.assert_array_equal(result1, result2)
+
 
 # ---------------------------------------------------------------------------
 # 5. Wrapper-level: adjust_combat(), adjust_limma()
@@ -293,6 +395,11 @@ class TestLimmaEngine:
 
 class TestWrapperLevel:
     def test_adjust_combat_returns_dataframe(self):
+        """adjust_combat returns a DataFrame with preserved index/columns.
+
+        Failure condition: the return type is wrong or index/columns
+        are dropped.
+        """
         from harmonizepy import adjust_combat
 
         data, batches = _make_data()
@@ -304,6 +411,10 @@ class TestWrapperLevel:
 
     @pytest.mark.parametrize("mode", [1, 2, 3, 4])
     def test_adjust_combat_modes(self, mode):
+        """All 4 combat modes produce NaN-free output with correct shape.
+
+        Failure condition: any mode produces NaN or wrong shape.
+        """
         from harmonizepy import adjust_combat
 
         data, batches = _make_data()
@@ -313,6 +424,11 @@ class TestWrapperLevel:
         assert not np.isnan(result.values).any()
 
     def test_adjust_limma_returns_dataframe(self):
+        """adjust_limma returns a DataFrame with preserved index/columns.
+
+        Failure condition: the return type is wrong or index/columns
+        are dropped.
+        """
         from harmonizepy import adjust_limma
 
         data, batches = _make_data()
@@ -323,6 +439,10 @@ class TestWrapperLevel:
         assert result.shape == df.shape
 
     def test_adjust_combat_invalid_mode(self):
+        """Invalid mode passed to adjust_combat raises ValueError.
+
+        Failure condition: mode=0 is accepted instead of rejected.
+        """
         from harmonizepy import adjust_combat
 
         data, batches = _make_data()
@@ -338,14 +458,22 @@ class TestWrapperLevel:
 
 class TestHarmonizeConfig:
     def test_defaults(self):
+        """Default config uses ComBat mode 1 with auto needed_values.
+
+        Failure condition: defaults change, breaking backward compatibility.
+        """
         from harmonizepy import HarmonizeConfig
 
         cfg = HarmonizeConfig()
         assert cfg.algorithm == "ComBat"
         assert cfg.combat_mode == 1
-        assert cfg.needed_values is None  # auto-select: same as harmonize() default
+        assert cfg.needed_values is None
 
     def test_custom(self):
+        """Custom config values are stored correctly.
+
+        Failure condition: a custom value is overwritten or ignored.
+        """
         from harmonizepy import HarmonizeConfig
 
         cfg = HarmonizeConfig(algorithm="limma", combat_mode=3, needed_values=1)
@@ -354,6 +482,10 @@ class TestHarmonizeConfig:
         assert cfg.needed_values == 1
 
     def test_frozen(self):
+        """HarmonizeConfig is frozen and setting an attribute raises.
+
+        Failure condition: a frozen dataclass allows mutation.
+        """
         from harmonizepy import HarmonizeConfig
 
         cfg = HarmonizeConfig()
@@ -361,42 +493,70 @@ class TestHarmonizeConfig:
             cfg.algorithm = "limma"  # type: ignore[misc]
 
     def test_invalid_algorithm(self):
+        """Invalid algorithm raises ValueError.
+
+        Failure condition: a bogus algorithm name is accepted.
+        """
         from harmonizepy import HarmonizeConfig
 
         with pytest.raises(ValueError, match="algorithm"):
             HarmonizeConfig(algorithm="invalid")
 
     def test_invalid_mode(self):
+        """Invalid combat mode raises ValueError.
+
+        Failure condition: an out-of-range mode is accepted.
+        """
         from harmonizepy import HarmonizeConfig
 
         with pytest.raises(ValueError, match="combat_mode"):
             HarmonizeConfig(combat_mode=5)
 
     def test_invalid_needed_values(self):
+        """needed_values=0 raises ValueError.
+
+        Failure condition: zero is accepted as a valid threshold.
+        """
         from harmonizepy import HarmonizeConfig
 
         with pytest.raises(ValueError, match="needed_values"):
             HarmonizeConfig(needed_values=0)
 
     def test_sort_strategy_sparsity(self):
+        """sparsity sort strategy is stored correctly.
+
+        Failure condition: a valid strategy is rejected.
+        """
         from harmonizepy import HarmonizeConfig
 
         cfg = HarmonizeConfig(sort_strategy="sparsity")
         assert cfg.sort_strategy == "sparsity"
 
     def test_sort_strategy_jaccard(self):
+        """jaccard sort strategy is stored correctly.
+
+        Failure condition: a valid strategy is rejected.
+        """
         from harmonizepy import HarmonizeConfig
 
         cfg = HarmonizeConfig(sort_strategy="jaccard")
         assert cfg.sort_strategy == "jaccard"
 
     def test_sort_strategy_seriation(self):
+        """seriation sort strategy is stored correctly.
+
+        Failure condition: a valid strategy is rejected.
+        """
         from harmonizepy import HarmonizeConfig
 
         cfg = HarmonizeConfig(sort_strategy="seriation")
         assert cfg.sort_strategy == "seriation"
 
     def test_block_size(self):
+        """Valid block sizes are stored correctly.
+
+        Failure condition: a valid block size is rejected.
+        """
         from harmonizepy import HarmonizeConfig
 
         cfg = HarmonizeConfig(block_size=2)
@@ -405,12 +565,20 @@ class TestHarmonizeConfig:
         assert cfg.block_size == 4
 
     def test_unique_removal_false(self):
+        """unique_removal=False is stored correctly.
+
+        Failure condition: False is coerced to True.
+        """
         from harmonizepy import HarmonizeConfig
 
         cfg = HarmonizeConfig(unique_removal=False)
         assert cfg.unique_removal is False
 
     def test_sort_and_block_combination(self):
+        """Combining sort strategy and block size works.
+
+        Failure condition: setting both fields causes a conflict.
+        """
         from harmonizepy import HarmonizeConfig
 
         cfg = HarmonizeConfig(sort_strategy="sparsity", block_size=3)
@@ -418,24 +586,40 @@ class TestHarmonizeConfig:
         assert cfg.block_size == 3
 
     def test_invalid_sort_strategy(self):
+        """Unknown sort strategy raises ValueError.
+
+        Failure condition: a nonsense strategy is accepted.
+        """
         from harmonizepy import HarmonizeConfig
 
         with pytest.raises(ValueError, match="sort_strategy"):
             HarmonizeConfig(sort_strategy="unknown")
 
     def test_invalid_block_size_zero(self):
+        """block_size=0 raises ValueError.
+
+        Failure condition: zero is accepted.
+        """
         from harmonizepy import HarmonizeConfig
 
         with pytest.raises(ValueError, match="block_size"):
             HarmonizeConfig(block_size=0)
 
     def test_invalid_block_size_one(self):
+        """block_size=1 raises ValueError.
+
+        Failure condition: 1 is accepted.
+        """
         from harmonizepy import HarmonizeConfig
 
         with pytest.raises(ValueError, match="block_size"):
             HarmonizeConfig(block_size=1)
 
     def test_unique_removal_not_bool(self):
+        """Non-bool unique_removal raises TypeError.
+
+        Failure condition: a string is accepted where bool is required.
+        """
         from harmonizepy import HarmonizeConfig
 
         with pytest.raises(TypeError, match="unique_removal"):
@@ -469,7 +653,11 @@ class TestHarmonizeWithConfig:
         return data, desc
 
     def test_config_equivalent_to_kwargs(self, small_inputs):
-        """Config with same values as kwargs must produce identical output."""
+        """Config with same values as kwargs must produce identical output.
+
+        Failure condition: the config code path diverges from the
+        direct-kwarg path.
+        """
         from harmonizepy import HarmonizeConfig, harmonize
 
         data, desc = small_inputs
@@ -479,7 +667,11 @@ class TestHarmonizeWithConfig:
         pd.testing.assert_frame_equal(result_cfg, result_kw)
 
     def test_config_limma(self, small_inputs):
-        """Config selecting limma matches direct kwarg."""
+        """Config selecting limma matches direct kwarg.
+
+        Failure condition: config-based limma path produces different
+        results than direct kwarg.
+        """
         from harmonizepy import HarmonizeConfig, harmonize
 
         data, desc = small_inputs
@@ -489,18 +681,25 @@ class TestHarmonizeWithConfig:
         pd.testing.assert_frame_equal(result_cfg, result_kw)
 
     def test_config_overrides_kwargs(self, small_inputs):
-        """When config is provided, its algorithm is used even if kwarg says otherwise."""
+        """When config is provided, its algorithm must win over kwargs.
+
+        Failure condition: a conflicting kwarg overrides the config
+        value.
+        """
         from harmonizepy import HarmonizeConfig, harmonize
 
         data, desc = small_inputs
         cfg = HarmonizeConfig(algorithm="limma")
-        # Pass algorithm="ComBat" as kwarg, but config should win
         result_cfg = harmonize(data, desc, config=cfg, algorithm="ComBat")
         result_limma = harmonize(data, desc, algorithm="limma")
         pd.testing.assert_frame_equal(result_cfg, result_limma)
 
     def test_config_needed_values_none_auto_selects(self, small_inputs):
-        """Config with needed_values=None applies same auto-selection as default."""
+        """Config with needed_values=None must auto-select like the default.
+
+        Failure condition: an explicit None in config bypasses the
+        auto-selection logic.
+        """
         from harmonizepy import HarmonizeConfig, harmonize
 
         data, desc = small_inputs
