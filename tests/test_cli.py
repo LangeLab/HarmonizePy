@@ -32,6 +32,9 @@ BATCH = str(_FIXTURES / "small_batch.csv")
 MED_DATA = str(_FIXTURES / "medium_input.tsv")
 MED_BATCH = str(_FIXTURES / "medium_batch.csv")
 
+_has_small = (Path(_FIXTURES) / "small_input.tsv").exists()
+_has_medium = (Path(_FIXTURES) / "medium_input.tsv").exists()
+
 
 # ===========================================================================
 # Helpers
@@ -121,6 +124,7 @@ class TestInferFormat:
 # ===========================================================================
 
 
+@pytest.mark.skipif(not _has_small, reason="R fixtures not generated")
 class TestCLIMinimal:
     def test_creates_output_file(self, tmp_path: Path) -> None:
         """CLI must create a valid output file.
@@ -189,6 +193,7 @@ class TestCLIMinimal:
 # ===========================================================================
 
 
+@pytest.mark.skipif(not _has_small, reason="R fixtures not generated")
 class TestCLIAlgorithmFlags:
     def test_algorithm_combat_default(self, tmp_path: Path) -> None:
         out = str(tmp_path / "r.tsv")
@@ -238,6 +243,7 @@ class TestCLIAlgorithmFlags:
 # ===========================================================================
 
 
+@pytest.mark.skipif(not _has_medium, reason="R medium fixtures not generated")
 class TestCLISortBlock:
     def test_sort_sparsity(self, tmp_path: Path) -> None:
         out = str(tmp_path / "r.tsv")
@@ -277,6 +283,7 @@ class TestCLISortBlock:
 # ===========================================================================
 
 
+@pytest.mark.skipif(not _has_small, reason="R fixtures not generated")
 class TestCLIUniqueRemoval:
     def test_unique_removal_enabled_by_default(self, tmp_path: Path) -> None:
         out_default = str(tmp_path / "default.tsv")
@@ -305,6 +312,7 @@ class TestCLIUniqueRemoval:
 # ===========================================================================
 
 
+@pytest.mark.skipif(not _has_small, reason="R fixtures not generated")
 class TestCLIOutputFormats:
     def test_tsv_explicit_flag(self, tmp_path: Path) -> None:
         out = str(tmp_path / "result.tsv")
@@ -365,6 +373,7 @@ class TestCLIOutputFormats:
 # ===========================================================================
 
 
+@pytest.mark.skipif(not _has_small, reason="R fixtures not generated")
 class TestCLIDryRun:
     def test_dry_run_no_output_file_created(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -419,6 +428,7 @@ class TestCLIDryRun:
 # ===========================================================================
 
 
+@pytest.mark.skipif(not _has_small, reason="R fixtures not generated")
 class TestCLISummary:
     def test_summary_file_created(self, tmp_path: Path) -> None:
         out = str(tmp_path / "result.tsv")
@@ -501,6 +511,7 @@ class TestCLISummary:
 # ===========================================================================
 
 
+@pytest.mark.skipif(not _has_small, reason="R fixtures not generated")
 class TestCLIVerbosity:
     def test_verbose_flag_does_not_crash(self, tmp_path: Path) -> None:
         out = str(tmp_path / "r.tsv")
@@ -533,6 +544,7 @@ class TestCLIVerbosity:
 # ===========================================================================
 
 
+@pytest.mark.skipif(not _has_small, reason="R fixtures not generated")
 class TestCLIErrors:
     def test_missing_all_positional_args(self) -> None:
         with pytest.raises(SystemExit) as exc_info:
@@ -636,6 +648,7 @@ class TestCLIHelpVersion:
 # ===========================================================================
 
 
+@pytest.mark.skipif(not _has_small, reason="R fixtures not generated")
 class TestCLIConfig:
     """Tests for config-file loading via --config."""
 
@@ -739,6 +752,7 @@ class TestCLIConfig:
 # ===========================================================================
 
 
+@pytest.mark.skipif(not _has_small, reason="R fixtures not generated")
 class TestCLIJson:
     """Tests for the --json stdout run-summary flag."""
 
@@ -866,6 +880,7 @@ class TestCLIJson:
 # ===========================================================================
 
 
+@pytest.mark.skipif(not _has_medium, reason="R medium fixtures not generated")
 class TestCLIAllFlags:
     """Single test that fires every non-mutually-exclusive flag at once.
 
