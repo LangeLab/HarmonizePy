@@ -4,6 +4,10 @@
 plan/
 temp/
 
+# Benchmark outputs
+benchmarks/data/
+benchmarks/results/
+
 # Python bytecode and caches.
 __pycache__/
 *.py[cod]

@@ -6,13 +6,31 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
-### Planned
+### Added
 
-- Module-level logging in `combat.py`, `combat_wrapper.py`, `limma_wrapper.py`, `sorting.py`, `blocking.py`, `affiliation.py`, and `splitting.py` for pipeline milestone visibility at INFO level.
+- **Module-level logging**: `logger.info`/`logger.debug` messages at pipeline milestones in `combat.py`, `combat_wrapper.py`, `limma_wrapper.py`, `sorting.py`, `blocking.py`, `affiliation.py`, `splitting.py`, and `io.py`. Covers convergence, sub-matrix adjustment, feature affiliation counts, sorting strategies, block construction, and I/O operations.
+- **CLI logging flags**: `--log-file PATH` overrides the default log path (auto-derived from output path as `<output_stem>.log`). `--no-log` disables file logging. By default a `.log` file is always written alongside the output with full DEBUG detail and timestamps.
+- **Logging warnings**: non-convergence after 1M iterations, all features dropped by `needed_values`, log file write failure.
+- **Pipeline timing**: total wall-clock duration reported at INFO level on completion.
+- **CI workflow** (`.github/workflows/ci.yml`): runs `ruff check`, `mypy src/`, `pytest tests/` on Python 3.12 via `uv`. Triggers on push/PR to main.
+- **STYLE_GUIDE.md**: writing conventions for docstrings, imports, type annotations, naming, commenting, module responsibilities, and table usage policy.
+- **TESTING.md**: test standards covering chain-of-thought docstrings, invariant/contract/failure testing, array assertion rules, and mock boundaries.
+- **FEATURE_PARITY.md**: R HarmonizR v1.10.0 vs HarmonizePy v0.2.0 comparison across core algorithms, pipeline parameters, I/O, sorting, and compute model.
+- **Invariant tests**: output isolation, determinism, and input non-mutation added to `test_api.py`.
 
-### Infrastructure
+### Changed
 
-- `LICENSE` (GPL-3.0) added to repository root.
+- **Console logging**: now writes to stderr instead of stdout, preventing log messages from polluting JSON or dry-run output.
+- **Root logger**: `harmonizepy` logger configured with `propagate=False` to prevent double-logging when external code configures the root handler.
+- **LICENSE** (`LICENSE`): GPL-3.0 with individual copyright holder and acknowledgments for original R HarmonizR.
+- **plan.md**: phase markers updated to reflect completed and partial items.
+
+### Fixed
+
+- `combat.py`: removed stale `# type: ignore[no-any-return]` no longer needed after mypy inference improvements.
+- `io.py` and `combat_wrapper.py`: removed redundant `cast()` calls.
+- `splitting.py`: removed duplicate import block introduced during logging refactor.
+- Dry-run mode: pipeline DEBUG messages are suppressed during dry-run computation so the plan output is clean.
 
 ## [0.2.0] - 2026-04-01
 
