@@ -4,7 +4,7 @@ version = "0.2.0"
 description = "Pure-Python batch-effect harmonization (ComBat + limma), validated against R sva/HarmonizR."
 readme = "README.md"
 license = "GPL-3.0-only"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 authors = [
     { name = "Lange Lab" },
 ]
@@ -13,10 +13,9 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering :: Bio-Informatics",
 ]
 dependencies = [
@@ -25,10 +24,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# pip install harmonizepy[config]   → enables YAML and TOML (Python < 3.11) config files
+# pip install harmonizepy[config]   → enables YAML and TOML config files
 config = [
     "pyyaml>=6.0",
-    "tomli>=2.0; python_version < '3.11'",
 ]
 # pip install harmonizepy[completion] → enables shell tab-completion via argcomplete
 completion = ["argcomplete>=3.0"]
@@ -57,7 +55,7 @@ testpaths = ["tests"]
 
 [tool.mypy]
 strict = true
-python_version = "3.10"
+python_version = "3.12"
 ignore_missing_imports = false
 
 [[tool.mypy.overrides]]
@@ -66,7 +64,7 @@ disallow_untyped_defs = false
 disallow_untyped_calls = false
 
 [tool.ruff]
-target-version = "py310"
+target-version = "py312"
 line-length = 100
 
 [tool.ruff.lint]

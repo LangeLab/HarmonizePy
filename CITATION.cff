@@ -1,0 +1,148 @@
+cff-version: 1.2.0
+title: "HarmonizePy: Pure-Python batch-effect harmonization with structural missingness handling"
+message: "If you use HarmonizePy in your research, please cite it using the metadata below."
+type: software
+repository-code: "https://github.com/LangeLab/HarmonizePy"
+version: 0.2.0
+date-released: "2026-04-01"
+license: GPL-3.0
+abstract: >
+  HarmonizePy is a Pure-Python batch-effect correction toolkit for omics
+  data with structural missingness. Standard ComBat and limma require
+  complete matrices; HarmonizePy handles the dissection, adjustment, and
+  reassembly so they work on real-world incomplete data without an R
+  runtime.
+
+
+  It provides all four modes of ComBat (Johnson, Li & Rabinovic, 2007):
+  parametric and non-parametric, with and without scale correction. It
+  also implements limma-style batch removal via sum-to-zero contrasts
+  (Ritchie et al., 2015). The pipeline matches HarmonizR v1.10.0: per-row
+  batch-presence detection splits the matrix into NaN-free sub-frames,
+  each adjusted independently and then reassembled into the original
+  shape. Three sort strategies reorder batches so similar ones become
+  neighbours before blocking; batch blocking groups consecutive batches
+  into blocks to reduce sub-matrix count and memory; unique-combination
+  removal rescues singletons by cropping their affiliation to the nearest
+  shared pattern before splitting.
+
+
+  The engine layer is pure NumPy with no compiled extensions. Both a
+  programmatic API and a full CLI are available, supporting config files
+  (TOML, JSON, YAML), dry-run validation, JSON run summaries, and output
+  in TSV, CSV, or Feather. The implementation is verified against R
+  reference output with 576 tests covering all four ComBat modes, limma,
+  and the full HarmonizR pipeline across twelve dataset scenarios.
+authors:
+  - family-names: Ergin
+    given-names: Enes Kemal
+    orcid: "https://orcid.org/0000-0001-9810-7399"
+    affiliation: Lange Lab
+    email: eneskemalergin@gmail.com
+keywords:
+  - batch-effect
+  - harmonization
+  - ComBat
+  - limma
+  - proteomics
+  - transcriptomics
+  - structural-missingness
+  - batch-sorting
+  - batch-blocking
+  - unique-removal
+  - empirical-Bayes
+  - data-integration
+  - Python
+  - command-line-tool
+references:
+  - type: article
+    title: "HarmonizR enables data harmonization across independent proteomic datasets with appropriate handling of missing values"
+    authors:
+      - family-names: Voß
+        given-names: H.
+      - family-names: Schlumbohm
+        given-names: S.
+      - family-names: Barwikowski
+        given-names: P.
+      - family-names: Wurlitzer
+        given-names: M.
+      - family-names: Dottermusch
+        given-names: M.
+      - family-names: Neumann
+        given-names: P.
+      - family-names: Schlüter
+        given-names: H.
+      - family-names: Neumann
+        given-names: J. E.
+      - family-names: Krisp
+        given-names: C.
+    journal: Nature Communications
+    volume: 13
+    article-number: 3523
+    year: 2022
+    doi: 10.1038/s41467-022-31007-x
+    url: "https://doi.org/10.1038/s41467-022-31007-x"
+  - type: article
+    title: "Adjusting batch effects in microarray expression data using empirical Bayes methods"
+    authors:
+      - family-names: Johnson
+        given-names: W. Evan
+      - family-names: Li
+        given-names: Cheng
+      - family-names: Rabinovic
+        given-names: Ariel
+    journal: Biostatistics
+    volume: 8
+    number: 1
+    pages: 118-127
+    year: 2007
+    doi: 10.1093/biostatistics/kxj037
+  - type: article
+    title: "limma powers differential expression analyses for RNA-sequencing and microarray studies"
+    authors:
+      - family-names: Ritchie
+        given-names: Matthew E.
+      - family-names: Phipson
+        given-names: Belinda
+      - family-names: Wu
+        given-names: Di
+      - family-names: Hu
+        given-names: Yifang
+      - family-names: Law
+        given-names: Charity W.
+      - family-names: Shi
+        given-names: Wei
+      - family-names: Smyth
+        given-names: Gordon K.
+    journal: Nucleic Acids Research
+    volume: 43
+    number: 7
+    article-number: e47
+    year: 2015
+  - type: article
+    title: "HarmonizR: blocking and singular feature data adjustment improve runtime efficiency and data preservation"
+    authors:
+      - family-names: Schlumbohm
+        given-names: Simon
+      - family-names: Neumann
+        given-names: Julia E.
+      - family-names: Neumann
+        given-names: Philipp
+    journal: BMC Bioinformatics
+    volume: 26
+    year: 2025
+    doi: 10.1186/s12859-025-06073-9
+  - type: software
+    title: "HarmonizR"
+    repository-code: "https://github.com/HSU-HPC/HarmonizR"
+    abstract: "Original R implementation (Schlumbohm, Neumann & Neumann)."
+    authors:
+      - family-names: Schlumbohm
+        given-names: Simon
+      - family-names: Neumann
+        given-names: Julia E.
+      - family-names: Neumann
+        given-names: Philipp
+  - type: website
+    title: "HarmonizR Bioconductor Package"
+    url: "https://www.bioconductor.org/packages/release/bioc/html/HarmonizR.html"
