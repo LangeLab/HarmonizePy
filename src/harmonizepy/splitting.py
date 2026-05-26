@@ -31,7 +31,7 @@ def splitting(
     Parameters
     ----------
     affiliation_list : list[tuple[int, ...]]
-        One tuple per feature (row) — the block IDs where the feature
+        One tuple per feature (row)  -  the block IDs where the feature
         has sufficient data.  From :func:`spotting.spotting_missing_values`.
     data : DataFrame
         Features x samples.
@@ -99,7 +99,7 @@ def splitting(
         # Only adjust if ≥2 batches and ≥2 features
         unique_batches = np.unique(sub_batch)
         if len(unique_batches) < 2 or sub_df.shape[0] < 2:
-            # Can't adjust — copy raw values into output
+            # Can't adjust  -  copy raw values into output
             output[np.ix_(row_idx, col_indices)] = sub_df.values
             continue
 

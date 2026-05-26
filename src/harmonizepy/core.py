@@ -77,8 +77,8 @@ def harmonize(
         strictly less than the total number of unique batches.
         ``None`` (default) disables blocking.
     unique_removal : bool
-        When ``True`` (default), singleton features — those whose
-        batch-presence pattern is unique across all features — are
+        When ``True`` (default), singleton features  -  those whose
+        batch-presence pattern is unique across all features  -  are
         rescued by cropping to the nearest shared pattern before
         splitting.  Mirrors R's ``ur=TRUE`` default.
     output_file : str, Path, or None

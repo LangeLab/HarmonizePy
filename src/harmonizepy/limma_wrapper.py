@@ -1,4 +1,4 @@
-"""limma-style batch correction (removeBatchEffect) — pure NumPy.
+"""limma-style batch correction (removeBatchEffect)  -  pure NumPy.
 
 Reimplements the algorithm from R limma::removeBatchEffect:
 

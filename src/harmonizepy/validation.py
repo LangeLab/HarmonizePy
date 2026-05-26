@@ -103,7 +103,7 @@ def validate_description(desc: pd.DataFrame, data: pd.DataFrame) -> None:
         if extra_data:
             parts.append(f"in data but not description: {sorted(extra_data)[:5]}")
         raise ValueError(
-            f"Sample IDs in description do not match data columns — {'; '.join(parts)}. "
+            f"Sample IDs in description do not match data columns - {'; '.join(parts)}. "
             f"The first column (or a column named 'ID') of description must list the exact column names of data."
         )
 

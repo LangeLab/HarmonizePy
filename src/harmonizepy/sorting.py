@@ -2,7 +2,7 @@
 
 Sorting reorders **batch columns** (and their samples) in the data matrix
 so that similar batches become neighbors.  This only affects output when
-combined with blocking — adjacent batches are grouped into blocks, so
+combined with blocking  -  adjacent batches are grouped into blocks, so
 the ordering determines which batches share a block and therefore how
 much data is lost when features are absent in one block member.
 
@@ -236,7 +236,7 @@ def _seriation_order(presence: npt.NDArray[np.bool_]) -> npt.NDArray[np.intp]:
     if n <= 2:
         return np.arange(n, dtype=np.intp)
 
-    # Centre columns (features) — mirrors R's prcomp(t(binary_df), scale=FALSE)
+    # Centre columns (features)  -  mirrors R's prcomp(t(binary_df), scale=FALSE)
     p -= p.mean(axis=0)
 
     # SVD → PC1 scores for each batch
