@@ -57,18 +57,26 @@ _BASELINE_MEAN = 10.0
 _BASELINE_STD = 2.0
 
 
+_MIN_SAMPLES_PER_BATCH = 4
+
+
 def _zipfian_batch_sizes(n_batches: int, n_samples: int, rng: np.random.Generator) -> list[int]:
     """Distribute *n_samples* across *n_batches* using a Zipf-like distribution.
 
-    Guarantees each batch gets at least 1 sample. Returns a list of
-    integers summing to *n_samples*.
+    Guarantees each batch gets at least ``_MIN_SAMPLES_PER_BATCH`` samples
+    (default 4) so that ``needed_values=2`` can be satisfied even after
+    structural missingness. Returns a list of integers summing to *n_samples*.
     """
-    if n_batches > n_samples:
-        raise ValueError(f"n_batches ({n_batches}) exceeds n_samples ({n_samples})")
+    min_total = n_batches * _MIN_SAMPLES_PER_BATCH
+    if min_total > n_samples:
+        raise ValueError(
+            f"n_batches ({n_batches}) x min_samples_per_batch ({_MIN_SAMPLES_PER_BATCH}) "
+            f"= {min_total} exceeds n_samples ({n_samples}). "
+            f"Increase n_samples or reduce n_batches."
+        )
 
-    # Start with 1 per batch to guarantee presence, then distribute remainder
-    sizes = [1] * n_batches
-    remaining = n_samples - n_batches
+    sizes = [_MIN_SAMPLES_PER_BATCH] * n_batches
+    remaining = n_samples - min_total
 
     if remaining > 0:
         raw = rng.zipf(1.5, size=n_batches)

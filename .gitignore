@@ -3,6 +3,7 @@
 # Local folders to ignore
 plan/
 temp/
+ref/
 
 # Benchmark outputs
 benchmarks/data/

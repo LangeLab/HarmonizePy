@@ -66,6 +66,8 @@ class RunResult:
     python_time_s: float | None
     python_memory_mb: float | None
     features_out: int | None
+    features_pt: int | None  # passed through without correction
+    features_corrected: int | None
     r_time_s: float | None
     max_rel_diff: float | None
 
@@ -89,7 +91,7 @@ def _run_python_benchmark(
     mode: int | None,
     block: int | None,
     sort: str | None,
-) -> tuple[float, float, int]:
+) -> tuple[float, float, int, int]:
     """Run harmonizepy. Returns (time_s, memory_mb, features_out).
 
     Memory is measured via ``/usr/bin/time -v`` max resident set size
@@ -136,8 +138,28 @@ def _run_python_benchmark(
                 except (ValueError, IndexError):
                     pass
 
-    features_out = _DS_FEATURES.get(dataset, 0)
-    return py_time, memory_mb, features_out
+    # Parse pipeline stats from stderr
+    features_in = _DS_FEATURES.get(dataset, 0)
+    features_pt = 0
+    for line in (result.stderr or "").split("\n"):
+        if "Input:" in line:
+            parts = line.split()
+            if len(parts) >= 4:
+                try:
+                    features_in = int(parts[3])
+                except (ValueError, IndexError):
+                    pass
+        if "passed through without correction" in line:
+            # "INFO [harmonizepy] N feature(s) passed through..."
+            parts = line.split()
+            if len(parts) >= 4:
+                try:
+                    features_pt = int(parts[2])
+                except (ValueError, IndexError):
+                    pass
+
+    features_out = features_in
+    return py_time, memory_mb, features_out, features_pt
 
 
 def _run_r_benchmark(
@@ -227,17 +249,20 @@ def _generate_results_md(results: list[RunResult]) -> str:
             [
                 "## Python Performance",
                 "",
-                "| Dataset | Algorithm | Mode | Block | Sort | Time (s) | Memory (MB) | Features out |",
-                "| --- | --- | --- | --- | --- | --- | --- | --- |",
+                "| Dataset | Algorithm | Mode | Block | Sort | Time (s) | Memory (MB) | Features out | Corrected | Pass-through |",
+                "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
             ]
         )
         for r in py_results:
             mode_s = str(r.combat_mode) if r.combat_mode is not None else "--"
             block_s = str(r.block) if r.block is not None else "--"
             sort_s = r.sort if r.sort is not None else "--"
+            pt_str = str(r.features_pt) if r.features_pt is not None else "--"
+            cor_str = str(r.features_corrected) if r.features_corrected is not None else "--"
             lines.append(
                 f"| {r.dataset} | {r.algorithm} | {mode_s} | {block_s} | {sort_s} | "
-                f"{r.python_time_s:.3f} | {r.python_memory_mb:.1f} | {r.features_out} |"
+                f"{r.python_time_s:.3f} | {r.python_memory_mb:.1f} | {r.features_out} | "
+                f"{cor_str} | {pt_str} |"
             )
         lines.append("")
 
@@ -343,7 +368,7 @@ def main() -> None:
             tag += f"_{sort}"
         py_out = str(_RESULTS_DIR / f"{tag}_py.tsv")
         try:
-            py_time, memory_mb, features_out = _run_python_benchmark(
+            py_time, memory_mb, features_out, features_pt = _run_python_benchmark(
                 data_path,
                 desc_path,
                 ds,
@@ -365,6 +390,8 @@ def main() -> None:
                     python_time_s=None,
                     python_memory_mb=None,
                     features_out=None,
+                    features_pt=None,
+                    features_corrected=None,
                     r_time_s=None,
                     max_rel_diff=None,
                 )
@@ -401,6 +428,8 @@ def main() -> None:
                 python_time_s=py_time,
                 python_memory_mb=memory_mb,
                 features_out=features_out,
+                features_pt=features_pt,
+                features_corrected=features_out - features_pt,
                 r_time_s=r_time,
                 max_rel_diff=max_rel_diff,
             )

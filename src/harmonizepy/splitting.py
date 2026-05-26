@@ -93,6 +93,9 @@ def splitting(
     n_features, n_samples = data.shape
     output = np.full((n_features, n_samples), np.nan, dtype=np.float64)
 
+    n_single_batch = 0
+    n_single_feature = 0
+
     for affil, row_indices in affil_to_features.items():
         row_idx = np.array(row_indices, dtype=np.intp)
         sub_data = data.iloc[row_idx]
@@ -110,8 +113,23 @@ def splitting(
 
         # Only adjust if ≥2 batches and ≥2 features
         unique_batches = np.unique(sub_batch)
-        if len(unique_batches) < 2 or sub_df.shape[0] < 2:
-            # Can't adjust. Copy raw values into output.
+        if len(unique_batches) < 2:
+            n_single_batch += sub_df.shape[0]
+            if sub_df.shape[0] <= 3:
+                logger.debug(
+                    "Passing through %s (single-batch group, %d features)",
+                    list(sub_data.index),
+                    sub_df.shape[0],
+                )
+            output[np.ix_(row_idx, col_indices)] = sub_df.values
+            continue
+
+        if sub_df.shape[0] < 2:
+            n_single_feature += sub_df.shape[0]
+            logger.debug(
+                "Passing through %s (single-feature group, 2+ batches)",
+                list(sub_data.index),
+            )
             output[np.ix_(row_idx, col_indices)] = sub_df.values
             continue
 
@@ -122,6 +140,16 @@ def splitting(
             corrected = adjust_combat(sub_df, sub_batch, mode=combat_mode)
 
         output[np.ix_(row_idx, col_indices)] = corrected.values
+
+    n_uncorrected = n_single_batch + n_single_feature
+    if n_uncorrected > 0:
+        logger.info(
+            "%d feature(s) passed through without correction "
+            "(%d single-batch groups, %d single-feature groups)",
+            n_uncorrected,
+            n_single_batch,
+            n_single_feature,
+        )
 
     # Build the result list for backward compatibility with downstream concat.
     # Each non-empty group becomes its own sub-DataFrame.
