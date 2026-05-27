@@ -49,6 +49,19 @@ _DATASETS: dict[str, dict[str, int | float]] = {
         "n_batches": 20,
         "missing_frac": 0.05,
     },
+    # Single-cell proteomics cohorts: high missingness, many small batches
+    "scp_small": {
+        "n_features": 3000,
+        "n_samples": 1000,
+        "n_batches": 20,
+        "missing_frac": 0.50,
+    },
+    "scp_large": {
+        "n_features": 5000,
+        "n_samples": 10000,
+        "n_batches": 100,
+        "missing_frac": 0.60,
+    },
 }
 
 _SEED = 42
@@ -201,7 +214,7 @@ def main() -> None:
     parser.add_argument(
         "--dataset",
         default="all",
-        choices=["small", "medium", "large", "all"],
+        choices=["small", "medium", "large", "scp_small", "scp_large", "all"],
         help="Dataset to generate (default: all).",
     )
     parser.add_argument("--features", type=int, default=None, help="Number of features (custom).")

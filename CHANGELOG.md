@@ -17,9 +17,12 @@ All notable changes to this project are documented in this file. The format is b
 - **TESTING.md**: test standards covering chain-of-thought docstrings, invariant/contract/failure testing, array assertion rules, and mock boundaries.
 - **FEATURE_PARITY.md**: R HarmonizR v1.10.0 vs HarmonizePy v0.2.0 comparison across core algorithms, pipeline parameters, I/O, sorting, and compute model.
 - **Invariant tests**: output isolation, determinism, and input non-mutation added to `test_api.py`.
-- **Benchmark suite**: `benchmarks/generate_data.py` for synthetic data, `benchmarks/run_benchmarks.py` for timing/memory/R comparison, `benchmarks/template_run.R` for R HarmonizR integration. Generates human-readable `benchmarks/RESULTS.md` with per-scenario tables.
+- **Benchmark suite**: `benchmarks/generate_data.py` for synthetic data, `benchmarks/run_benchmarks.py` for timing/memory/R comparison, `benchmarks/template_run.R` for R HarmonizR integration. Generates human-readable `benchmarks/RESULTS.md` with per-scenario tables and data specifications.
 - **Pass-through logging**: single-feature and single-batch groups that skip correction are now logged at INFO level (total count) and DEBUG level (individual feature names).
 - **Corrected vs pass-through reporting**: benchmark results table now shows corrected and pass-through feature counts alongside timing and memory.
+- **SCP benchmark datasets**: `scp_small` (3000x1000, 20 batches, 50% missing) and `scp_large` (5000x10000, 100 batches, 60% missing) added to benchmark suite. Run Python-only (no R comparison).
+- **Data specifications table**: automatically generated in RESULTS.md showing features, samples, batches, missingness, and file size per dataset.
+- **Pipeline timing parsing**: benchmark runner now uses the internal "Done" timing from the CLI for more accurate algorithm performance measurement, excluding IO overhead.
 
 ### Changed
 
@@ -27,6 +30,12 @@ All notable changes to this project are documented in this file. The format is b
 - **Root logger**: `harmonizepy` logger configured with `propagate=False` to prevent double-logging when external code configures the root handler.
 - **LICENSE** (`LICENSE`): GPL-3.0 with individual copyright holder and acknowledgments for original R HarmonizR.
 - **plan.md**: phase markers updated to reflect completed and partial items.
+- **_int_eprior (`combat.py`)**: replaced per-iteration 2-D broadcast (`np.square(x - g).sum()`) with binomial formula (`sum_x2_i - 2*g*sum_x_i + n*g^2`), pre-computed `log(d)` to eliminate redundant log operations, and reused the boolean mask instead of allocating a new one per iteration. Large mode 3: 19.2s to 8.8s (2.2x faster).
+- **_it_sol (`combat.py`)**: same binomial formula optimization applied to the iterative solver's residual sum-of-squares computation.
+- **build_affiliation_list (`affiliation.py`)**: replaced per-feature Python row loop with vectorized per-block column sums across all features simultaneously. Large mode 1: 0.70s to 0.10s (7x faster).
+- **Benchmark result ordering**: limma rows now appear first in the Python Performance table, followed by ComBat modes in ascending order.
+- **Benchmark expansion**: all four ComBat modes (1-4) are now tested with block=2 and sort+block combinations.
+- **Benchmark timing**: switched from total wall-clock to pipeline-internal "Done" timing for fair comparison across dataset sizes.
 
 ### Fixed
 

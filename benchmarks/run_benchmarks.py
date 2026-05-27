@@ -44,7 +44,8 @@ _DATA_DIR = Path(__file__).parent / "data"
 _RESULTS_DIR = Path(__file__).parent / "results"
 _RESULTS_MD = Path(__file__).parent / "RESULTS.md"
 
-_DATASETS = ["small", "medium", "large"]
+_DATASETS = ["small", "medium", "large", "scp_small", "scp_large"]
+_SCP_DATASETS = {"scp_small", "scp_large"}
 _R_AVAILABLE = shutil.which("Rscript") is not None
 
 _R_VERSION = "not available"
@@ -74,13 +75,28 @@ if _R_AVAILABLE:
         pass
 
 _BENCHMARKS: list[tuple[str, str, int | None, int | None, str | None]] = [
-    *[(ds, "limma", None, None, None) for ds in _DATASETS],
-    *[(ds, "ComBat", m, None, None) for ds in _DATASETS for m in [1, 2, 3, 4]],
-    *[(ds, "ComBat", m, 2, None) for ds in _DATASETS for m in [1, 2, 3, 4]],
+    # Bulk proteomics (small/medium/large)
+    *[(ds, "limma", None, None, None) for ds in _DATASETS if ds not in _SCP_DATASETS],
+    *[(ds, "ComBat", m, None, None) for ds in _DATASETS if ds not in _SCP_DATASETS for m in [1, 2, 3, 4]],
+    *[(ds, "ComBat", m, 2, None) for ds in _DATASETS if ds not in _SCP_DATASETS for m in [1, 2, 3, 4]],
     *[(ds, "ComBat", m, 2, "sparsity") for ds in ["medium", "large"] for m in [1, 2, 3, 4]],
+    # Single-cell proteomics (Python only, no block/sort)
+    *[(ds, "limma", None, None, None) for ds in _SCP_DATASETS],
+    *[(ds, "ComBat", m, None, None) for ds in _SCP_DATASETS for m in [1, 2, 3, 4]],
 ]
 
-_DS_FEATURES: dict[str, int] = {"small": 1000, "medium": 5000, "large": 10000}
+_DS_FEATURES: dict[str, int] = {
+    "small": 1000, "medium": 5000, "large": 10000,
+    "scp_small": 3000, "scp_large": 5000,
+}
+
+_DS_INFO: dict[str, dict[str, int | float]] = {
+    "small": {"features": 1000, "samples": 20, "batches": 5, "missing": 0.30},
+    "medium": {"features": 5000, "samples": 60, "batches": 10, "missing": 0.20},
+    "large": {"features": 10000, "samples": 100, "batches": 20, "missing": 0.05},
+    "scp_small": {"features": 3000, "samples": 1000, "batches": 20, "missing": 0.50},
+    "scp_large": {"features": 5000, "samples": 10000, "batches": 100, "missing": 0.60},
+}
 
 
 @dataclass
@@ -166,6 +182,7 @@ def _run_python_benchmark(
                     pass
 
     # Parse pipeline stats from stderr
+    pipeline_time: float | None = None
     features_in = _DS_FEATURES.get(dataset, 0)
     features_pt = 0
     for line in (result.stderr or "").split("\n"):
@@ -177,16 +194,26 @@ def _run_python_benchmark(
                 except (ValueError, IndexError):
                     pass
         if "passed through without correction" in line:
-            # "INFO [harmonizepy] N feature(s) passed through..."
             parts = line.split()
             if len(parts) >= 4:
                 try:
                     features_pt = int(parts[2])
                 except (ValueError, IndexError):
                     pass
+        if "Done (" in line:
+            # "INFO [harmonizepy] Done (4.57s)."
+            try:
+                paren = line.index("(")
+                end = line.index("s", paren)
+                pipeline_time = float(line[paren + 1 : end])
+            except (ValueError, IndexError):
+                pass
+
+    # Use pipeline time when available (excludes IO), fall back to wall clock
+    final_time = pipeline_time if pipeline_time is not None else py_time
 
     features_out = features_in
-    return py_time, memory_mb, features_out, features_pt
+    return final_time, memory_mb, features_out, features_pt
 
 
 def _run_r_benchmark(
@@ -252,6 +279,51 @@ def _compare_outputs(py_tsv: str, r_tsv: str) -> float:
     return float(rel_diff.max())
 
 
+def _get_data_file_sizes() -> dict[str, str]:
+    """Return human-readable file sizes for each dataset's TSV and CSV."""
+    sizes: dict[str, str] = {}
+    for ds in _DATASETS:
+        tsv = _DATA_DIR / f"{ds}_input.tsv"
+        csv = _DATA_DIR / f"{ds}_batch.csv"
+        tsv_sz = tsv.stat().st_size if tsv.exists() else 0
+        csv_sz = csv.stat().st_size if csv.exists() else 0
+        total_kb = (tsv_sz + csv_sz) / 1024.0
+        if total_kb < 1024:
+            sizes[ds] = f"{total_kb:.0f} KB"
+        else:
+            sizes[ds] = f"{total_kb / 1024.0:.1f} MB"
+    return sizes
+
+
+def _generate_data_specs_table() -> str:
+    """Generate the data specifications table."""
+    file_sizes = _get_data_file_sizes()
+    labels = {
+        "small": "Bulk proteomics, small",
+        "medium": "Bulk proteomics, medium",
+        "large": "Bulk proteomics, large",
+        "scp_small": "SCP cohort, small",
+        "scp_large": "SCP cohort, large",
+        "scp_xlarge": "SCP cohort, x-large",
+    }
+    lines = [
+        "## Data Specifications",
+        "",
+        "| Dataset | Type | Features/Proteins | Samples/Cells | Batches | Missingness | File Size |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for ds in _DATASETS:
+        info = _DS_INFO[ds]
+        label = labels.get(ds, ds)
+        missing_pct = int(float(info["missing"]) * 100)
+        lines.append(
+            f"| {ds} | {label} | {info['features']} | {info['samples']} | "
+            f"{info['batches']} | {missing_pct}% | {file_sizes.get(ds, 'N/A')} |"
+        )
+    lines.extend(["", ""])
+    return "\n".join(lines)
+
+
 def _generate_results_md(results: list[RunResult]) -> str:
     """Generate benchmarks/RESULTS.md."""
     now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
@@ -266,6 +338,7 @@ def _generate_results_md(results: list[RunResult]) -> str:
         f"**Python:** {platform.python_version()} (harmonizepy v{version('harmonizepy')})",
         f"**R:** {_R_VERSION} (HarmonizR {_R_HARMONIZR_VERSION})",
         "",
+        _generate_data_specs_table(),
         "### Implementation Notes",
         "",
         "HarmonizePy is a pure NumPy implementation running single-threaded. "
@@ -372,7 +445,10 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description="Run benchmark suite.")
     parser.add_argument(
-        "--dataset", default=None, choices=[*_DATASETS, None], help="Run a single dataset only."
+        "--dataset",
+        default=None,
+        choices=[*_DATASETS, None],
+        help="Run a single dataset only.",
     )
     parser.add_argument(
         "--with-r",
@@ -458,7 +534,7 @@ def main() -> None:
         r_time = None
         max_rel_diff = None
 
-        if args.with_r:
+        if args.with_r and ds not in _SCP_DATASETS:
             r_out = str(_RESULTS_DIR / f"{tag}_r.tsv")
             try:
                 r_time = _run_r_benchmark(
@@ -475,7 +551,7 @@ def main() -> None:
             except (RuntimeError, FileNotFoundError) as exc:
                 print(f"R ERR ({exc})", end=" ", flush=True)
 
-        if args.with_r:
+        if args.with_r and ds not in _SCP_DATASETS:
             r_msg = f", R={r_time:.3f}s" if r_time is not None else ", R=TIMEOUT"
         else:
             r_msg = ""
