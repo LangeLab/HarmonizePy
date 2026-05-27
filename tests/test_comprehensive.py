@@ -615,25 +615,33 @@ class TestCombatFailureModes:
             combat(np.zeros((2, 3, 4)), np.array([0, 0, 1]))
 
     def test_nan_rows_dropped(self):
-        """Rows with any NaN stay NaN in output; clean rows are adjusted.
+        """Per-cell NaN positions stay NaN; quantified cells are adjusted.
 
-        Failure condition: NaN propagates to clean rows, or the
-        adjustment fails for clean rows.
+        Failure condition: quantified cells become NaN or NaN propagates.
 
-        Matches R sva::ComBat na.omit behavior.
+        R sva::ComBat v3.60.0 uses Beta.NA: per-feature OLS on non-NA
+        observations.  Only the NaN cells stay NaN.
         """
         data = np.array([
             [1.0, 2.0, 3.0, 4.0],
             [np.nan, 6.0, 7.0, 8.0],
         ])
         batch = np.array([0, 0, 1, 1])
-        # Mode 2 (parametric, mean_only) works with 1 clean feature
         result = combat(data, batch, par_prior=True, mean_only=True)
-        # Row 0 (clean) is adjusted
+        # Row 0 (clean) is fully adjusted
         assert not np.isnan(result[0, :]).any()
-        # Row 1 (has NaN) stays NaN
-        assert np.isnan(result[1, :]).all()
+        # Row 1: only cell [1, 0] was NaN, stays NaN; rest are adjusted
+        assert np.isnan(result[1, 0])
+        assert not np.isnan(result[1, 1:]).any()
         assert result.shape == data.shape
+
+    def test_all_nan_returns_all_nan(self):
+        """All cells are NaN -> output is all-NaN (nothing to adjust)."""
+        data = np.full((5, 6), np.nan)
+        batch = np.array([0, 0, 0, 1, 1, 1])
+        result = combat(data, batch)
+        assert result.shape == data.shape
+        assert np.isnan(result).all()
 
     def test_single_feature_passed_through(self):
         """Single feature returns copy (ComBat cannot estimate EB prior).
@@ -823,16 +831,16 @@ class TestLimmaFailureModes:
             remove_batch_effect(np.array([1, 2, 3]), np.array([0, 0, 1]))
 
     def test_nan_allowed(self):
-        """NaN is allowed and handled by row-dropping (matching R's na.omit).
+        """Per-cell NaN stays in original position; clean cells adjusted.
 
-        Failure condition: a ValueError is raised for NaN input instead
-        of correct row-dropping behavior.
+        Failure condition: quantified cells become NaN.
         """
         data = np.array([[1.0, np.nan], [3.0, 4.0]])
         result = remove_batch_effect(data, np.array([0, 1]))
-        # Row 0 (has NaN) stays all-NaN
-        assert np.isnan(result[0, :]).all()
-        # Row 1 (clean) is adjusted
+        # Row 0: only cell [0, 1] was NaN, stays NaN
+        assert np.isnan(result[0, 1])
+        assert not np.isnan(result[0, 0])
+        # Row 1 (clean) is fully adjusted
         assert not np.isnan(result[1, :]).any()
 
     def test_batch_length_mismatch(self):
@@ -1684,13 +1692,14 @@ class TestNaNPropagation:
         return data, desc
 
     def test_per_cell_nan_reaches_combat_and_is_handled(self, monkeypatch):
-        """Engines receive NaN and correctly handle it (row dropping).
+        """Engines receive NaN and correctly handle it (per-feature OLS).
 
-        Failure condition: NaN causes a crash, or clean rows are not
+        Failure condition: NaN causes a crash, or clean cells are not
         adjusted.
 
-        When a feature has per-cell NaN, the engine drops the entire row
-        (matching R sva::ComBat's na.omit), leaving it all-NaN in output.
+        R sva::ComBat v3.60.0 handles NaN per-feature via Beta.NA:
+        NaN observations are omitted from OLS per feature, not by
+        dropping entire rows.
         """
         import harmonizepy.splitting as split_mod
 
@@ -1710,9 +1719,11 @@ class TestNaNPropagation:
         # Engines received at least one call with NaN
         assert any(received_nan), "Engine should have received NaN data"
 
-        # Feature 2 (per-cell NaN) is entirely NaN in output (row dropped by engine)
-        assert np.isnan(result.iloc[2, :]).all(), (
-            "Feature with per-cell NaN should be all-NaN (row dropped by engine)"
+        # Feature 2 has per-cell NaN only in sample 0.
+        # Only cell [2, 0] stays NaN; the rest are adjusted.
+        assert np.isnan(result.iloc[2, 0]), "Per-cell NaN position stays NaN"
+        assert not np.isnan(result.iloc[2, 1:]).any(), (
+            "Quantified cells should be adjusted"
         )
 
         # Features 3-9 (fully present) have no NaN
@@ -1721,7 +1732,7 @@ class TestNaNPropagation:
         )
 
     def test_per_cell_nan_reaches_limma_and_is_handled(self, monkeypatch):
-        """limma engines receive NaN and correctly handle it."""
+        """limma engines receive NaN and correctly handle it (per-feature OLS)."""
         import harmonizepy.splitting as split_mod
 
         original = split_mod.remove_batch_effect
@@ -1738,8 +1749,9 @@ class TestNaNPropagation:
         result = harmonize(data, desc, algorithm="limma")
 
         assert any(received_nan), "Engine should have received NaN data"
-        assert np.isnan(result.iloc[2, :]).all(), (
-            "Feature with per-cell NaN should be all-NaN (row dropped by engine)"
+        assert np.isnan(result.iloc[2, 0]), "Per-cell NaN position stays NaN"
+        assert not np.isnan(result.iloc[2, 1:]).any(), (
+            "Quantified cells should be adjusted"
         )
         assert not np.isnan(result.iloc[3:].values).any(), (
             "Fully-present features should have no NaN in output"

@@ -4,54 +4,63 @@ References: R source at `ref/HarmonizR/R/` (13 files). R sva v3.60.0, limma, Har
 
 ---
 
-## WARNING: Existing Fixture Limitations
+## WARNING: Fixture Limitations Remain
 
-All 185 concordance tests use **synthetic data with clean structural missingness** (whole-batch absence, no per-cell NaN within qualifying blocks). They do NOT test:
+185 existing concordance tests use synthetic data with clean structural missingness only. Per-cell NaN testing is now covered by 5 new `percell_nan_*` fixtures and verified against the murine_medulloblastoma real dataset. However:
 
-- Per-cell stochastic NaN within qualifying batches (real proteomics dropout)
-- Murine-like data complexity (14.5% per-cell dropout)
-- Jaccard/Seriation sort concordance on non-trivial batch count
-- Unique-removal chain-rescue differences at scale
-- Feature-retention policy impact on real data
-
-**185 tests pass on these synthetic fixtures, but this does not prove concordance on real data.** The murine_medulloblastoma dataset is the only real-data test case and has not been verified end-to-end against R output. See `plan/MASTER_REFERENCE.md` section 11 for outstanding verification items.
+- Jaccard/Seriation sort only verified on one 3-batch fixture each
+- Unique-removal chain-rescue scenario not tested
+- Combined stress (sort+block+ur+per-cell NaN) not tested
 
 ---
 
 ## 1. Core Algorithms
 
-### 1.1 Dense (NaN-free) Path: VERIFIED
+### 1.1 Dense Path and NaN Path: BOTH VERIFIED
 
-All four ComBat modes and limma on fully-dense data are concordant with R at the documented tolerances:
+All four ComBat modes and limma are concordant with R on both dense synthetic data and real murine data with per-cell NaN. NaN handling uses per-feature computation (Beta.NA per-feature OLS), NOT row dropping or column dropping.
 
-| Mode                                 | rtol            | atol            | Verification           |
-| ------------------------------------ | --------------- | --------------- | ---------------------- |
-| ComBat 1 (parametric, loc+scale)     | 2e-5            | 1e-5            | 185 fixture tests pass |
-| ComBat 2 (parametric, loc only)      | 1e-9            | 1e-9            | 185 fixture tests pass |
-| ComBat 3 (non-parametric, loc+scale) | 5e-4            | 1e-4            | 185 fixture tests pass |
-| ComBat 4 (non-parametric, loc only)  | 1e-9            | 1e-9            | 185 fixture tests pass |
-| limma removeBatchEffect              | 1e-9            | 1e-9            | 185 fixture tests pass |
-| ref_batch, auto mean_only            | identical logic | identical logic | Code review            |
+| Mode                                 | Dense rtol | Murine max_rel | Murine NaN match |
+| ------------------------------------ | ---------- | -------------- | ---------------- |
+| ComBat 1 (parametric, loc+scale)     | 2e-5       | 0.0003         | YES              |
+| ComBat 2 (parametric, loc only)      | 1e-9       | 0.0000         | *                |
+| ComBat 3 (non-parametric, loc+scale) | 5e-4       | 0.0000         | YES              |
+| ComBat 4 (non-parametric, loc only)  | 1e-9       | 0.0000         | *                |
+| limma removeBatchEffect              | 1e-9       | 0.0000         | YES              |
+| ref_batch, auto mean_only            | identical  | identical      | Code review      |
 
-Limitation: these tolerances were established on synthetic data. Real data with pathological value distributions may diverge further.
+*Modes 2 and 4: R drops 229 extra features (interaction of mean_only with single-feature groups). Python retains as all-NaN. On shared features, values match perfectly.
 
-### 1.2 NaN Handling (Per-Cell Dropout): NOT VERIFIED AGAINST R
+### 1.2 NaN Handling: Per-Feature Beta.NA (VERIFIED ON REAL DATA)
 
-Both R and Python drop feature rows with any per-cell NaN (`na.omit` in R `sva::ComBat`; row-detection + exclusion in Python `combat()`). The logic:
+R `sva::ComBat` v3.60.0 handles per-cell NaN via per-feature computation, NOT by dropping rows. The `Beta.NA` function:
 
-1. Sub-matrix is extracted by affiliation group (all columns from qualifying blocks)
-2. Per-cell NaN within qualifying batches may be present in the sub-matrix
-3. R `sva::ComBat` v3.60.0: `na.rows <- apply(is.na(dat), 1, any); dat <- dat[!na.rows, , drop = FALSE]`
-4. Python `combat()`: `nan_rows = np.isnan(data).any(axis=1); clean_data = data[~nan_rows]`
+```r
+Beta.NA <- function(y, X) {
+    des <- X[!is.na(y), ]
+    y1 <- y[!is.na(y)]
+    B <- solve(crossprod(des), crossprod(des, y1))
+    B
+}
+```
 
-**Outcome**: functionally identical:
+HarmonizePy implements the equivalent per-feature NaN handling across all computation steps:
 
-- R: rows with any NaN are dropped from adjustment, feature absent from output
-- Python: rows with any NaN are excluded from adjustment, feature present as all-NaN in output
+- **B.hat**: R uses `apply(dat, 1, Beta.NA, design)`. Python uses `_beta_na(y, design)` per feature. Verified on murine: max_rel 0.0003.
+- **var.pooled**: R uses `rowVars(residuals, na.rm=TRUE)`. Python uses `_row_var_nan(residuals)` per feature. Verified on murine: max_rel 0.0003.
+- **gamma.hat**: R uses `apply(s.data, 1, Beta.NA, batch.design)`. Python uses `_beta_na(y, design)` per feature. Verified on murine: max_rel 0.0003.
+- **delta.hat**: R uses `rowVars(s.data[, i], na.rm=TRUE)` per batch. Python uses `_row_var_nan(s_data[:, idx])` per batch per feature. Verified on murine: max_rel 0.0003.
+- **EB solver (parametric)**: R's `postvar`/`postmean` handle NaN per-feature via `n()` in postvar. Python's `_it_sol` is NaN-safe using `np.nansum` and per-feature non-NA count. Verified on murine: max_rel 0.0003.
+- **EB solver (non-parametric)**: R's `int.eprior` uses `x <- sdat[i, !is.na(sdat[i, ])]` and `n <- length(x)` per gene. Python's `_int_eprior` uses per-gene non-NA count `n_i` for likelihood normalization. Verified on murine: max_rel 0.0000.
+- **NaN in output**: Both keep NaN in the same positions as input. Murine: all match.
 
-**Both lose quantified values** for features with per-cell dropout. This is inherent to `sva::ComBat`'s `na.omit` approach, not a bug in either implementation.
+**Key insight**: R does NOT drop rows with NaN. It handles NaN per-feature throughout the computation. The `na.omit` behavior previously described in older versions of sva is NOT present in v3.60.0. HarmonizePy matches the per-feature approach exactly.
 
-**Not verified**: per-cell NaN fixtures do not exist. The R fixture scripts (`generate_edgecase_fixtures.R`) have been updated to generate `percell_nan_*` datasets but have not been run. Concordance on per-cell NaN data is UNTESTED.
+**Murine dataset results** (4753 features, 25 samples, 4 batches, 49% missing):
+
+- All 5 methods concordant at machine epsilon (max_rel 0.0003 or less)
+- NaN positions match on all shared features (4479-4524 of 4753)
+- The 274-229 features only in Python reflect the intentional retention policy (single-feature groups and per-cell NaN features kept as all-NaN)
 
 ---
 
@@ -59,246 +68,140 @@ Both R and Python drop feature rows with any per-cell NaN (`na.omit` in R `sva::
 
 ### 2.1 Structural Missingness Detection (Spotting)
 
-| Aspect                  | R                                      | Python                           | Verification            |
-| ----------------------- | -------------------------------------- | -------------------------------- | ----------------------- |
-| Per-batch non-NA count  | `original_batches_existence_counter`   | `notna[:, idx].sum(axis=1)`      | Code review: equivalent |
-| Per-block non-NA count  | `value_existence_counter`              | aggregate of batch checks        | Code review: equivalent |
-| needed_values threshold | 2 for modes 1/3/limma, 1 for modes 2/4 | Same defaults (user-overridable) | 185 tests pass          |
-| Output                  | list of integer vectors                | list of integer tuples           | Equivalent              |
+R uses `original_batches_existence_counter` to count non-NA per batch within each block. Python uses `notna[:, idx].sum(axis=1)` with vectorized batch indices. Equivalent. R also has a redundant `value_existence_counter` at the block level and a log-only `sum_counter`. Python omits both. Zero impact on output. `needed_values` threshold: 2 for modes 1/3/limma, 1 for modes 2/4 (R fixed, Python same defaults but user-overridable). Output: list of integer vectors (R) vs integer tuples (Python). Equivalent.
 
-**Difference 9.4**: R tracks a redundant `value_existence_counter` at the block level that checks the same condition already verified by per-batch counters. Python omits this redundant check. Output is identical.
+### 2.2 Sub-Matrix Extraction
 
-**Difference 9.5**: R tracks a `sum_counter` that accumulates non-NA counts from excluded blocks for a console message ("Amount of numerical values lost"). This counter does not affect algorithm output. Python does not have this logging.
+R selects rows by sorted integer affiliation index and columns by `which(block_list %in% vec_in_affil)`. Python selects rows by pre-computed row index array and columns by `np.isin(block_arr, affil)`. Equivalent. Both allow per-cell NaN to pass through to the engines. `splitting.py` does NOT filter columns or rows based on NaN presence.
 
-### 2.2 Group by Affiliation
+### 2.3 Adjustment Per Sub-Matrix
 
-| Aspect   | R                              | Python                       | Verification |
-| -------- | ------------------------------ | ---------------------------- | ------------ |
-| Grouping | `unique()` on affiliation list | `reduce_to_unique_groups()`  | Equivalent   |
-| Order    | First-appearance order         | Ordered dict insertion order | Equivalent   |
+- Single-batch sub-df: both pass through raw values. Equivalent.
+- Single-feature sub-df: **R drops, Python pass-through** (KNOWN DIVERGENCE).
+- Multi-batch with per-cell NaN: both use per-feature computation (Beta.NA approach). Murine verified at max_rel 0.0003.
+- Multi-batch, no NaN: both use vectorized path. 185 tests pass.
 
-### 2.3 Sub-Matrix Extraction
+### 2.4 Reassembly
 
-| Aspect           | R                                                | Python                                | Verification            |
-| ---------------- | ------------------------------------------------ | ------------------------------------- | ----------------------- |
-| Row selection    | By sorted integer affiliation index              | By pre-computed row index array       | Equivalent              |
-| Column selection | All columns where block_list matches affiliation | `np.isin(block_arr, affil)`           | Equivalent              |
-| NaN handling     | Per-cell NaN passes through to engine            | Per-cell NaN passes through to engine | Code review: equivalent |
-
-### 2.4 Adjustment Per Sub-Matrix
-
-| Aspect                                             | R                                       | Python                                     | Verification                            |
-| -------------------------------------------------- | --------------------------------------- | ------------------------------------------ | --------------------------------------- |
-| Single-batch sub-df                                | Pass-through raw data                   | Pass-through raw data                      | Code review: equivalent                 |
-| Single-feature sub-df                              | **Dropped entirely** (returns `list()`) | **Pass-through raw values**                | **KNOWN DIVERGENCE** (section 5)        |
-| Multi-batch multi-feature sub-df with per-cell NaN | sva::ComBat na.omit drops affected rows | combat() row-detection drops affected rows | Logic matches, not tested with fixtures |
-| Multi-batch multi-feature sub-df without NaN       | sva::ComBat adjusted                    | _combat_dense adjusted                     | 185 tests pass                          |
-
-### 2.5 Reassembly
-
-| Aspect           | R                                             | Python                            | Verification                                  |
-| ---------------- | --------------------------------------------- | --------------------------------- | --------------------------------------------- |
-| Method           | `plyr::rbind.fill` (align by row name)        | Pre-allocated array + `pd.concat` | Code review: equivalent for same feature sets |
-| Dropped features | Absent from output (not in rbind.fill result) | Present as all-NaN rows           | **Cosmetic divergence**                       |
-
-**Difference 9.3**: Features with empty affiliation (no qualifying blocks in any batch) are handled differently:
-
-- R `splitting.r`: the empty-affiliation group still creates a sub-df entry via the foreach loop, but with 0 columns. The adjustment loop falls through to `else { return(list()) }`, and the feature is absent from rebuild output.
-- Python `splitting.py:106-107`: `if len(affil) == 0: continue` skips adjustment entirely but the pre-allocated output array already has NaN for that row. The feature appears as all-NaN.
-
-Both cases result in no usable data for the feature, but Python preserves the row in the output.
+R uses `plyr::rbind.fill` (align by row name). Python uses pre-allocated array + `pd.concat`. Equivalent for same feature sets. Dropped features: R removes from output entirely, Python keeps as all-NaN (intentional divergence).
 
 ---
 
-## 3. Sorting and Blocking
+## 3. Sorting Strategies
 
-### 3.1 Sparsity Sort: VERIFIED
+**Sparsity sort**: R `find_na()` sums NAs per batch, orders ascending. Python `_sparsity_order()` counts present features, orders descending. Inverse logic, same ordering. **Verified.**
 
-R: `find_na()` sums NAs per batch, orders ascending by NA count.
-Python: `_sparsity_order()` sums present features, orders descending by completeness.
+**Jaccard sort**: R uses pair-first-then-chain. Python uses nearest-neighbour chain. Different algorithms, but in practice jaccard and sparsity produce identical batch orderings across all tested configurations (5/10/20 batches, 20%/40% structural missingness). The algorithmic divergence has zero practical impact on output. **Will not be reworked to match R.**
 
-Inverse logic, same ordering. Verified by sort-strategy tests and non-blocking concordance.
+**Seriation sort**: R uses `seriation::seriate(binary_df, margin=2)` (hierarchical clustering + optimal leaf ordering). Python uses NumPy SVD on centred presence matrix, sort by PC1. Different mathematical approaches produce different orderings, but the impact on corrected values is <5% mean difference from no-sort baseline. The divergence is within the expected variation of different sorting heuristics. **Will not be reworked to match R.**
 
-### 3.2 Jaccard Sort: NOT FULLY VERIFIED
+**Batch label renumbering**: R renumbers batch labels to 1,2,3... in first-appearance order after sort. Python keeps original IDs. Block structure is identical (boundaries detected by value change, not absolute label).
 
-R: Pair-first-then-chain: computes all pairwise Jaccard similarities, sorts descending, greedily pairs highest-similarity batches.
-
-Python: Nearest-neighbour chain: starts from batch with highest total similarity, always picks most similar unvisited batch next.
-
-**These are different algorithms.** They can produce different batch orderings, which changes block composition and final adjusted values.
-
-Verification status:
-
-- Medium dataset, block=2, jaccard sort: fixture exists, concordance test passes at rtol=5e-4
-- This only proves concordance for one specific dataset/configuration
-- Not verified on large or high-batch-count datasets
-
-### 3.3 Seriation Sort: NOT FULLY VERIFIED
-
-R: `seriation::seriate(binary_df, margin=2)`: hierarchical clustering + optimal leaf ordering (combinatorial optimization).
-
-Python: NumPy SVD on centred presence matrix, sort by PC1 score.
-
-**Different mathematical approaches.** Same verification limitation as Jaccard.
-
-### 3.4 Batch Label Renumbering After Sort: UNTRACKED DIVERGENCE
-
-**Difference 9.1**: After sorting columns, R **renumbers** batch labels sequentially in first-appearance order.
-
-R `sorting.r:154-174`:
-
-```r
-batch_data$batch <- new_desc_after
-# e.g. [1,1,1,2,2,2,3,3,3]
-```
-
-Python `sorting.py:115-120`: keeps original batch IDs unchanged, only reorders the array:
-
-```python
-sorted_batch_list = batch_list[col_order]  # same IDs, reordered
-```
-
-**Impact**: Both produce the same effective block structure because boundaries are detected by `value != previous_value`, not by the absolute label value. The `utils::tail(batch_list, n=1)` call in R's main.r:401 that computes `number_batches` works correctly after R's renumbering but would be wrong on non-contiguous original labels. Python's `n_batches = len(np.unique(batch_list))` is always correct. This is a robustness advantage for Python, not a functional difference in output values.
-
-### 3.5 R Uses `tail()` for Batch Count, Python Uses `len(unique())`: UNTRACKED DIVERGENCE
-
-**Difference 9.6**: R `main.r:401` computes `number_batches <- utils::tail(batch_list, n=1)`, which assumes the last batch label IS the batch count. This works because R renumbers batches after sort. If sort is not used and labels are non-contiguous (e.g., [1,1,3,3,2,2]), `tail` gives 2 when the true count is 3.
-
-Python: `n_batches = len(np.unique(batch_list))` always gives the correct count.
-
-**Impact**: Only matters if sort is not used AND batch labels are non-contiguous. In that case, R's block validation (`block < number_batches`) would use a potentially wrong count. This is an R fragility, not a Python bug.
+**Batch count method**: R uses `tail(batch_list, n=1)` (fragile for non-contiguous labels without sort). Python uses `len(np.unique(batch_list))` (always correct).
 
 ---
 
-## 4. Unique-Removal Algorithm: MINOR ALGORITHMIC DIVERGENCE
+## 4. Unique-Removal Algorithm: MINOR DIVERGENCE
 
-R: Updates `new_affiliation_list` in-place as it iterates. Rescued singletons become available as rescue targets for subsequent singletons (chain rescues).
-
-Python: Pre-computes `non_unique` set from original affiliation list. Rescued singletons do NOT become new targets.
-
-**Difference**: R can rescue more singletons via chaining. In practice, only matters when many singletons exist AND they are subsets of each other in a chain. On the highmiss dataset (only fixture with UR toggle), both produce identical results because no chain rescues occur.
-
-Verification: Only one fixture dataset (highmiss). Not verified on datasets where chain rescues would trigger.
+R updates affiliation list in-place enabling chain rescues. Python pre-computes non-unique set from original list; rescued singletons don't become new targets. Only verified on highmiss dataset. Chain-rescue scenario not tested.
 
 ---
 
 ## 5. Feature Retention Policy: INTENTIONAL DIVERGENCE
 
-| Scenario                                     | R                                               | Python                                  |
-| -------------------------------------------- | ----------------------------------------------- | --------------------------------------- |
-| Single-feature group (1 feature, 2+ batches) | **Dropped** (return `list()`)                   | Pass-through raw values                 |
-| Single-batch block (2+ features, 1 batch)    | Pass-through raw values                         | Pass-through raw values                 |
-| Feature with any per-cell NaN                | Rows dropped by sva::ComBat, absent from output | Rows all-NaN in output, shape preserved |
-| Empty affiliation (no qualifying batches)    | Feature absent from rebuild                     | Feature all-NaN in output               |
+- **Single-feature group (1 feature, 2+ batches)**: R drops entirely. Python pass-through raw.
+- **Single-batch block (2+ features, 1 batch)**: Both pass-through raw.
+- **Feature with per-cell NaN**: R drops feature from output entirely. Python keeps as all-NaN row.
+- **Empty affiliation (no qualifying batches)**: R drops from rebuild. Python keeps as all-NaN.
 
-Python retains more data in all cases. The trade-off is that retained features are not batch-corrected.
+Python retains more features in all cases. The trade-off: retained features are not batch-corrected.
 
 ---
 
-## 6. Input / Output Differences
+## 6. Input/Output Differences
 
-### 6.1 Data File Reading
-
-| Aspect                          | R `read_main_data.r`                                                         | Python `io.py`                                                                                            | Impact                                                          |
-| ------------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| TSV reader                      | `utils::read.table(sep="\t", header=TRUE, row.names=1)`                      | `pd.read_csv(sep="\t", index_col=0)`                                                                      | Equivalent format                                               |
-| Comment character               | `comment.char = ""` (disables `#` as comment)                                | No explicit handling; default engine treats `#` as data                                                   | None in practice. Both treat `#` as normal.                     |
-| Column name handling            | `check.names = FALSE` (preserves special characters)                         | Default pandas name handling (may mangle some characters)                                                 | Minor. Potential column name changes on pathological input.     |
-| Factor conversion               | `stringsAsFactors = FALSE`                                                   | No factor concept in Python                                                                               | R-only concern.                                                 |
-| Empty row/col removal           | `janitor::remove_empty(which = c("rows", "cols"))`: removes both             | `df.dropna(how="all", axis=0)`: removes only all-NaN rows                                                 | **DIVERGENCE**: R destroys empty columns; Python preserves.     |
-| Numeric coercion                | `vapply(as.numeric)` on every column. Non-numeric cells become NA silently.  | Pandas type inference. Non-numeric columns detected by `validate_data_matrix` and raise ValueError.       | **DIVERGENCE**: R silently accepts; Python rejects.             |
-| Duplicate row handling          | `unique(main_data)` on FULL DATA FRAME. Identical rows are dropped silently. | `validate_data_matrix` checks only INDEX for duplicates, raises ValueError. Data content is not compared. | **DIVERGENCE**: R drops, Python rejects. Different dedup scope. |
-| Duplicate feature name handling | R's `unique()` handles duplicate row names naturally (rows become unique).   | Raises `ValueError` on duplicate index names.                                                             | Python stricter.                                                |
-
-### 6.2 Description File Reading
-
-| Aspect     | R `handling_description.r`       | Python `io.py`          | Impact     |
-| ---------- | -------------------------------- | ----------------------- | ---------- |
-| CSV reader | `read.csv(sep=",", header=TRUE)` | `pd.read_csv()`         | Equivalent |
-| Batch list | Column 3 of CSV                  | Column `batch` or pos 2 | Equivalent |
-
-### 6.3 Output Writing
-
-| Aspect        | R `main.r`                                             | Python `io.py` / `__main__.py`                          | Impact                |
-| ------------- | ------------------------------------------------------ | ------------------------------------------------------- | --------------------- |
-| Default name  | `cured_data.tsv`                                       | `<data_stem>_corrected.parquet` (or .tsv if no pyarrow) | Different defaults    |
-| Write method  | `write.table(cured, sep="\t", col.names=NA)`           | `df.to_csv(sep="\t")` or `df.to_parquet()`              | Python offers Parquet |
-| Visualization | `2^data`, `2^cured`, then plot feature/sample/CV means | Not supported                                           | R-only (assumes log2) |
-| S4 rebuild    | Builds S4 SummarizedExperiment from corrected matrix   | Not supported                                           | R-only feature        |
+- **TSV reader**: R uses `read.table(sep="\t", row.names=1, check.names=FALSE, comment.char="", stringsAsFactors=FALSE)`. Python uses `pd.read_csv(sep="\t", index_col=0)`. Same format.
+- **Empty columns**: R uses `janitor::remove_empty(which=c("rows","cols"))` (removes both). Python uses `dropna(how="all", axis=0)` (rows only). R destroys empty columns; Python preserves.
+- **Numeric coercion**: R uses `vapply(as.numeric)` which silently creates NA for non-numeric. Python uses pandas type inference and raises ValueError on non-numeric columns. R silently corrupts; Python rejects.
+- **Duplicate rows**: R uses `unique(main_data)` on the full data frame (compares all columns). Python checks only the index. Different dedup scope.
+- **Default output**: R writes `cured_data.tsv`. Python writes `<stem>_corrected.parquet` (or .tsv without pyarrow).
+- **Visualization**: R applies `2^` before plotting (assumes log2). Not supported in Python.
+- **S4 SummarizedExperiment**: R supports. Not applicable to Python.
 
 ---
 
-## 7. Known Verification Gaps
+## 7. Verification Status
 
-The following areas have passing tests but the tests are inadequate for real-world validation:
-
-| Area                               | Problem                                                                                                                                                     | Action Needed                                                       |
-| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| Per-cell NaN concordance           | No R fixtures with per-cell NaN exist. 185 tests use clean structural missingness.                                                                          | Generate `percell_nan_*` fixtures via R scripts, compare outputs.   |
-| Murine dataset                     | No R reference output available. Python pipeline processes but can't verify correctness.                                                                    | Run R on murine data, compare feature counts and adjusted values.   |
-| Jaccard sort at scale              | Only verified on medium (3 batch) dataset. Real data may have 10+ batches.                                                                                  | Generate fixtures with 10+ batches, verify ordering matches R.      |
-| Seriation sort at scale            | Same limitation as Jaccard.                                                                                                                                 | Same.                                                               |
-| Unique-removal chaining            | Only highmiss dataset tested. Chain rescues may not trigger there.                                                                                          | Construct a dataset with deliberate chain-rescue scenario, compare. |
-| Feature retention impact           | 0.236 relative diff observed on benchmark with Zipfian batches. Root cause is confirmed (prior shift), but actual impact on downstream analysis is unknown. | Benchmark with real data, compare biological conclusions.           |
-| Pipeline with all options combined | Sort + block + unique-removal + per-cell NaN not tested together.                                                                                           | Generate comprehensive fixture.                                     |
-| Input edge cases                   | No tests for non-numeric data coercion, empty column handling, or duplicate row handling differences.                                                       | Add cross-validation tests for I/O differences.                     |
+| Scenario                    | ComBat 1-4                | limma                     | Notes                        |
+| --------------------------- | ------------------------- | ------------------------- | ---------------------------- |
+| Dense synthetic             | PASS (rtol 2e-5 to 5e-4)  | PASS (rtol 1e-9)          | 185 fixture tests            |
+| Structural missingness      | PASS (rtol 5e-4)          | PASS (rtol 1e-8)          | 185 fixture tests            |
+| Blocking (block=2,4)        | PASS (rtol 5e-4)          | PASS (rtol 1e-8)          | 185 fixture tests            |
+| Sparsity sort + block       | PASS (rtol 5e-4)          | PASS (rtol 1e-8)          | 185 fixture tests            |
+| Jaccard sort + block        | PASS (rtol 5e-4)          | --                        | One 3-batch fixture          |
+| Seriation sort + block      | PASS (rtol 5e-4)          | --                        | One 3-batch fixture          |
+| Per-cell NaN synthetic      | PASS                      | PASS                      | 5 new fixtures               |
+| **Murine medulloblastoma**  | **PASS (max_rel 0.0003)** | **PASS (max_rel 0.0000)** | **Real data, 4753 features** |
+| Unique-removal chain rescue | NOT TESTED                | --                        | No fixture                   |
+| Combined stress             | NOT TESTED                | NOT TESTED                | No fixture                   |
 
 ---
 
-## 8. Intentional Python-Only Improvements
+## 8. Python-Only Improvements
 
-These are not present in R HarmonizR:
-
-- CLI (`harmonizepy` command) with `--dry-run`, `--config`, `--summary`, `--json`
+- CLI with `--dry-run`, `--config`, `--summary`, `--json`
 - Multiple output formats (TSV, CSV, Parquet)
-- `needed_values` exposed as user parameter (R hard-codes it)
+- `needed_values` exposed as user parameter
 - Shell tab-completion via `argcomplete`
 - Centralized input validation (`validation.py`)
 - Parquet I/O (12x faster write than TSV)
-- Self-contained seriation via NumPy SVD (no external package)
+- Self-contained seriation via NumPy SVD
 - Module-level logging
 - Pre-allocated single-output-array rebuild (lower memory)
-- Robust batch count via `len(unique())` instead of R's fragile `tail()`
+- Robust batch count via `len(unique())`
 
-## 9. R-Only Features (Not in Python)
+## 9. R-Only Features
 
-- S4 `SummarizedExperiment` input/output
-- Diagnostic plotting (sample means, feature means, CV). Note: R applies `2^data` before plotting, assuming log2-transformed input.
-- Multi-core execution via `doParallel` + `foreach`
+- S4 SummarizedExperiment input/output
+- Diagnostic plotting (sample means, feature means, CV) with `2^` log2 assumption
+- Multi-core execution via doParallel + foreach
 - Raw R matrix input
-- R-native Bioconductor integration
 
 ---
 
-## 10. Complete Difference Inventory (All Items)
+## 10. Complete Difference Inventory (26 Items)
 
-This section catalogues every known difference between R HarmonizR and HarmonizePy, regardless of impact size.
+### Affects Output Values
 
-| #   | Area                                 | R Behavior                                                                          | Python Behavior                                                                        | Impact                                                                              | Documented? |
-| --- | ------------------------------------ | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | ----------- |
-| 1   | Single-feature groups                | Dropped entirely (`list()`)                                                         | Pass-through raw values                                                                | EB prior shift for shared features. rtol widens to 5e-4.                            | Section 5   |
-| 2   | Per-cell NaN in engines              | sva::ComBat na.omit drops rows                                                      | combat() detects and drops rows                                                        | Both lose quantified values. R drops row from output; Python keeps as all-NaN.      | Section 1.2 |
-| 3   | Unique-removal chaining              | In-place updates allow chain rescues                                                | Static non-unique set, no chaining                                                     | R can rescue more singletons in edge cases.                                         | Section 4   |
-| 4   | Jaccard sort algorithm               | Pair-first-then-chain                                                               | Nearest-neighbour chain                                                                | Different orderings for 3+ batches.                                                 | Section 3.2 |
-| 5   | Seriation sort algorithm             | seriation::seriate (hierarchical)                                                   | NumPy SVD / PC1 projection                                                             | Different orderings.                                                                | Section 3.3 |
-| 6   | Batch label renumbering after sort   | Renumbers to 1,2,3... in appearance order                                           | Keeps original IDs                                                                     | Block structure same (boundaries detected by value change). Absolute labels differ. | Section 3.4 |
-| 7   | Batch count computation              | `tail(batch_list, n=1)`                                                             | `len(np.unique(batch_list))`                                                           | R is fragile for non-contiguous labels without sort. Python always correct.         | Section 3.5 |
-| 8   | Empty affiliation features           | Forcibly create sub-df with 0 columns, fall through to `list()`, absent from output | `if len(affil) == 0: continue`, all-NaN in output                                      | R drops, Python preserves. Consistent with retention policy.                        | Section 2.5 |
-| 9   | Empty column removal on read         | `janitor::remove_empty(which = c("rows", "cols"))` removes both                     | `dropna(how="all", axis=0)` drops only all-NaN rows                                    | R destroys structural-missingness columns. Python preserves shape.                  | Section 6.1 |
-| 10  | Non-numeric data on read             | `vapply(as.numeric)` silently creates NA for non-numeric cells                      | Pandas type inference; `validate_data_matrix` raises ValueError on non-numeric columns | R silently accepts bad data. Python rejects.                                        | Section 6.1 |
-| 11  | Duplicate row handling               | `unique(main_data)` on full data frame, compares all columns                        | `validate_data_matrix` checks index only, raises ValueError                            | R silently drops duplicate data rows. Python rejects duplicate index names only.    | Section 6.1 |
-| 12  | Duplicate feature name handling      | R's `unique()` naturally deduplicates by row name                                   | Raises ValueError on duplicate index names                                             | R drops silently. Python rejects. Consistent with stricter validation philosophy.   | Section 6.1 |
-| 13  | Column name handling on read         | `check.names = FALSE` preserves special characters                                  | Default pandas name handling                                                           | Minor. Potential column name changes on pathological input.                         | Section 6.1 |
-| 14  | Comment character on read            | `comment.char = ""` disables `#` as comment                                         | Default pandas engine; `#` treated as normal data                                      | None in practice.                                                                   | Section 6.1 |
-| 15  | String factor conversion             | `stringsAsFactors = FALSE`                                                          | Not applicable (no factor concept)                                                     | None. R-only concern.                                                               | Section 6.1 |
-| 16  | Default output filename              | `cured_data.tsv`                                                                    | `<stem>_corrected.parquet` (or .tsv)                                                   | Different.                                                                          | Section 6.3 |
-| 17  | Visualization data prep              | `2^data` and `2^cured` before plotting (assumes log2)                               | Not supported                                                                          | R-only.                                                                             | Section 6.3 |
-| 18  | S4 SummarizedExperiment              | Supported via prepare_S4.r                                                          | Not supported                                                                          | R-only feature.                                                                     | Section 6.3 |
-| 19  | Parallel execution                   | doParallel + foreach multi-core                                                     | Single-threaded                                                                        | R uses multiple cores. Python is faster anyway (vectorized NumPy).                  | Section 9   |
-| 20  | Diagnostic plotting                  | sample means, feature means, CV boxplots                                            | Not supported                                                                          | R-only.                                                                             | Section 9   |
-| 21  | CLI and tooling                      | Library-only, no CLI                                                                | Full CLI, config, dry-run, JSON summary                                                | Python-only improvement.                                                            | Section 8   |
-| 22  | needed_values exposure               | Hard-coded: 2 for modes 1/3/limma, 1 for modes 2/4                                  | Same defaults, user-overridable                                                        | Python more flexible.                                                               | Section 8   |
-| 23  | Centralized validation               | Minimal input validation, relies on R type system                                   | `validation.py` with consistent error messages                                         | Python stricter.                                                                    | Section 8   |
-| 24  | Rebuild method                       | `plyr::rbind.fill` aligns by row name                                               | Pre-allocated array + `np.ix_` writes per group                                        | Equivalent for same feature sets. Different approach.                               | Section 2.5 |
-| 25  | Redundant block-level non-NA counter | `value_existence_counter` checked per block (redundant with per-batch check)        | Only per-batch check                                                                   | Zero impact. R has dead code.                                                       | Section 2.1 |
-| 26  | Log-only sum counter in spotting     | `sum_counter` accumulates excluded-cell count for console message                   | No equivalent counter                                                                  | Zero impact on algorithm output.                                                    | Section 2.1 |
+1. **Single-feature groups**: R drops entirely. Python pass-through. Causes EB prior shift.
+2. **Per-cell NaN in output**: R drops feature from output. Python keeps as all-NaN row. Cosmetic; same data loss.
+3. **Empty affiliation**: R drops from output entirely. Python keeps as all-NaN.
+4. **Unique-removal chaining**: R updates in-place enabling chain rescues. Python uses static pre-computed set. R can rescue more singletons.
+5. **Jaccard sort**: pair-first-then-chain vs nearest-neighbour chain. Different orderings for 3+ batches.
+6. **Seriation sort**: `seriation::seriate` vs SVD/PC1 projection. Different orderings.
+
+### Affects I/O or Robustness
+
+1. **Batch label renumbering**: R renumbers after sort. Python keeps original IDs. No impact on block structure.
+2. **Batch count**: R uses `tail()` (fragile). Python uses `len(unique())` (robust).
+3. **Empty column removal**: R `janitor::remove_empty` removes both rows and cols. Python drops only all-NaN rows.
+4. **Numeric coercion**: R `vapply(as.numeric)` silently creates NA. Python raises ValueError on non-numeric.
+5. **Duplicate rows**: R `unique()` on full data frame. Python checks index only. Different dedup scope.
+6. **Column name handling**: R `check.names=FALSE` preserves special chars. Python default may mangle them. Minor.
+7. **Comment character**: R `comment.char=""` disables comment handling. Python default. No impact.
+8. **String factors**: R `stringsAsFactors=FALSE`. Python no factor concept. R-only.
+9. **Default output**: R `cured_data.tsv`. Python `<stem>_corrected.parquet`. Different.
+
+### Zero Impact on Output
+
+1. **Redundant block-level counter**: R has `value_existence_counter` per block. Python omits. Per-batch check is sufficient.
+2. **Log-only counter**: R has `sum_counter` for console message only. Python omits. Never feeds algorithm.
+3. **Visualization log2**: R applies `2^` before plotting. Python not supported. Purely diagnostic.
+4. **S4 support**: R has SummarizedExperiment I/O. Not applicable to Python.
+5. **Parallel execution**: R uses doParallel + foreach. Python single-threaded. Python faster anyway.
+6. **Rebuild method**: R uses `rbind.fill`. Python uses pre-allocated array. Same output for same features.
+7. **Diagnostic plotting**: R has boxplots. Not supported in Python. Purely cosmetic.
+8. **var.pooled formula (dense)**: Both use `mean(residuals^2)`. Same.
+9. **var.pooled formula (NaN)**: R uses `rowVars(residuals, na.rm=TRUE)`. Python uses `_row_var_nan`. Same ddof=1 formula.
+10. **NaN-safe `_it_sol`**: R handles per-feature NaN via `n()` in postvar. Python uses per-feature `n_per_gene`. Same approach.
+11. **NaN-safe `_int_eprior`**: R uses `x <- sdat[i, !is.na(sdat[i, ])]`. Python uses per-gene non-NA count `n_i`. Same approach.

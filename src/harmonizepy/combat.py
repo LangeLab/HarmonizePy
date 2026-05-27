@@ -100,10 +100,13 @@ def _it_sol(
 ) -> tuple[_Array, _Array]:
     """Iterative EB solver for one batch (parametric path).
 
+    NaN-safe: per-gene statistics are computed on non-NaN entries,
+    matching R sva::ComBat's handling of missing data within batches.
+
     Parameters
     ----------
     s_data : (n_genes, n_batch_samples)
-        Standardised data for a single batch.
+        Standardised data for a single batch. May contain NaN.
     g_hat, d_hat : (n_genes,)
         Initial estimates of additive / multiplicative effects.
     g_bar, t2 : float
@@ -115,31 +118,27 @@ def _it_sol(
     -------
     gamma_star, delta_star : (n_genes,)
     """
-    n_samples = np.float64(s_data.shape[1])
-    t2_n = t2 * n_samples
-    t2_n_g_hat = t2_n * g_hat
+    nan_mask = np.isnan(s_data)
+    all_nan = nan_mask.all(axis=1)
+    n_per_gene = np.float64((~nan_mask).sum(axis=1))
+    n_per_gene = np.maximum(n_per_gene, 1.0)
 
-    # Pre-compute per-gene sums so the iterative loop can use the
-    # binomial formula instead of broadcasting to a 2-D temp array.
-    sum_x = s_data.sum(axis=1)  # (n_genes,)
-    sum_x2 = (s_data * s_data).sum(axis=1)  # (n_genes,)
+    sum_x = np.nansum(s_data, axis=1)
+    sum_x2 = np.nansum(s_data * s_data, axis=1)
+
+    t2_n = t2 * n_per_gene
+    t2_n_g_hat = t2_n * g_hat  # uses ORIGINAL g_hat, not updated g_new
 
     g_old = g_hat.copy()
     d_old = d_hat.copy()
 
     for _ in range(max_iter):
-        # Update additive effect
         g_new = _postmean(g_bar, d_old, t2_n, t2_n_g_hat)
-        # Residual sum of squares: sum_k (x_i[k] - g_new[i])^2
-        # = sum_x2_i - 2 * g_new[i] * sum_x_i + n * g_new[i]^2
-        sum2 = sum_x2 - 2.0 * g_new * sum_x + n_samples * g_new * g_new
-        # Update multiplicative effect
-        d_new = _postvar(sum2, n_samples, a, b)
+        sum2 = sum_x2 - 2.0 * g_new * sum_x + n_per_gene * g_new * g_new
+        d_new = _postvar(sum2, n_per_gene, a, b)
 
-        # Convergence: max relative change
         delta_g = np.abs(g_new - g_old)
         delta_d = np.abs(d_new - d_old)
-        # Guard against division by zero on the first iteration
         denom_g = np.maximum(np.abs(g_old), 1e-12)
         denom_d = np.maximum(np.abs(d_old), 1e-12)
         change = max(np.max(delta_g / denom_g), np.max(delta_d / denom_d))
@@ -157,6 +156,10 @@ def _it_sol(
             change,
         )
 
+    # All-NaN features keep their initial estimates
+    g_new[all_nan] = g_hat[all_nan]
+    d_new[all_nan] = d_hat[all_nan]
+
     return g_new, d_new
 
 
@@ -172,8 +175,11 @@ def _int_eprior(
 ) -> tuple[_Array, _Array]:
     """Monte-Carlo integration for non-parametric EB estimation (one batch).
 
-    Vectorised over genes; for each gene *i* the leave-one-out kernel
-    density is evaluated across every other gene simultaneously.
+    NaN-safe: each gene uses only its non-NaN entries for the likelihood,
+    matching R sva::ComBat's per-gene handling where ``x <- sdat[i, !is.na(sdat[i, ])]``
+    and ``n <- length(x)``.  Likelihood for
+    gene *i* uses gene *i*'s non-NA count *n_i*, not the global batch
+    size.
 
     Parameters
     ----------
@@ -184,36 +190,37 @@ def _int_eprior(
     -------
     gamma_star, delta_star : (n_genes,)
     """
-    n_genes, n_samples = s_data.shape
+    n_genes, _ = s_data.shape
     g_star = np.empty(n_genes)
     d_star = np.empty(n_genes)
 
     d = np.maximum(d_hat, 1e-12)
-
-    # Pre-compute per-gene statistics so the inner loop can compute
-    # sum-of-squared-residuals via the binomial formula:
-    #   sum_k (x_i[k] - g_j)^2  =  sum_x2_i - 2*g_j*sum_x_i + n*g_j^2
-    # This avoids creating the (n_genes-1, n_samples) temp array.
-    sum_x = s_data.sum(axis=1)  # (n_genes,)
-    sum_x2 = (s_data * s_data).sum(axis=1)  # (n_genes,)
-
-    const_term = -0.5 * n_samples * np.log(2.0 * np.pi)
-    half_n = -0.5 * n_samples
-    log_d = np.log(d)  # pre-compute log so the inner loop avoids n_genes log() calls
+    not_nan = ~np.isnan(s_data)
 
     mask = np.ones(n_genes, dtype=bool)
     for i in range(n_genes):
         mask[i] = False
-        g = g_hat[mask]  # (n_genes-1,)
-        d_i = d[mask]  # (n_genes-1,)
-        log_d_i = log_d[mask]  # (n_genes-1,)
+        g = g_hat[mask]
+        d_i = d[mask]
+        n_i = float(not_nan[i].sum())
+        if n_i < 1:
+            g_star[i] = g_hat[i]
+            d_star[i] = d_hat[i]
+            mask[i] = True
+            continue
 
-        # Squared residuals without a 2-D temp array
-        sum2 = sum_x2[i] - 2.0 * g * sum_x[i] + n_samples * g * g
+        x_i = s_data[i, not_nan[i]]
+        j = np.ones(int(n_i), dtype=np.float64)
 
-        log_lh = const_term + half_n * log_d_i - sum2 / (2.0 * d_i)
+        # Broadcast: (n_genes-1) x n_i matrix, each row = gene_i's data
+        dat = np.broadcast_to(x_i, (len(g), int(n_i)))
+        resid2 = (dat - g[:, np.newaxis]) ** 2
+        sum2 = resid2 @ j
+
+        log_lh = -0.5 * n_i * (np.log(2.0 * np.pi * d_i)) - sum2 / (2.0 * d_i)
         log_lh -= log_lh.max()
         lh = np.exp(log_lh)
+        lh = np.nan_to_num(lh, nan=0.0)
 
         total = lh.sum()
         if total == 0.0:
@@ -257,15 +264,15 @@ def combat(
 ) -> _Array:
     """Apply ComBat batch-effect correction.
 
-    Per-cell NaN is handled by dropping affected feature rows before
-    computation, matching R ``sva::ComBat``'s internal ``na.omit``.
-    NaN rows stay NaN in the output.
+    Per-cell NaN is handled per-feature by omitting NaN observations from
+    OLS, variance, and mean computations (matching R ``sva::ComBat``
+    v3.60.0's ``Beta.NA`` approach).  NaN stays in the same positions in
+    the output.
 
     Parameters
     ----------
     data : ndarray, shape (n_features, n_samples)
-        Expression / abundance matrix.  Per-cell NaN is allowed;
-        rows with any NaN are omitted from the EB computation.
+        Expression / abundance matrix.  Per-cell NaN is allowed.
     batch : ndarray, shape (n_samples,)
         Integer batch labels, 0-indexed and contiguous (``0 .. n_batch-1``).
     par_prior : bool
@@ -279,14 +286,13 @@ def combat(
     Returns
     -------
     ndarray, shape (n_features, n_samples)
-        Batch-corrected data.  Rows with any NaN in the input remain
-        all-NaN in the output.  All other rows are adjusted.
+        Batch-corrected data.  NaN positions from input are preserved
+        in the output.
 
     Raises
     ------
     ValueError
-        On wrong dimensionality, fewer than 2 clean features, or
-        batch length mismatch.
+        On wrong dimensionality or batch length mismatch.
 
     Examples
     --------
@@ -306,46 +312,221 @@ def combat(
 
     n_features = data.shape[0]
 
-    # ---- Handle per-cell NaN (match R sva::ComBat na.omit) -----------------
-    # R sva::ComBat drops feature rows that contain any NaN, adjusts only
-    # the fully-observed rows, and the dropped rows are absent from output.
-    # We keep the same shape but leave dropped rows as all-NaN.
-    nan_rows = np.isnan(data).any(axis=1)
-    if nan_rows.any():
-        clean_data = data[~nan_rows]
-        n_clean = clean_data.shape[0]
-        logger.debug(
-            "Removed %d feature row(s) with NaN before adjustment; "
-            "%d clean feature(s) remain",
-            int(nan_rows.sum()),
-            n_clean,
+    # ---- Dispatch ----------------------------------------------------------
+    has_nan = np.isnan(data).any()
+    if not has_nan:
+        if n_features < 2:
+            logger.debug("Single feature input, returning copy")
+            return data.copy()
+        return _combat_dense(
+            data, batch_int,
+            par_prior=par_prior, mean_only=mean_only, ref_batch=ref_batch,
         )
-        result = np.full_like(data, np.nan)
-        if n_clean >= 2:
-            corrected_clean = _combat_dense(
-                clean_data, batch_int,
-                par_prior=par_prior, mean_only=mean_only, ref_batch=ref_batch,
-            )
-            result[~nan_rows] = corrected_clean
-        elif n_clean == 1:
-            # Single clean feature: can't estimate variance (t2 is NaN).
-            # Return the raw values unchanged.
-            logger.debug(
-                "Single clean feature after NaN removal: passing through raw values"
-            )
-            result[~nan_rows] = clean_data
-        return result
 
-    # No NaN in data.  Single-feature input cannot estimate variance
-    # across features (ddof=1 produces NaN for t2).  Return copy.
-    if n_features < 2:
-        logger.debug("Single feature input, returning copy")
-        return data.copy()
-
-    return _combat_dense(
+    # Per-cell NaN present: use per-feature NaN-safe path (matches R
+    # sva::ComBat v3.60.0 Beta.NA approach).
+    return _combat_nan(
         data, batch_int,
         par_prior=par_prior, mean_only=mean_only, ref_batch=ref_batch,
     )
+
+
+# ---------------------------------------------------------------------------
+# Nan-safe helpers: Beta.NA-style per-feature OLS
+# ---------------------------------------------------------------------------
+
+
+def _beta_na(y: _Array, design: _Array) -> _Array:
+    """Per-feature OLS on non-NA observations (R sva Beta.NA equivalent).
+
+    Parameters
+    ----------
+    y : (n_samples,) feature row, may contain NaN
+    design : (n_batch, n_samples) design matrix
+
+    Returns
+    -------
+    (n_batch,) coefficient vector
+    """
+    valid = ~np.isnan(y)
+    if not valid.any():
+        return np.full(design.shape[0], np.nan)
+    des = design[:, valid].T
+    y1 = y[valid]
+    return np.linalg.lstsq(des, y1, rcond=None)[0]
+
+
+
+def _row_var_nan(x: _Array) -> float:
+    """Sample variance, excluding NaN (``var(x, na.rm=TRUE)``)."""
+    valid = ~np.isnan(x)
+    n = valid.sum()
+    if n <= 1:
+        return 1.0
+    return float(np.var(x[valid], ddof=1))
+
+
+# ---------------------------------------------------------------------------
+# NaN-aware ComBat path (Beta.NA-style per-feature computation)
+# ---------------------------------------------------------------------------
+
+
+def _combat_nan(
+    data: _Array,
+    batch_int: npt.NDArray[np.intp],
+    *,
+    par_prior: bool = True,
+    mean_only: bool = False,
+    ref_batch: int | None = None,
+) -> _Array:
+    """ComBat correction with per-feature NaN handling.
+
+    For each feature independently, NaN observations are omitted from OLS,
+    variance, and mean computations.  NaN positions are preserved in the
+    output.  This matches R sva::ComBat v3.60.0's ``Beta.NA`` approach.
+    """
+    n_features, n_samples = data.shape
+
+    unique_batches = np.unique(batch_int)
+    n_batch = len(unique_batches)
+    if n_batch < 2:
+        logger.debug("Single batch input, returning copy")
+        return data.copy()
+
+    logger.info(
+        "ComBat (NaN-safe) %s, %s: %d features x %d samples across %d batches",
+        "parametric" if par_prior else "non-parametric",
+        "location+scale" if not mean_only else "location only",
+        n_features, n_samples, n_batch,
+    )
+
+    # Remap batch labels to 0..n_batch-1
+    label_map = {old: new for new, old in enumerate(unique_batches)}
+    batch_int = np.array([label_map[b] for b in batch_int], dtype=np.intp)
+    if ref_batch is not None:
+        if ref_batch not in label_map:
+            raise ValueError(
+                f"ref_batch={ref_batch!r} not found in batch labels {sorted(label_map.keys())}"
+            )
+        ref_idx = label_map[ref_batch]
+    else:
+        ref_idx = None
+
+    batches_ind = [np.where(batch_int == i)[0] for i in range(n_batch)]
+    batch_sizes = np.array([len(b) for b in batches_ind], dtype=np.float64)
+
+    if not mean_only and np.any(batch_sizes < 2):
+        logger.debug("Forcing mean_only=True: batch with < 2 samples detected")
+        mean_only = True
+
+    design = _make_design(batch_int, n_batch)
+
+    # ---- Per-feature B.hat (Beta.NA) ---------------------------------------
+    B_hat = np.zeros((n_batch, n_features))  # noqa: N806
+    for i in range(n_features):
+        B_hat[:, i] = _beta_na(data[i, :], design)
+
+    # ---- Grand mean and pooled variance (per-feature, NaN-safe) ------------
+    # NOTE: R sva::ComBat uses DIFFERENT formulas:
+    #   No NaN: mean(residuals^2)
+    #   Has NaN: rowVars(residuals, na.rm=TRUE)  (sample variance, ddof=1)
+    if ref_idx is not None:
+        grand_mean = B_hat[ref_idx]
+        ref_cols = batches_ind[ref_idx]
+        var_n = np.array([
+            _row_var_nan(data[i, ref_cols] - design[:, ref_cols].T @ B_hat[:, i])
+            for i in range(n_features)
+        ])
+    else:
+        grand_mean = (batch_sizes / n_samples) @ B_hat
+        var_n = np.array([
+            _row_var_nan(data[i, :] - design.T @ B_hat[:, i])
+            for i in range(n_features)
+        ])
+
+    var_pooled = np.maximum(var_n, 1e-12)
+    std_pooled = np.sqrt(var_pooled)
+
+    # ---- Standardise (per-feature, NaN-safe) -------------------------------
+    s_data = np.empty_like(data)
+    for i in range(n_features):
+        valid = ~np.isnan(data[i, :])
+        s_data[i, valid] = (data[i, valid] - grand_mean[i]) / std_pooled[i]
+        s_data[i, ~valid] = np.nan
+
+    # ---- Per-feature gamma.hat (Beta.NA) -----------------------------------
+    gamma_hat = np.zeros((n_batch, n_features))
+    for i in range(n_features):
+        gamma_hat[:, i] = _beta_na(s_data[i, :], design)
+
+    # ---- delta.hat (per-batch, per-feature, NaN-safe) ----------------------
+    if mean_only:
+        delta_hat = np.ones_like(gamma_hat)
+    else:
+        delta_hat = np.empty_like(gamma_hat)
+        for b in range(n_batch):
+            idx = batches_ind[b]
+            for i in range(n_features):
+                delta_hat[b, i] = _row_var_nan(s_data[i, idx])
+
+    # ---- EB prior (same as dense path) ------------------------------------
+    gamma_bar = gamma_hat.mean(axis=1)
+    t2 = gamma_hat.var(axis=1, ddof=1)
+
+    if par_prior and not mean_only:
+        a_prior = np.array([_aprior(delta_hat[i]) for i in range(n_batch)])
+        b_prior = np.array([_bprior(delta_hat[i]) for i in range(n_batch)])
+    else:
+        a_prior = np.ones(n_batch)
+        b_prior = np.ones(n_batch)
+
+    # ---- Solve for batch effects (NaN-safe solvers) -----------------------
+    gamma_star = np.empty_like(gamma_hat)
+    delta_star = np.empty_like(gamma_hat)
+
+    for i, idx in enumerate(batches_ind):
+        batch_s_data = s_data[:, idx]
+        if par_prior:
+            if mean_only:
+                # R's postmean gets n=1 for mean_only mode
+                t2_n = t2[i] * 1.0
+                t2_n_g_hat = t2_n * gamma_hat[i]
+                gamma_star[i] = _postmean(gamma_bar[i], 1.0, t2_n, t2_n_g_hat)
+                delta_star[i] = 1.0
+            else:
+                gamma_star[i], delta_star[i] = _it_sol(
+                    batch_s_data, gamma_hat[i], delta_hat[i],
+                    gamma_bar[i], t2[i], a_prior[i], b_prior[i],
+                )
+        else:
+            d_hat_i = np.ones_like(delta_hat[i]) if mean_only else delta_hat[i]
+            g_s, d_s = _int_eprior(batch_s_data, gamma_hat[i], d_hat_i)
+            gamma_star[i] = g_s
+            delta_star[i] = d_s if not mean_only else np.ones_like(g_s)
+
+    if ref_idx is not None:
+        gamma_star[ref_idx] = 0.0
+        delta_star[ref_idx] = 1.0
+
+    # ---- Adjust data (only non-NaN entries) -------------------------------
+    corrected = np.empty_like(s_data)
+    for i in range(n_features):
+        corrected[i, :] = s_data[i, :].copy()
+        for b, idx in enumerate(batches_ind):
+            valid = ~np.isnan(corrected[i, idx])
+            if valid.any():
+                sqrt_delta = np.sqrt(np.maximum(delta_star[b, i], 1e-12))
+                corrected[i, idx[valid]] = (
+                    corrected[i, idx[valid]] - gamma_star[b, i]
+                ) / sqrt_delta
+        # De-standardise (only non-NaN entries)
+        valid = ~np.isnan(corrected[i, :])
+        corrected[i, valid] = corrected[i, valid] * std_pooled[i] + grand_mean[i]
+
+    if ref_idx is not None:
+        corrected[:, batches_ind[ref_idx]] = data[:, batches_ind[ref_idx]]
+
+    return corrected
 
 
 def _combat_dense(
@@ -400,8 +581,8 @@ def _combat_dense(
     design = _make_design(batch_int, n_batch)
 
     # ---- Standardise -------------------------------------------------------
-    XXT = design @ design.T
-    B_hat = np.linalg.solve(XXT, design @ data.T)
+    XXT = design @ design.T  # noqa: N806
+    B_hat = np.linalg.solve(XXT, design @ data.T)  # noqa: N806
 
     if ref_idx is not None:
         grand_mean = B_hat[ref_idx]

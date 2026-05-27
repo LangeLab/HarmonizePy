@@ -36,22 +36,21 @@ def remove_batch_effect(
 ) -> _Array:
     """Remove batch effects using a linear model (limma-style).
 
-    Per-cell NaN is handled by dropping affected feature rows before
-    computation.  NaN rows stay NaN in the output.
+    Per-cell NaN is handled per-feature by omitting NaN observations from
+    the OLS fit (matching R ``limma::removeBatchEffect`` behavior).
+    NaN stays in the same positions in the output.
 
     Parameters
     ----------
     data : ndarray, shape (n_features, n_samples)
-        Expression / abundance matrix.  Per-cell NaN is allowed;
-        rows with any NaN are omitted from the OLS fit.
+        Expression / abundance matrix.  Per-cell NaN is allowed.
     batch : ndarray, shape (n_samples,)
         Integer batch labels.
 
     Returns
     -------
     ndarray, shape (n_features, n_samples)
-        Batch-corrected data.  Rows with any NaN in the input remain
-        all-NaN in the output.  All other rows are adjusted.
+        Batch-corrected data.  NaN positions from input are preserved.
 
     Raises
     ------
@@ -73,24 +72,50 @@ def remove_batch_effect(
 
     validate_limma_input(data, batch)
 
-    # ---- Handle per-cell NaN: drop rows with any NaN -----------------------
-    # Match R's implicit row-omission behavior for missing data.
-    nan_rows = np.isnan(data).any(axis=1)
-    if nan_rows.any():
-        clean_data = data[~nan_rows]
-        logger.debug(
-            "Removed %d feature row(s) with NaN before adjustment; "
-            "%d clean feature(s) remain",
-            int(nan_rows.sum()),
-            int(clean_data.shape[0]),
-        )
-        result = np.full_like(data, np.nan)
-        if clean_data.shape[0] >= 1:
-            corrected_clean = _remove_batch_effect_dense(clean_data, batch)
-            result[~nan_rows] = corrected_clean
-        return result
+    has_nan = np.isnan(data).any()
+    if not has_nan:
+        return _remove_batch_effect_dense(data, batch)
 
-    return _remove_batch_effect_dense(data, batch)
+    return _remove_batch_effect_nan(data, batch)
+
+
+def _remove_batch_effect_nan(data: _Array, batch: _Array) -> _Array:
+    """limma batch correction with per-feature NaN handling."""
+    n_features, n_samples = data.shape
+
+    unique_batches = np.unique(batch)
+    n_batch = len(unique_batches)
+    if n_batch < 2:
+        logger.debug("Single batch input, returning copy")
+        return data.copy()
+
+    # Build design matrix
+    label_map = {b: i for i, b in enumerate(unique_batches)}
+    batch_idx = np.array([label_map[b] for b in batch], dtype=np.intp)
+
+    X_batch = np.zeros((n_samples, n_batch - 1), dtype=np.float64)  # noqa: N806
+    for j in range(n_batch - 1):
+        X_batch[batch_idx == j, j] = 1.0
+    X_batch[batch_idx == n_batch - 1, :] = -1.0
+
+    intercept = np.ones((n_samples, 1), dtype=np.float64)
+    design = np.hstack([intercept, X_batch])
+
+    # Per-feature OLS: drop NaN observations per feature
+    corrected = data.copy()
+    for i in range(n_features):
+        y = data[i, :]
+        valid = ~np.isnan(y)
+        if valid.sum() < n_batch:
+            continue  # not enough observations, keep NaN
+        des = design[valid, :]
+        y1 = y[valid]
+        beta = np.linalg.lstsq(des, y1, rcond=None)[0]
+        beta_batch = np.nan_to_num(beta[1:], nan=0.0)
+        # Subtract batch effect from non-NaN entries only
+        corrected[i, valid] = y1 - X_batch[valid, :] @ beta_batch
+
+    return corrected
 
 
 def _remove_batch_effect_dense(data: _Array, batch: _Array) -> _Array:

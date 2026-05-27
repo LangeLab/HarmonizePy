@@ -135,7 +135,7 @@ def validate_combat_input(data: _Array, batch: npt.NDArray[np.integer[Any]]) -> 
     if data.ndim != 2:
         raise ValueError(f"data must be a 2-D array (features x samples), got {data.ndim}-D.")
 
-    n_features, n_samples = data.shape
+    _, n_samples = data.shape
 
     if batch.shape[0] != n_samples:
         raise ValueError(

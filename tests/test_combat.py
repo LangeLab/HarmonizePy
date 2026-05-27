@@ -111,27 +111,29 @@ class TestCombatModes:
 
 class TestEdgeCases:
     def test_nan_rows_stay_nan(self):
-        """Rows with any NaN remain all-NaN in output; clean rows are adjusted.
+        """Per-cell NaN positions stay NaN in output; quantified cells adjusted.
 
-        Failure condition: NaN propagates to clean rows, or clean rows
+        Failure condition: NaN propagates to clean cells, or clean cells
         are not adjusted, or the output shape changes.
 
-        This matches R sva::ComBat's na.omit behavior: features with
-        missing values are dropped from the EB computation and do not
-        appear adjusted in the output.
+        Matches R sva::ComBat v3.60.0's Beta.NA behavior: NaN is handled
+        per-feature, not by dropping entire rows.
         """
         rng = np.random.default_rng(42)
         n_clean, n_nan, n_samples = 8, 2, 6
         data = rng.normal(10, 2, size=(n_clean + n_nan, n_samples))
-        data[-2:, 0] = np.nan  # last 2 rows have NaN
+        data[-2:, 0] = np.nan  # last 2 rows have NaN in column 0 only
         batch = np.array([0, 0, 0, 1, 1, 1])
 
         result = combat(data, batch, par_prior=True, mean_only=True)
 
         # Shape preserved
         assert result.shape == data.shape
-        # NaN rows stayed NaN
-        assert np.isnan(result[-2:, :]).all()
+        # NaN rows: only the original NaN position is NaN; rest are adjusted
+        assert np.isnan(result[-2, 0])
+        assert not np.isnan(result[-2, 1:]).any()
+        assert np.isnan(result[-1, 0])
+        assert not np.isnan(result[-1, 1:]).any()
         # Clean rows have no NaN
         assert not np.isnan(result[:-2, :]).any()
         # Clean rows were actually adjusted (different from input)

@@ -13,7 +13,6 @@ import pandas as pd
 
 from harmonizepy.affiliation import build_affiliation_list
 from harmonizepy.combat import combat as _combat
-from harmonizepy.limma_wrapper import remove_batch_effect as _remove_batch_effect
 from harmonizepy.splitting import splitting
 
 _Affil = list[tuple[int, ...]]
@@ -114,10 +113,10 @@ class TestSplittingNanAudit:
         """Sub-DataFrames with per-cell NaN are passed to combat, which handles it.
 
         Failure condition: splitting tries to drop columns or otherwise
-        prevent NaN from reaching the engine, losing valid data.
+        prevent NaN from reaching the engine.
 
         This matches R HarmonizR behavior: per-cell NaN within qualifying
-        blocks reaches sva::ComBat, which handles it via na.omit.
+        blocks reaches sva::ComBat, which uses Beta.NA per-feature.
         """
         import harmonizepy.splitting as split_mod
 
@@ -140,27 +139,25 @@ class TestSplittingNanAudit:
         splitting(affil, data, batch, block, algorithm="ComBat", combat_mode=2)
         assert called_with_nan[0], "Engine should have received NaN data"
 
-    def test_per_cell_nan_passed_to_limma(self, monkeypatch: Any) -> None:
-        """Sub-DataFrames with per-cell NaN are passed to remove_batch_effect."""
-        import harmonizepy.splitting as split_mod
+    def test_per_cell_nan_handled_correctly(self) -> None:
+        """Per-cell NaN is preserved in original positions; other cells adjusted.
 
-        called_with_nan = [False]
-
-        def tracking(data: np.ndarray, batch: np.ndarray) -> np.ndarray:
-            if np.isnan(data).any():
-                called_with_nan[0] = True
-            return _remove_batch_effect(data, batch)
-
-        monkeypatch.setattr(split_mod, "remove_batch_effect", tracking)
-
+        Failure condition: quantified cells become NaN or NaN disappears.
+        """
         data = _make_data(6, 6)
         data.iloc[0, 0] = np.nan
         data.iloc[0, 3] = np.nan
         batch = np.array([1, 1, 1, 2, 2, 2])
         block = batch.copy()
         affil = build_affiliation_list(data, batch, block, needed_values=2)
-        splitting(affil, data, batch, block, algorithm="limma")
-        assert called_with_nan[0], "Engine should have received NaN data"
+        result = splitting(affil, data, batch, block, algorithm="ComBat", combat_mode=2)
+        concat = pd.concat(result, axis=0)
+        # Feature 0: only cells [0, 0] and [0, 3] stay NaN
+        assert np.isnan(concat.iloc[0, 0])
+        assert np.isnan(concat.iloc[0, 3])
+        assert not np.isnan(concat.iloc[0, [1, 2, 4, 5]]).any()
+        # Other features: no NaN
+        assert not np.isnan(concat.iloc[1:, :]).any(axis=None)
 
 
 class TestSplittingIntegration:

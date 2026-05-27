@@ -70,7 +70,7 @@ class TestResolveOutputPath:
 
         Failure condition: the default path uses .parquet despite missing pyarrow.
         """
-        from harmonizepy.io import _HAVE_PYARROW  # noqa: PLC0415
+        from harmonizepy.io import _HAVE_PYARROW
 
         if not _HAVE_PYARROW:
             result = _resolve_output_path("/data/my_file.tsv", None)

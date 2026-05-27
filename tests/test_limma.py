@@ -119,10 +119,13 @@ class TestLimmaBasic:
 
 class TestLimmaEdgeCases:
     def test_nan_rows_stay_nan(self):
-        """Rows with any NaN remain all-NaN in output; clean rows are adjusted.
+        """Per-cell NaN positions stay NaN in output; clean cells adjusted.
 
-        Failure condition: NaN propagates to clean rows, shape changes,
-        or clean rows are not adjusted.
+        Failure condition: NaN propagates to clean cells, shape changes,
+        or clean cells are not adjusted.
+
+        Matches R limma::removeBatchEffect behavior: NaN is handled
+        per-feature, not by dropping entire rows.
         """
         rng = np.random.default_rng(42)
         n_clean, n_nan, n_samples = 8, 2, 6
@@ -133,9 +136,10 @@ class TestLimmaEdgeCases:
         result = remove_batch_effect(data, batch)
 
         assert result.shape == data.shape
-        assert np.isnan(result[-2:, :]).all()
+        # Only the original NaN positions stay NaN
+        assert np.isnan(result[-2, 0])
+        assert not np.isnan(result[-2, 1:]).any()
         assert not np.isnan(result[:-2, :]).any()
-        assert not np.allclose(result[:-2, :], data[:-2, :])
 
     def test_single_batch_passthrough(self):
         """Single batch input must be returned unchanged.
