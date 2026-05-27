@@ -30,37 +30,43 @@ import pandas as pd
 
 _OUTPUT_DIR = Path(__file__).parent / "data"
 
-_DATASETS: dict[str, dict[str, int | float]] = {
+_DATASETS: dict[str, dict[str, int | float | str]] = {
     "small": {
         "n_features": 1000,
         "n_samples": 20,
         "n_batches": 5,
         "missing_frac": 0.30,
+        "missing_mode": "per_batch",
     },
     "medium": {
         "n_features": 5000,
         "n_samples": 60,
         "n_batches": 10,
         "missing_frac": 0.20,
+        "missing_mode": "per_batch",
     },
     "large": {
         "n_features": 10000,
         "n_samples": 100,
         "n_batches": 20,
         "missing_frac": 0.05,
+        "missing_mode": "per_batch",
     },
-    # Single-cell proteomics cohorts: high missingness, many small batches
+    # Single-cell proteomics cohorts: abundance-dependent missingness so
+    # features share detection patterns and form correction groups.
     "scp_small": {
         "n_features": 3000,
         "n_samples": 1000,
         "n_batches": 20,
         "missing_frac": 0.50,
+        "missing_mode": "abundance",
     },
     "scp_large": {
         "n_features": 5000,
         "n_samples": 10000,
         "n_batches": 100,
         "missing_frac": 0.60,
+        "missing_mode": "abundance",
     },
 }
 
@@ -110,12 +116,91 @@ def _assign_batch_labels(batch_sizes: list[int]) -> np.ndarray:
     return np.array(labels, dtype=np.int64)
 
 
+def _apply_abundance_missingness(
+    data: np.ndarray,
+    batch_labels: np.ndarray,
+    missing_frac: float,
+    rng: np.random.Generator,
+) -> None:
+    """Apply abundance-dependent structural missingness in-place.
+
+    Features are assigned to a small set of detection profiles (shared
+    batch-presence patterns).  Features in the same profile share an
+    identical set of batches where they have non-NA data, forming
+    correction groups for ComBat/limma.
+
+    High-abundance profiles are present in most batches; low-abundance
+    profiles are present in few batches.  The number of profiles is
+    ``max(20, n_features // 40)`` so typical group size is ~40 features.
+    """
+    n_features = data.shape[0]
+    unique_batches = np.unique(batch_labels)
+    n_batches = len(unique_batches)
+
+    # Number of shared detection profiles
+    n_profiles = max(20, n_features // 40)
+
+    # Generate profile patterns: each profile is present in a random subset
+    # of batches.  The presence probability per batch is calibrated so the
+    # overall missing rate matches *missing_frac*.
+    target_present = 1.0 - missing_frac
+    profile_patterns = rng.random((n_profiles, n_batches)) < target_present
+
+    # Ensure every profile has >= 2 batches (minimum for correction)
+    for i in range(n_profiles):
+        if profile_patterns[i].sum() < 2:
+            profile_patterns[i, rng.choice(n_batches, 2, replace=False)] = True
+
+    # Ensure every batch is covered by at least one profile
+    for j in range(n_batches):
+        if not profile_patterns[:, j].any():
+            profile_patterns[rng.choice(n_profiles), j] = True
+
+    # Assign each feature to a random profile
+    feature_profile = rng.choice(n_profiles, size=n_features)
+
+    # Vectorised missingness: for each batch, features whose profile does
+    # not include that batch are set to NaN.
+    # profile_in_batch[f, j] = profile_patterns[feature_profile[f], j]
+    profile_in_batch = profile_patterns[feature_profile]  # (n_features, n_batches)
+    for j, b in enumerate(unique_batches):
+        mask = batch_labels == b
+        absent = np.where(profile_in_batch[:, j] == 0)[0]
+        smp = np.where(mask)[0]
+        if len(absent) and len(smp):
+            data[np.ix_(absent, smp)] = np.nan
+
+
+def _apply_per_batch_missingness(
+    data: np.ndarray,
+    batch_labels: np.ndarray,
+    missing_frac: float,
+    rng: np.random.Generator,
+) -> None:
+    """Apply per-batch random structural missingness in-place (legacy model).
+
+    Each batch independently picks ``missing_frac * n_features`` random
+    features and marks them as entirely absent.  This creates mostly
+    unique detection patterns per feature when ``missing_frac`` is high
+    and the number of batches is large.
+    """
+    n_features = data.shape[0]
+    n_present = max(1, n_features - int(n_features * missing_frac))
+    unique_batches = np.unique(batch_labels)
+    for b in unique_batches:
+        absent = rng.choice(n_features, size=n_features - n_present, replace=False)
+        mask = batch_labels == b
+        data[np.ix_(absent, mask)] = np.nan
+
+
 def generate_dataset(
     name: str,
     n_features: int,
     n_samples: int,
     n_batches: int,
     missing_frac: float,
+    *,
+    missing_mode: str = "per_batch",
     seed: int = _SEED,
     batch_effect_strength: float = _BATCH_EFFECT_STRENGTH,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -133,6 +218,10 @@ def generate_dataset(
         Number of batches.
     missing_frac : float
         Fraction of features that are structurally absent (entirely NaN) per batch.
+    missing_mode : str
+        ``"per_batch"`` (default): each batch drops random independent features.
+        ``"abundance"``: abundance-dependent dropout where features with higher
+        simulated abundance are detected more consistently across batches.
     seed : int
         RNG seed for reproducibility.
     batch_effect_strength : float
@@ -158,11 +247,10 @@ def generate_dataset(
         shift = rng.normal(0, batch_effect_strength)
         data[:, mask] += shift
 
-    n_present = max(1, n_features - int(n_features * missing_frac))
-    for b in range(n_batches):
-        absent = rng.choice(n_features, size=n_features - n_present, replace=False)
-        mask = batch_labels == (b + 1)
-        data[np.ix_(absent, mask)] = np.nan
+    if missing_mode == "abundance":
+        _apply_abundance_missingness(data, batch_labels, missing_frac, rng)
+    else:
+        _apply_per_batch_missingness(data, batch_labels, missing_frac, rng)
 
     data_df = pd.DataFrame(
         data,
@@ -204,6 +292,7 @@ def generate_all_datasets(output_dir: Path = _OUTPUT_DIR, seed: int = _SEED) -> 
             n_samples=int(params["n_samples"]),
             n_batches=int(params["n_batches"]),
             missing_frac=float(params["missing_frac"]),
+            missing_mode=str(params.get("missing_mode", "per_batch")),
             seed=seed,
         )
         _write_dataset(data_df, desc_df, name, output_dir)
@@ -221,18 +310,27 @@ def main() -> None:
     parser.add_argument("--samples", type=int, default=None, help="Number of samples (custom).")
     parser.add_argument("--batches", type=int, default=None, help="Number of batches (custom).")
     parser.add_argument("--missing", type=float, default=0.3, help="Missingness fraction (custom).")
+    parser.add_argument(
+        "--missing-mode",
+        default=None,
+        choices=["per_batch", "abundance"],
+        help="Missingness model: per_batch (default, random independent dropout) or "
+        "abundance (abundance-dependent, more realistic for SCP).",
+    )
     parser.add_argument("--seed", type=int, default=_SEED, help="RNG seed.")
     parser.add_argument("--output-dir", type=Path, default=_OUTPUT_DIR, help="Output directory.")
     args = parser.parse_args()
 
     if args.features is not None or args.samples is not None or args.batches is not None:
         print("Generating custom dataset...")
+        missing_mode = args.missing_mode or "per_batch"
         data_df, desc_df = generate_dataset(
             name="custom",
             n_features=args.features or 1000,
             n_samples=args.samples or 20,
             n_batches=args.batches or 5,
             missing_frac=args.missing,
+            missing_mode=missing_mode,
             seed=args.seed,
         )
         _write_dataset(data_df, desc_df, "custom", args.output_dir)
@@ -248,6 +346,7 @@ def main() -> None:
             n_samples=int(params["n_samples"]),
             n_batches=int(params["n_batches"]),
             missing_frac=float(params["missing_frac"]),
+            missing_mode=str(params.get("missing_mode", "per_batch")),
             seed=args.seed,
         )
         _write_dataset(data_df, desc_df, name, args.output_dir)

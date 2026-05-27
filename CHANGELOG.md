@@ -20,7 +20,7 @@ All notable changes to this project are documented in this file. The format is b
 - **Benchmark suite**: `benchmarks/generate_data.py` for synthetic data, `benchmarks/run_benchmarks.py` for timing/memory/R comparison, `benchmarks/template_run.R` for R HarmonizR integration. Generates human-readable `benchmarks/RESULTS.md` with per-scenario tables and data specifications.
 - **Pass-through logging**: single-feature and single-batch groups that skip correction are now logged at INFO level (total count) and DEBUG level (individual feature names).
 - **Corrected vs pass-through reporting**: benchmark results table now shows corrected and pass-through feature counts alongside timing and memory.
-- **SCP benchmark datasets**: `scp_small` (3000x1000, 20 batches, 50% missing) and `scp_large` (5000x10000, 100 batches, 60% missing) added to benchmark suite. Run Python-only (no R comparison).
+- **SCP benchmark datasets**: `scp_small` (3000x1000, 20 batches, 50% missing) and `scp_large` (5000x10000, 100 batches, 60% missing) added to benchmark suite. Run Python-only (no R comparison). SCP missingness uses abundance-dependent detection profiles so features form real correction groups (scp_small: 3000/3000 corrected, scp_large: 5000/5000 corrected).
 - **Data specifications table**: automatically generated in RESULTS.md showing features, samples, batches, missingness, and file size per dataset.
 - **Pipeline timing parsing**: benchmark runner now uses the internal "Done" timing from the CLI for more accurate algorithm performance measurement, excluding IO overhead.
 
@@ -36,6 +36,9 @@ All notable changes to this project are documented in this file. The format is b
 - **Benchmark result ordering**: limma rows now appear first in the Python Performance table, followed by ComBat modes in ascending order.
 - **Benchmark expansion**: all four ComBat modes (1-4) are now tested with block=2 and sort+block combinations.
 - **Benchmark timing**: switched from total wall-clock to pipeline-internal "Done" timing for fair comparison across dataset sizes.
+- **IO layer** (`io.py`, `__main__.py`): replaced feather with parquet as the default output format. Parquet writes are 12x faster and 2x smaller than TSV on scp_large. Added `pyarrow` as optional dependency (`harmonizepy[io]`). CLI defaults to `.parquet` output when pyarrow is installed, falls back to `.tsv`. Removed feather support.
+- **PyArrow CSV engine auto-detect** (`io.py`): reads the first line of a CSV/TSV file to count columns (microsecond cost). Uses pyarrow engine when columns <= 500 (tall/narrow data, 5-10x faster), falls back to C parser for wider files.
+- **splitting.py refactor**: replaced per-group DataFrame creation with numpy-only hot loop. Pre-converts data to ndarray once, uses `np.ix_` for sub-matrix extraction. scp_small: 2.2x faster, scp_large: 1.4x faster.
 
 ### Fixed
 

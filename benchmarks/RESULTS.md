@@ -1,6 +1,6 @@
 # Benchmark Results
 
-**Generated:** 2026-05-27 01:42 UTC
+**Generated:** 2026-05-27 03:55 UTC
 **Platform:** Linux 6.17.9-76061709-generic
 **CPU:** x86_64 (Py=1 thread, R=16 threads)
 **Python:** 3.12.13 (harmonizepy v0.2.0)
@@ -8,13 +8,13 @@
 
 ## Data Specifications
 
-| Dataset   | Type                    | Features/Proteins | Samples/Cells | Batches | Missingness | File Size |
-| --------- | ----------------------- | ----------------- | ------------- | ------- | ----------- | --------- |
-| small     | Bulk proteomics, small  | 1000              | 20            | 5       | 30%         | 261 KB    |
-| medium    | Bulk proteomics, medium | 5000              | 60            | 10      | 20%         | 4.3 MB    |
-| large     | Bulk proteomics, large  | 10000             | 100           | 20      | 5%          | 16.7 MB   |
-| scp_small | SCP cohort, small       | 3000              | 1000          | 20      | 50%         | 27.9 MB   |
-| scp_large | SCP cohort, large       | 5000              | 10000         | 100     | 60%         | 379.0 MB  |
+| Dataset | Type | Features/Proteins | Samples/Cells | Batches | Missingness | File Size |
+| --- | --- | --- | --- | --- | --- | --- |
+| small | Bulk proteomics, small | 1000 | 20 | 5 | 30% | 261 KB |
+| medium | Bulk proteomics, medium | 5000 | 60 | 10 | 20% | 4.3 MB |
+| large | Bulk proteomics, large | 10000 | 100 | 20 | 5% | 16.7 MB |
+| scp_small | SCP cohort, small | 3000 | 1000 | 20 | 50% | 24.9 MB |
+| scp_large | SCP cohort, large | 5000 | 10000 | 100 | 60% | 375.5 MB |
 
 
 ### Implementation Notes
@@ -29,50 +29,50 @@ Concordance between the implementations was verified on small and medium dataset
 
 ## Python Performance
 
-| Dataset   | Algorithm | Mode | Block | Sort     | Time (s) | Memory (MB) | Features out | Corrected | Pass-through |
-| --------- | --------- | ---- | ----- | -------- | -------- | ----------- | ------------ | --------- | ------------ |
-| small     | limma     | --   | --    | --       | 0.020    | 72.9        | 999          | 980       | 19           |
-| medium    | limma     | --   | --    | --       | 0.240    | 98.1        | 5000         | 4869      | 131          |
-| large     | limma     | --   | --    | --       | 0.520    | 122.5       | 10000        | 9525      | 475          |
-| small     | ComBat    | 1    | --    | --       | 0.040    | 72.5        | 999          | 980       | 19           |
-| small     | ComBat    | 2    | --    | --       | 0.020    | 72.8        | 999          | 980       | 19           |
-| small     | ComBat    | 3    | --    | --       | 0.100    | 72.7        | 999          | 980       | 19           |
-| small     | ComBat    | 4    | --    | --       | 0.100    | 73.3        | 999          | 980       | 19           |
-| medium    | ComBat    | 1    | --    | --       | 0.710    | 97.5        | 5000         | 4869      | 131          |
-| medium    | ComBat    | 2    | --    | --       | 0.300    | 98.0        | 5000         | 4869      | 131          |
-| medium    | ComBat    | 3    | --    | --       | 1.280    | 98.2        | 5000         | 4869      | 131          |
-| medium    | ComBat    | 4    | --    | --       | 1.240    | 98.4        | 5000         | 4869      | 131          |
-| large     | ComBat    | 1    | --    | --       | 1.660    | 121.5       | 10000        | 9525      | 475          |
-| large     | ComBat    | 2    | --    | --       | 0.620    | 121.4       | 10000        | 9525      | 475          |
-| large     | ComBat    | 3    | --    | --       | 7.880    | 120.7       | 10000        | 9525      | 475          |
-| large     | ComBat    | 4    | --    | --       | 7.700    | 121.4       | 10000        | 9525      | 475          |
-| small     | ComBat    | 1    | 2     | --       | 0.010    | 72.7        | 999          | 812       | 187          |
-| small     | ComBat    | 2    | 2     | --       | 0.010    | 72.7        | 999          | 812       | 187          |
-| small     | ComBat    | 3    | 2     | --       | 0.070    | 72.5        | 999          | 812       | 187          |
-| small     | ComBat    | 4    | 2     | --       | 0.070    | 72.9        | 999          | 812       | 187          |
-| medium    | ComBat    | 1    | 2     | --       | 0.090    | 93.7        | 5000         | 5000      | 0            |
-| medium    | ComBat    | 2    | 2     | --       | 0.050    | 93.9        | 5000         | 5000      | 0            |
-| medium    | ComBat    | 3    | 2     | --       | 0.870    | 94.5        | 5000         | 5000      | 0            |
-| medium    | ComBat    | 4    | 2     | --       | 0.860    | 95.7        | 5000         | 5000      | 0            |
-| large     | ComBat    | 1    | 2     | --       | 0.800    | 120.3       | 10000        | 9926      | 74           |
-| large     | ComBat    | 2    | 2     | --       | 0.300    | 121.0       | 10000        | 9926      | 74           |
-| large     | ComBat    | 3    | 2     | --       | 7.550    | 121.1       | 10000        | 9926      | 74           |
-| large     | ComBat    | 4    | 2     | --       | 7.480    | 120.2       | 10000        | 9926      | 74           |
-| medium    | ComBat    | 1    | 2     | sparsity | 0.090    | 98.9        | 5000         | 5000      | 0            |
-| medium    | ComBat    | 2    | 2     | sparsity | 0.050    | 96.6        | 5000         | 5000      | 0            |
-| medium    | ComBat    | 3    | 2     | sparsity | 0.910    | 98.6        | 5000         | 5000      | 0            |
-| medium    | ComBat    | 4    | 2     | sparsity | 0.870    | 98.6        | 5000         | 5000      | 0            |
-| large     | ComBat    | 1    | 2     | sparsity | 0.830    | 128.4       | 10000        | 9926      | 74           |
-| large     | ComBat    | 2    | 2     | sparsity | 0.320    | 127.8       | 10000        | 9926      | 74           |
-| large     | ComBat    | 3    | 2     | sparsity | 7.500    | 118.7       | 10000        | 9926      | 74           |
-| large     | ComBat    | 4    | 2     | sparsity | 7.470    | 127.7       | 10000        | 9926      | 74           |
-| scp_small | limma     | --   | --    | --       | 1.150    | 195.3       | 3000         | 21        | 2979         |
-| scp_large | limma     | --   | --    | --       | 4.580    | 1686.0      | 5000         | 0         | 5000         |
-| scp_small | ComBat    | 1    | --    | --       | 1.150    | 195.5       | 3000         | 21        | 2979         |
-| scp_small | ComBat    | 2    | --    | --       | 1.160    | 195.3       | 3000         | 21        | 2979         |
-| scp_small | ComBat    | 3    | --    | --       | 1.150    | 194.4       | 3000         | 21        | 2979         |
-| scp_small | ComBat    | 4    | --    | --       | 1.180    | 195.3       | 3000         | 21        | 2979         |
-| scp_large | ComBat    | 1    | --    | --       | 4.560    | 1687.2      | 5000         | 0         | 5000         |
-| scp_large | ComBat    | 2    | --    | --       | 4.580    | 1687.3      | 5000         | 0         | 5000         |
-| scp_large | ComBat    | 3    | --    | --       | 4.530    | 1687.3      | 5000         | 0         | 5000         |
-| scp_large | ComBat    | 4    | --    | --       | 4.550    | 1686.7      | 5000         | 0         | 5000         |
+| Dataset | Algorithm | Mode | Block | Sort | Time (s) | Memory (MB) | Features out | Corrected | Pass-through |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| small | limma | -- | -- | -- | 0.010 | 113.5 | 999 | 980 | 19 |
+| medium | limma | -- | -- | -- | 0.150 | 144.7 | 5000 | 4869 | 131 |
+| large | limma | -- | -- | -- | 0.420 | 186.8 | 10000 | 9525 | 475 |
+| small | ComBat | 1 | -- | -- | 0.030 | 113.2 | 999 | 980 | 19 |
+| small | ComBat | 2 | -- | -- | 0.020 | 113.4 | 999 | 980 | 19 |
+| small | ComBat | 3 | -- | -- | 0.100 | 113.1 | 999 | 980 | 19 |
+| small | ComBat | 4 | -- | -- | 0.110 | 113.5 | 999 | 980 | 19 |
+| medium | ComBat | 1 | -- | -- | 0.610 | 145.7 | 5000 | 4869 | 131 |
+| medium | ComBat | 2 | -- | -- | 0.210 | 143.9 | 5000 | 4869 | 131 |
+| medium | ComBat | 3 | -- | -- | 1.220 | 145.3 | 5000 | 4869 | 131 |
+| medium | ComBat | 4 | -- | -- | 1.210 | 144.1 | 5000 | 4869 | 131 |
+| large | ComBat | 1 | -- | -- | 1.540 | 191.4 | 10000 | 9525 | 475 |
+| large | ComBat | 2 | -- | -- | 0.480 | 189.0 | 10000 | 9525 | 475 |
+| large | ComBat | 3 | -- | -- | 8.260 | 187.5 | 10000 | 9525 | 475 |
+| large | ComBat | 4 | -- | -- | 7.840 | 196.4 | 10000 | 9525 | 475 |
+| small | ComBat | 1 | 2 | -- | 0.010 | 113.1 | 999 | 812 | 187 |
+| small | ComBat | 2 | 2 | -- | 0.010 | 113.1 | 999 | 812 | 187 |
+| small | ComBat | 3 | 2 | -- | 0.070 | 112.9 | 999 | 812 | 187 |
+| small | ComBat | 4 | 2 | -- | 0.070 | 112.9 | 999 | 812 | 187 |
+| medium | ComBat | 1 | 2 | -- | 0.090 | 141.2 | 5000 | 5000 | 0 |
+| medium | ComBat | 2 | 2 | -- | 0.040 | 140.6 | 5000 | 5000 | 0 |
+| medium | ComBat | 3 | 2 | -- | 0.880 | 140.8 | 5000 | 5000 | 0 |
+| medium | ComBat | 4 | 2 | -- | 0.870 | 141.4 | 5000 | 5000 | 0 |
+| large | ComBat | 1 | 2 | -- | 0.780 | 186.4 | 10000 | 9926 | 74 |
+| large | ComBat | 2 | 2 | -- | 0.260 | 186.1 | 10000 | 9926 | 74 |
+| large | ComBat | 3 | 2 | -- | 7.750 | 186.4 | 10000 | 9926 | 74 |
+| large | ComBat | 4 | 2 | -- | 7.770 | 186.6 | 10000 | 9926 | 74 |
+| medium | ComBat | 1 | 2 | sparsity | 0.090 | 144.4 | 5000 | 5000 | 0 |
+| medium | ComBat | 2 | 2 | sparsity | 0.050 | 143.8 | 5000 | 5000 | 0 |
+| medium | ComBat | 3 | 2 | sparsity | 0.860 | 143.7 | 5000 | 5000 | 0 |
+| medium | ComBat | 4 | 2 | sparsity | 0.880 | 142.7 | 5000 | 5000 | 0 |
+| large | ComBat | 1 | 2 | sparsity | 0.760 | 190.3 | 10000 | 9926 | 74 |
+| large | ComBat | 2 | 2 | sparsity | 0.270 | 194.9 | 10000 | 9926 | 74 |
+| large | ComBat | 3 | 2 | sparsity | 7.540 | 188.8 | 10000 | 9926 | 74 |
+| large | ComBat | 4 | 2 | sparsity | 7.530 | 189.2 | 10000 | 9926 | 74 |
+| scp_large | limma | -- | -- | -- | 4.960 | 1768.3 | 5000 | 5000 | 0 |
+| scp_small | limma | -- | -- | -- | 0.200 | 205.8 | 3000 | 3000 | 0 |
+| scp_large | ComBat | 1 | -- | -- | 5.220 | 1777.5 | 5000 | 5000 | 0 |
+| scp_large | ComBat | 2 | -- | -- | 3.980 | 1775.7 | 5000 | 5000 | 0 |
+| scp_large | ComBat | 3 | -- | -- | 8.820 | 1777.0 | 5000 | 5000 | 0 |
+| scp_large | ComBat | 4 | -- | -- | 8.730 | 1777.9 | 5000 | 5000 | 0 |
+| scp_small | ComBat | 1 | -- | -- | 0.380 | 205.0 | 3000 | 3000 | 0 |
+| scp_small | ComBat | 2 | -- | -- | 0.210 | 205.2 | 3000 | 3000 | 0 |
+| scp_small | ComBat | 3 | -- | -- | 0.920 | 204.1 | 3000 | 3000 | 0 |
+| scp_small | ComBat | 4 | -- | -- | 0.890 | 205.2 | 3000 | 3000 | 0 |

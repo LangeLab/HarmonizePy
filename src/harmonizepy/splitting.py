@@ -1,7 +1,7 @@
 """Data splitting and per-sub-frame adjustment.
 
 Groups features by their affiliation (missingness pattern), extracts
-sub-DataFrames containing only the columns (samples) present for that
+sub-matrices containing only the columns (samples) present for that
 group, applies ComBat or limma adjustment, and returns the list of
 corrected sub-DataFrames.
 
@@ -16,8 +16,9 @@ import numpy as np
 import pandas as pd
 
 from .affiliation import reduce_to_unique_groups
-from .combat_wrapper import adjust_combat
-from .limma_wrapper import adjust_limma
+from .combat import combat
+from .combat_wrapper import _MODE_MAP
+from .limma_wrapper import remove_batch_effect
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,9 @@ def splitting(
     batch_arr = np.asarray(batch_list)
     block_arr = np.asarray(block_list)
 
+    # Convert to numpy once to avoid DataFrame overhead in the hot loop.
+    data_np = data.to_numpy(dtype=np.float64)
+
     # Group features by affiliation using the shared reducer
     affil_to_features = reduce_to_unique_groups(affiliation_list)
 
@@ -98,7 +102,6 @@ def splitting(
 
     for affil, row_indices in affil_to_features.items():
         row_idx = np.array(row_indices, dtype=np.intp)
-        sub_data = data.iloc[row_idx]
 
         if len(affil) == 0:
             continue  # rows stay NaN
@@ -106,40 +109,30 @@ def splitting(
         # Select columns belonging to the blocks in this affiliation
         col_mask = np.isin(block_arr, affil)
         col_indices = np.where(col_mask)[0]
-        sub_df = sub_data.iloc[:, col_indices]
 
-        # Get batch labels for the selected columns
+        # Extract sub-matrix and batch labels as numpy arrays
+        sub_data = data_np[np.ix_(row_idx, col_indices)]
         sub_batch = batch_arr[col_indices]
 
-        # Only adjust if ≥2 batches and ≥2 features
+        # Only adjust if >=2 batches and >=2 features
         unique_batches = np.unique(sub_batch)
         if len(unique_batches) < 2:
-            n_single_batch += sub_df.shape[0]
-            if sub_df.shape[0] <= 3:
-                logger.debug(
-                    "Passing through %s (single-batch group, %d features)",
-                    list(sub_data.index),
-                    sub_df.shape[0],
-                )
-            output[np.ix_(row_idx, col_indices)] = sub_df.values
+            n_single_batch += len(row_idx)
+            output[np.ix_(row_idx, col_indices)] = sub_data
             continue
 
-        if sub_df.shape[0] < 2:
-            n_single_feature += sub_df.shape[0]
-            logger.debug(
-                "Passing through %s (single-feature group, 2+ batches)",
-                list(sub_data.index),
-            )
-            output[np.ix_(row_idx, col_indices)] = sub_df.values
+        if len(row_idx) < 2:
+            n_single_feature += len(row_idx)
+            output[np.ix_(row_idx, col_indices)] = sub_data
             continue
 
         # Apply adjustment
         if algorithm == "limma":
-            corrected = adjust_limma(sub_df, sub_batch)
+            corrected = remove_batch_effect(sub_data, sub_batch)
         else:
-            corrected = adjust_combat(sub_df, sub_batch, mode=combat_mode)
+            corrected = combat(sub_data, sub_batch, **_MODE_MAP[combat_mode])
 
-        output[np.ix_(row_idx, col_indices)] = corrected.values
+        output[np.ix_(row_idx, col_indices)] = corrected
 
     n_uncorrected = n_single_batch + n_single_feature
     if n_uncorrected > 0:

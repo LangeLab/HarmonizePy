@@ -1652,45 +1652,45 @@ class TestNaNPropagation:
     # ------------------------------------------------------------------
 
     def test_no_nan_reaches_combat(self, monkeypatch):
-        """Sub-dataframes sent to adjust_combat must never contain NaN."""
+        """Sub-dataframes sent to combat must never contain NaN."""
         import harmonizepy.splitting as split_mod
 
-        original = split_mod.adjust_combat  # type: ignore[attr-defined]
+        original = split_mod.combat
         nan_call_counts = []
 
-        def spy(df, batch, mode=1):
-            if df.isna().any(axis=None):
-                nan_call_counts.append(int(df.isna().sum().sum()))
-            return original(df, batch, mode)
+        def spy(data, batch, *, par_prior=True, mean_only=False, ref_batch=None):
+            if np.isnan(data).any():
+                nan_call_counts.append(int(np.isnan(data).sum()))
+            return original(data, batch, par_prior=par_prior, mean_only=mean_only, ref_batch=ref_batch)
 
-        monkeypatch.setattr(split_mod, "adjust_combat", spy)
+        monkeypatch.setattr(split_mod, "combat", spy)
 
         data, desc = self._structural_nan_data()
         harmonize(data, desc, algorithm="ComBat", combat_mode=2)
 
         assert len(nan_call_counts) == 0, (
-            f"adjust_combat received NaN in {len(nan_call_counts)} call(s): {nan_call_counts}"
+            f"combat received NaN in {len(nan_call_counts)} call(s): {nan_call_counts}"
         )
 
     def test_no_nan_reaches_limma(self, monkeypatch):
-        """Sub-dataframes sent to adjust_limma must never contain NaN."""
+        """Sub-dataframes sent to remove_batch_effect must never contain NaN."""
         import harmonizepy.splitting as split_mod
 
-        original = split_mod.adjust_limma  # type: ignore[attr-defined]
+        original = split_mod.remove_batch_effect
         nan_call_counts = []
 
-        def spy(df, batch):
-            if df.isna().any(axis=None):
-                nan_call_counts.append(int(df.isna().sum().sum()))
-            return original(df, batch)
+        def spy(data, batch):
+            if np.isnan(data).any():
+                nan_call_counts.append(int(np.isnan(data).sum()))
+            return original(data, batch)
 
-        monkeypatch.setattr(split_mod, "adjust_limma", spy)
+        monkeypatch.setattr(split_mod, "remove_batch_effect", spy)
 
         data, desc = self._structural_nan_data()
         harmonize(data, desc, algorithm="limma")
 
         assert len(nan_call_counts) == 0, (
-            f"adjust_limma received NaN in {len(nan_call_counts)} call(s): {nan_call_counts}"
+            f"remove_batch_effect received NaN in {len(nan_call_counts)} call(s): {nan_call_counts}"
         )
 
     # ------------------------------------------------------------------

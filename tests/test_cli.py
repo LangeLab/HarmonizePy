@@ -55,7 +55,7 @@ class TestResolveOutputPath:
         Failure condition: the default path uses a different directory or suffix.
         """
         result = _resolve_output_path("/data/my_file.tsv", None)
-        assert result == "/data/my_file_corrected.tsv"
+        assert result == "/data/my_file_corrected.parquet"
 
     def test_default_stem_preservation(self) -> None:
         """Input filename stem is preserved in the default output path.
@@ -63,7 +63,18 @@ class TestResolveOutputPath:
         Failure condition: the stem is modified or dropped.
         """
         result = _resolve_output_path("proteins.tsv", None)
-        assert result == "proteins_corrected.tsv"
+        assert result == "proteins_corrected.parquet"
+
+    def test_default_tsv_when_no_pyarrow(self) -> None:
+        """Default path falls back to .tsv when pyarrow is not installed.
+
+        Failure condition: the default path uses .parquet despite missing pyarrow.
+        """
+        from harmonizepy.io import _HAVE_PYARROW  # noqa: PLC0415
+
+        if not _HAVE_PYARROW:
+            result = _resolve_output_path("/data/my_file.tsv", None)
+            assert result == "/data/my_file_corrected.tsv"
 
 
 class TestInferFormat:
@@ -89,19 +100,19 @@ class TestInferFormat:
         """
         assert _infer_format("result.csv", None) == "csv"
 
-    def test_feather_extension(self) -> None:
-        """.feather extension maps to ``"feather"`` format.
+    def test_parquet_extension(self) -> None:
+        """.parquet extension maps to ``"parquet"`` format.
 
-        Failure condition: .feather maps to a different format.
+        Failure condition: .parquet maps to a different format.
         """
-        assert _infer_format("result.feather", None) == "feather"
+        assert _infer_format("result.parquet", None) == "parquet"
 
-    def test_ftr_extension(self) -> None:
-        """.ftr extension maps to ``"feather"`` format.
+    def test_pq_extension(self) -> None:
+        """.pq extension maps to ``"parquet"`` format.
 
-        Failure condition: .ftr maps to a different format.
+        Failure condition: .pq maps to a different format.
         """
-        assert _infer_format("result.ftr", None) == "feather"
+        assert _infer_format("result.pq", None) == "parquet"
 
     def test_unknown_extension_falls_back_to_tsv(self) -> None:
         """Unrecognised extension falls back to ``"tsv"`` format.
@@ -175,7 +186,8 @@ class TestCLIMinimal:
         shutil.copy(BATCH, local_batch)
 
         main([local_data, local_batch])
-        assert (tmp_path / "small_input_corrected.tsv").exists()
+        expected = tmp_path / "small_input_corrected.parquet"
+        assert expected.exists()
 
     def test_python_m_invocation(self, tmp_path: Path) -> None:
         """__main__.py must work when invoked as ``python -m harmonizepy``.
@@ -346,18 +358,18 @@ class TestCLIOutputFormats:
         df = pd.read_csv(out, index_col=0)
         assert not df.empty
 
-    def test_feather_inferred_from_extension(self, tmp_path: Path) -> None:
+    def test_parquet_inferred_from_extension(self, tmp_path: Path) -> None:
         pytest.importorskip("pyarrow")
-        out = str(tmp_path / "result.feather")
+        out = str(tmp_path / "result.parquet")
         main([DATA, BATCH, "-o", out])
-        df = pd.read_feather(out)
+        df = pd.read_parquet(out)
         assert not df.empty
 
-    def test_feather_explicit_flag(self, tmp_path: Path) -> None:
+    def test_parquet_explicit_flag(self, tmp_path: Path) -> None:
         pytest.importorskip("pyarrow")
-        out = str(tmp_path / "result.ftr")
-        main([DATA, BATCH, "-o", out, "--output-format", "feather"])
-        df = pd.read_feather(out)
+        out = str(tmp_path / "result.out")
+        main([DATA, BATCH, "-o", out, "--output-format", "parquet"])
+        df = pd.read_parquet(out)
         assert not df.empty
 
     def test_csv_content_matches_api(self, tmp_path: Path) -> None:

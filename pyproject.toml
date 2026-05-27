@@ -30,6 +30,14 @@ config = [
 ]
 # pip install harmonizepy[completion] → enables shell tab-completion via argcomplete
 completion = ["argcomplete>=3.0"]
+# pip install harmonizepy[io] → pyarrow for faster IO and parquet output
+io = [
+    "pyarrow>=14.0",
+]
+# pip install harmonizepy[all] → everything
+all = [
+    "harmonizepy[config,completion,io]",
+]
 
 [project.scripts]
 harmonizepy = "harmonizepy.__main__:main"
@@ -62,6 +70,10 @@ ignore_missing_imports = false
 module = "tests.*"
 disallow_untyped_defs = false
 disallow_untyped_calls = false
+
+[[tool.mypy.overrides]]
+module = "pyarrow"
+ignore_missing_imports = true
 
 [tool.ruff]
 target-version = "py312"

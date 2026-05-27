@@ -36,15 +36,15 @@ from .validation import validate_data_matrix, validate_description, validate_har
 _LOG_FORMAT = "%(levelname)s [harmonizepy] %(message)s"
 _FILE_LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
-_FORMATS = ("tsv", "csv", "feather")
+_FORMATS = ("tsv", "csv", "parquet")
 
 # Map file extensions to output formats. Anything unrecognised falls back to tsv.
 _EXT_TO_FMT: dict[str, str] = {
     ".tsv": "tsv",
     ".txt": "tsv",
     ".csv": "csv",
-    ".feather": "feather",
-    ".ftr": "feather",
+    ".parquet": "parquet",
+    ".pq": "parquet",
 }
 
 # Config keys that map directly to CLI flag destinations
@@ -78,15 +78,17 @@ def _build_parser() -> argparse.ArgumentParser:
         epilog=(
             "examples:\n"
             "  # Minimal: ComBat mode 1, auto settings\n"
+            "  harmonizepy data.tsv batch.csv\n\n"
+            "  # Explicit output path\n"
             "  harmonizepy data.tsv batch.csv -o corrected.tsv\n\n"
             "  # Sort by sparsity then block into pairs before correction\n"
-            "  harmonizepy data.tsv batch.csv --sort sparsity --block 2 -o corrected.tsv\n\n"
+            "  harmonizepy data.tsv batch.csv --sort sparsity --block 2 -o corrected.parquet\n\n"
             "  # limma, no unique-removal, silent run\n"
-            "  harmonizepy data.tsv batch.csv --algorithm limma --no-unique-removal -q -o out.tsv\n\n"
+            "  harmonizepy data.tsv batch.csv --algorithm limma --no-unique-removal -q -o out.parquet\n\n"
             "  # Validate inputs and print run plan without computing\n"
             "  harmonizepy data.tsv batch.csv --dry-run\n\n"
             "  # Save a reproducible JSON summary alongside the result\n"
-            "  harmonizepy data.tsv batch.csv -o corrected.tsv --summary run.json\n"
+            "  harmonizepy data.tsv batch.csv -o corrected.parquet --summary run.json\n"
         ),
     )
 
@@ -107,20 +109,20 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="PATH",
         help=(
-            "Output file path. Default: <data_stem>_corrected.tsv placed next to the "
-            "input data file. Format is inferred from the extension (.tsv, .csv, "
-            ".feather/.ftr) unless --output-format is given."
+            "Output file path. Default: <data_stem>_corrected.parquet placed next to the "
+            "input data file (or .tsv when pyarrow is not installed). Format is inferred "
+            "from the extension (.tsv, .csv, .parquet/.pq) unless --output-format is given."
         ),
     )
     parser.add_argument(
         "--output-format",
         choices=_FORMATS,
         default=None,
-        metavar="{tsv,csv,feather}",
+        metavar="{tsv,csv,parquet}",
         help=(
             "Force a specific output format regardless of file extension. "
-            "Choices: tsv (default), csv, feather. "
-            "Feather requires pyarrow: pip install pyarrow."
+            "Choices: tsv (default), csv, parquet. "
+            "Parquet requires pyarrow: pip install harmonizepy[io]."
         ),
     )
 
@@ -296,11 +298,15 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _resolve_output_path(data_path: str, output: str | None) -> str:
-    """Return an output path: explicit *output* arg or ``<stem>_corrected.tsv`` next to data."""
+    """Return an output path: explicit *output* arg or ``<stem>_corrected.parquet`` next to
+    data (falls back to ``.tsv`` when pyarrow is not installed)."""
     if output is not None:
         return output
     p = Path(data_path)
-    return str(p.parent / f"{p.stem}_corrected.tsv")
+    from .io import _HAVE_PYARROW
+
+    ext = ".parquet" if _HAVE_PYARROW else ".tsv"
+    return str(p.parent / f"{p.stem}_corrected{ext}")
 
 
 def _infer_format(path: str, fmt_arg: str | None) -> str:
@@ -382,9 +388,14 @@ def _write_result(df: pd.DataFrame, path: str, fmt: str) -> None:
     """Write *df* in the requested format."""
     if fmt == "csv":
         df.to_csv(path)
-    elif fmt == "feather":
-        # to_feather() requires pyarrow; index is preserved automatically
-        df.reset_index().to_feather(path)
+    elif fmt == "parquet":
+        from .io import _HAVE_PYARROW
+
+        if not _HAVE_PYARROW:
+            raise ImportError(
+                "Parquet output requires pyarrow: pip install harmonizepy[io]"
+            )
+        df.to_parquet(path, index=True, engine="pyarrow")
     else:
         df.to_csv(path, sep="\t")
 

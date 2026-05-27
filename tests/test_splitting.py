@@ -12,8 +12,8 @@ import numpy as np
 import pandas as pd
 
 from harmonizepy.affiliation import build_affiliation_list
-from harmonizepy.combat_wrapper import adjust_combat as _adjust_combat
-from harmonizepy.limma_wrapper import adjust_limma as _adjust_limma
+from harmonizepy.combat import combat as _combat
+from harmonizepy.limma_wrapper import remove_batch_effect as _remove_batch_effect
 from harmonizepy.splitting import splitting
 
 _Affil = list[tuple[int, ...]]
@@ -111,7 +111,7 @@ class TestSplittingBasic:
 
 class TestSplittingNanAudit:
     def test_combat_subframes_are_nan_free(self, monkeypatch: Any) -> None:
-        """Sub-DataFrames sent to adjust_combat must never contain NaN.
+        """Sub-DataFrames sent to combat must never contain NaN.
 
         Failure condition: a NaN leaks into the adjustment step,
         which would cause the engine to raise ValueError.
@@ -120,13 +120,13 @@ class TestSplittingNanAudit:
 
         called_with_nan = False
 
-        def tracking(sub_df: pd.DataFrame, batch_labels: np.ndarray, **kwargs: Any) -> pd.DataFrame:
+        def tracking(data: np.ndarray, batch: np.ndarray, **kwargs: Any) -> np.ndarray:
             nonlocal called_with_nan
-            if sub_df.isna().any().any():
+            if np.isnan(data).any():
                 called_with_nan = True
-            return _adjust_combat(sub_df, batch_labels, **kwargs)
+            return _combat(data, batch, **kwargs)
 
-        monkeypatch.setattr(split_mod, "adjust_combat", tracking)
+        monkeypatch.setattr(split_mod, "combat", tracking)
 
         data = _make_data(6, 6)
         data.iloc[0, 0:3] = np.nan
@@ -138,7 +138,7 @@ class TestSplittingNanAudit:
         assert not called_with_nan
 
     def test_limma_subframes_are_nan_free(self, monkeypatch: Any) -> None:
-        """Sub-DataFrames sent to adjust_limma must never contain NaN.
+        """Sub-DataFrames sent to remove_batch_effect must never contain NaN.
 
         Failure condition: a NaN leaks into the adjustment step,
         which would cause the engine to raise ValueError.
@@ -147,13 +147,13 @@ class TestSplittingNanAudit:
 
         called_with_nan = False
 
-        def tracking(sub_df: pd.DataFrame, batch_labels: np.ndarray) -> pd.DataFrame:
+        def tracking(data: np.ndarray, batch: np.ndarray) -> np.ndarray:
             nonlocal called_with_nan
-            if sub_df.isna().any().any():
+            if np.isnan(data).any():
                 called_with_nan = True
-            return _adjust_limma(sub_df, batch_labels)
+            return _remove_batch_effect(data, batch)
 
-        monkeypatch.setattr(split_mod, "adjust_limma", tracking)
+        monkeypatch.setattr(split_mod, "remove_batch_effect", tracking)
 
         data = _make_data(6, 6)
         data.iloc[0, 0:3] = np.nan
