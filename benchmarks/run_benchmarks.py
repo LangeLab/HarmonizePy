@@ -27,6 +27,7 @@ import sys
 import time
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
+from importlib.metadata import version
 from pathlib import Path
 
 import numpy as np
@@ -46,11 +47,37 @@ _RESULTS_MD = Path(__file__).parent / "RESULTS.md"
 _DATASETS = ["small", "medium", "large"]
 _R_AVAILABLE = shutil.which("Rscript") is not None
 
+_R_VERSION = "not available"
+_R_HARMONIZR_VERSION = "not available"
+if _R_AVAILABLE:
+    try:
+        _R_VERSION = subprocess.run(
+            ["Rscript", "-e", "cat(as.character(getRversion()))"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        ).stdout.strip()
+    except Exception:
+        pass
+    try:
+        _R_HARMONIZR_VERSION = subprocess.run(
+            [
+                "Rscript",
+                "-e",
+                "suppressMessages(library(HarmonizR)); cat(as.character(packageVersion('HarmonizR')))",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        ).stdout.strip()
+    except Exception:
+        pass
+
 _BENCHMARKS: list[tuple[str, str, int | None, int | None, str | None]] = [
-    *[(ds, "ComBat", m, None, None) for ds in _DATASETS for m in [1, 2, 3, 4]],
     *[(ds, "limma", None, None, None) for ds in _DATASETS],
-    *[(ds, "ComBat", 1, 2, None) for ds in _DATASETS],
-    *[(ds, "ComBat", 1, 2, "sparsity") for ds in ["medium", "large"]],
+    *[(ds, "ComBat", m, None, None) for ds in _DATASETS for m in [1, 2, 3, 4]],
+    *[(ds, "ComBat", m, 2, None) for ds in _DATASETS for m in [1, 2, 3, 4]],
+    *[(ds, "ComBat", m, 2, "sparsity") for ds in ["medium", "large"] for m in [1, 2, 3, 4]],
 ]
 
 _DS_FEATURES: dict[str, int] = {"small": 1000, "medium": 5000, "large": 10000}
@@ -228,15 +255,16 @@ def _compare_outputs(py_tsv: str, r_tsv: str) -> float:
 def _generate_results_md(results: list[RunResult]) -> str:
     """Generate benchmarks/RESULTS.md."""
     now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
-    sys_info = f"{platform.system()} {platform.release()}, Python {platform.python_version()}"
     cpu_info = platform.processor() or "unknown"
 
     lines = [
         "# Benchmark Results",
         "",
         f"**Generated:** {now}",
-        f"**Platform:** {sys_info}",
-        f"**CPU:** {cpu_info}",
+        f"**Platform:** {platform.system()} {platform.release()}",
+        f"**CPU:** {cpu_info} (Py=1 thread, R=16 threads)",
+        f"**Python:** {platform.python_version()} (harmonizepy v{version('harmonizepy')})",
+        f"**R:** {_R_VERSION} (HarmonizR {_R_HARMONIZR_VERSION})",
         "",
         "### Implementation Notes",
         "",

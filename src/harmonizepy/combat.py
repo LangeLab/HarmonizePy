@@ -119,14 +119,20 @@ def _it_sol(
     t2_n = t2 * n_samples
     t2_n_g_hat = t2_n * g_hat
 
+    # Pre-compute per-gene sums so the iterative loop can use the
+    # binomial formula instead of broadcasting to a 2-D temp array.
+    sum_x = s_data.sum(axis=1)  # (n_genes,)
+    sum_x2 = (s_data * s_data).sum(axis=1)  # (n_genes,)
+
     g_old = g_hat.copy()
     d_old = d_hat.copy()
 
     for _ in range(max_iter):
         # Update additive effect
         g_new = _postmean(g_bar, d_old, t2_n, t2_n_g_hat)
-        # Residual sum of squares with new gamma
-        sum2 = np.square(s_data - g_new[:, np.newaxis]).sum(axis=1)
+        # Residual sum of squares: sum_k (x_i[k] - g_new[i])^2
+        # = sum_x2_i - 2 * g_new[i] * sum_x_i + n * g_new[i]^2
+        sum2 = sum_x2 - 2.0 * g_new * sum_x + n_samples * g_new * g_new
         # Update multiplicative effect
         d_new = _postvar(sum2, n_samples, a, b)
 
@@ -182,37 +188,42 @@ def _int_eprior(
     g_star = np.empty(n_genes)
     d_star = np.empty(n_genes)
 
+    d = np.maximum(d_hat, 1e-12)
+
+    # Pre-compute per-gene statistics so the inner loop can compute
+    # sum-of-squared-residuals via the binomial formula:
+    #   sum_k (x_i[k] - g_j)^2  =  sum_x2_i - 2*g_j*sum_x_i + n*g_j^2
+    # This avoids creating the (n_genes-1, n_samples) temp array.
+    sum_x = s_data.sum(axis=1)  # (n_genes,)
+    sum_x2 = (s_data * s_data).sum(axis=1)  # (n_genes,)
+
+    const_term = -0.5 * n_samples * np.log(2.0 * np.pi)
+    half_n = -0.5 * n_samples
+    log_d = np.log(d)  # pre-compute log so the inner loop avoids n_genes log() calls
+
+    mask = np.ones(n_genes, dtype=bool)
     for i in range(n_genes):
-        # Leave-one-out: all other genes' estimates
-        mask = np.ones(n_genes, dtype=bool)
         mask[i] = False
         g = g_hat[mask]  # (n_genes-1,)
-        d = d_hat[mask]  # (n_genes-1,)
+        d_i = d[mask]  # (n_genes-1,)
+        log_d_i = log_d[mask]  # (n_genes-1,)
 
-        # Guard against zero/negative d (constant feature within batch):
-        # clamp to a small positive value so np.log does not produce -inf.
-        d = np.maximum(d, 1e-12)
+        # Squared residuals without a 2-D temp array
+        sum2 = sum_x2[i] - 2.0 * g * sum_x[i] + n_samples * g * g
 
-        x = s_data[i]  # (n_samples,)
-
-        # Squared residuals: (n_genes-1, n_samples)
-        resid2 = np.square(x[np.newaxis, :] - g[:, np.newaxis])
-        sum2 = resid2.sum(axis=1)  # (n_genes-1,)
-
-        # Log-likelihood to avoid underflow
-        log_lh = -0.5 * n_samples * np.log(2.0 * np.pi * d) - sum2 / (2.0 * d)
-        # Shift for numerical stability
+        log_lh = const_term + half_n * log_d_i - sum2 / (2.0 * d_i)
         log_lh -= log_lh.max()
         lh = np.exp(log_lh)
 
         total = lh.sum()
         if total == 0.0:
-            # Fallback: uniform weights
             total = 1.0
-            lh[:] = 1.0 / len(lh)
+            lh = np.ones_like(lh) / len(lh)
 
         g_star[i] = (g * lh).sum() / total
-        d_star[i] = (d * lh).sum() / total
+        d_star[i] = (d_i * lh).sum() / total
+
+        mask[i] = True
 
     return g_star, d_star
 

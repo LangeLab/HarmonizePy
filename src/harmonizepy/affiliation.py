@@ -12,7 +12,6 @@ combines both responsibilities.
 
 from __future__ import annotations
 
-import itertools
 import logging
 
 import numpy as np
@@ -68,9 +67,6 @@ def build_affiliation_list(
     >>> build_affiliation_list(data, batch, batch, needed_values=1)
     [(1, 2), (2,)]
     """
-    mat = data.values
-    n_features = mat.shape[0]
-
     batch_arr = np.asarray(batch_list)
     block_arr = np.asarray(block_list)
 
@@ -84,24 +80,24 @@ def build_affiliation_list(
         batch_indices = [np.where((batch_arr == b) & blk_mask)[0] for b in batches_in_block]
         block_info.append(batch_indices)
 
-    notna = ~np.isnan(mat)
+    notna = ~np.isnan(data.values)
 
+    # Vectorised per-block check across all features at once.
+    # For each block, compute a boolean array indicating whether each
+    # feature has >= needed_values non-NA in every batch within that block.
+    block_oks: list[np.ndarray] = []
+    for batch_indices in block_info:
+        batch_oks = [notna[:, idx].sum(axis=1) >= needed_values for idx in batch_indices]
+        block_oks.append(np.all(batch_oks, axis=0))
+
+    # Assemble per-feature affiliation tuples from the pre-computed masks.
+    # This still uses a Python loop but the expensive per-batch sums are
+    # vectorized above.
+    n_features = data.shape[0]
     affiliation_list: list[tuple[int, ...]] = []
-
     for i in range(n_features):
-        row_notna = notna[i]
-        blocks_present: list[int] = []
-
-        for blk_idx, batch_indices in enumerate(block_info):
-            all_ok = True
-            for idx in batch_indices:
-                if row_notna[idx].sum() < needed_values:
-                    all_ok = False
-                    break
-            if all_ok:
-                blocks_present.append(int(unique_blocks[blk_idx]))
-
-        affiliation_list.append(tuple(sorted(blocks_present)))
+        blocks_present = [int(blk) for blk, mask in zip(unique_blocks, block_oks, strict=True) if mask[i]]
+        affiliation_list.append(tuple(blocks_present))
 
     n_empty = sum(1 for a in affiliation_list if len(a) == 0)
     logger.debug(
@@ -233,16 +229,15 @@ def _find_best_crop(
 ) -> tuple[int, ...] | None:
     """Return the largest subset of *affil_set* that is in *non_unique*.
 
-    Searches by decreasing subset size so that the first match found
-    removes the minimum number of batches (greedy, matching R's approach).
+    Iterates over the non-unique patterns directly rather than generating
+    all subsets of *affil_set*. For datasets with few non-unique patterns
+    and long affiliations this is orders of magnitude faster.
+
     Returns ``None`` if no non-empty subset matches.
     """
-    affil_sorted = tuple(sorted(affil_set))
-    n = len(affil_sorted)
-
-    # Try subsets from size n-1 down to 1
-    for size in range(n - 1, 0, -1):
-        for combo in itertools.combinations(affil_sorted, size):
-            if combo in non_unique:
-                return combo
-    return None
+    best = None
+    for pattern in non_unique:
+        if set(pattern).issubset(affil_set) and len(pattern) < len(affil_set):
+            if best is None or len(pattern) > len(best):
+                best = pattern
+    return best
