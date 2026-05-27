@@ -128,6 +128,16 @@ def read_main_data(path: str) -> pd.DataFrame:
 
     df = df.dropna(how="all", axis=0)
 
+    # Remove duplicate rows (matching R HarmonizR behavior)
+    n_before = df.shape[0]
+    df = df.drop_duplicates()
+    if df.shape[0] < n_before:
+        logger.debug(
+            "Removed %d duplicate feature(s) from input; %d remain",
+            n_before - df.shape[0],
+            df.shape[0],
+        )
+
     # Normalise index name: pyarrow engine may set it to empty string
     # where the default C parser leaves it as None.
     if df.index.name == "":

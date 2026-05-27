@@ -112,25 +112,30 @@ class TestValidateCombatInput:
         batch = np.array([0, 0, 1, 1], dtype=np.intp)
         validate_combat_input(data, batch)  # no error
 
-    def test_contains_nan(self) -> None:
-        """NaN in data raises ValueError.
+    def test_contains_nan_passes(self) -> None:
+        """NaN in data does NOT raise ValueError.
 
-        Failure condition: NaN values are not detected.
+        Failure condition: the validator rejects NaN input
+        (per-cell NaN is handled by combat() via row-dropping,
+        matching R sva::ComBat's na.omit).
         """
         data = np.array([[1.0, np.nan], [3.0, 4.0]])
         batch = np.array([0, 1], dtype=np.intp)
-        with pytest.raises(ValueError, match="NaN"):
-            validate_combat_input(data, batch)
+        validate_combat_input(data, batch)  # should not raise
 
-    def test_too_few_features(self) -> None:
-        """Fewer than 2 features raises ValueError.
+    def test_no_min_feature_check(self) -> None:
+        """validate_combat_input does NOT reject n_features < 2.
 
-        Failure condition: single-feature input is accepted.
+        Failure condition: the validator rejects input with < 2 features
+        (combat() handles this internally via NaN row dropping or
+        pass-through).
+
+        Per-cell NaN may reduce clean features below 2; the validator
+        must let the engine decide.
         """
         data = np.ones((1, 4), dtype=np.float64)
         batch = np.array([0, 0, 1, 1], dtype=np.intp)
-        with pytest.raises(ValueError, match="at least 2 features"):
-            validate_combat_input(data, batch)
+        validate_combat_input(data, batch)  # should not raise
 
     def test_one_dimensional(self) -> None:
         """1-D input raises ValueError.
@@ -169,15 +174,16 @@ class TestValidateLimmaInput:
         batch = np.array([0, 0, 1, 1])
         validate_limma_input(data, batch)  # no error
 
-    def test_contains_nan(self) -> None:
-        """NaN in data raises ValueError.
+    def test_contains_nan_passes(self) -> None:
+        """NaN in data does NOT raise ValueError.
 
-        Failure condition: NaN values are not detected.
+        Failure condition: the validator rejects NaN input
+        (per-cell NaN is handled by the engine via row-dropping,
+        matching R sva::ComBat's na.omit).
         """
         data = np.array([[1.0, np.nan], [3.0, 4.0]])
         batch = np.array([0, 1])
-        with pytest.raises(ValueError, match="NaN"):
-            validate_limma_input(data, batch)
+        validate_limma_input(data, batch)  # should not raise
 
     def test_one_dimensional(self) -> None:
         """1-D input raises ValueError.

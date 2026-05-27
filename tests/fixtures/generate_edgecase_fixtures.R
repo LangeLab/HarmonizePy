@@ -430,3 +430,70 @@ tryCatch({
 }, error = function(e) cat(sprintf("✗ highmiss HarmonizR limma: %s\n", e$message)))
 
 cat("\n=== Edge-case fixture generation complete ===\n")
+
+# =======================================================================
+# 12. PER-CELL NaN: some features have stochastic per-cell NaN within
+#     qualifying blocks, others are fully present.
+#     This tests na.omit behavior in sva::ComBat and matches real
+#     proteomics dropout patterns (e.g., murine_medulloblastoma).
+# =======================================================================
+cat("\n--- percell_nan (30x9, 3 batches of 3, per-cell NaN within blocks) ---\n")
+set.seed(888)
+np12 <- 30; ns12 <- 9
+data_pcnan <- matrix(rnorm(np12 * ns12, mean = 10, sd = 2), nrow = np12)
+batch_pcnan <- rep(1:3, each = 3)
+data_pcnan[, batch_pcnan == 2] <- data_pcnan[, batch_pcnan == 2] + 2.0
+data_pcnan[, batch_pcnan == 3] <- data_pcnan[, batch_pcnan == 3] - 1.5
+# First 10 features get per-cell NaN (1 sample per batch dropped)
+# Remaining 20 features are fully present (will be adjusted normally)
+set.seed(999)
+for (i in 1:10) {
+  for (b in 1:3) {
+    cols <- which(batch_pcnan == b)
+    drop <- sample(cols, 1)
+    data_pcnan[i, drop] <- NA
+  }
+}
+rownames(data_pcnan) <- paste0("protein_", seq_len(np12))
+colnames(data_pcnan) <- paste0("sample_", seq_len(ns12))
+write_matrix(data_pcnan, file.path(out_dir, "percell_nan_input.tsv"))
+desc_pcnan <- data.frame(
+  ID = colnames(data_pcnan), sample = seq_len(ns12), batch = batch_pcnan
+)
+write.csv(desc_pcnan, file.path(out_dir, "percell_nan_batch.csv"), row.names = FALSE)
+
+# Run HarmonizR pipeline on per-cell NaN data.
+# R sva::ComBat drops the 10 rows with NaN and adjusts the 20 clean rows.
+# Our Python keeps the 10 NaN rows as all-NaN and adjusts the 20 clean rows.
+for (m in 1:4) {
+  tryCatch({
+    result <- harmonizR(
+      data_as_input        = as.data.frame(data_pcnan),
+      description_as_input = desc_pcnan,
+      algorithm            = "ComBat", ComBat_mode = m,
+      sort = FALSE, plot = FALSE,
+      output_file          = FALSE,
+      verbosity = 0, cores = 1
+    )
+    write_matrix(as.matrix(result),
+                 file.path(out_dir, sprintf("percell_nan_combat_mode%d.tsv", m)))
+    cat(sprintf("  ✓ percell_nan HarmonizR ComBat mode %d\n", m))
+  }, error = function(e) {
+    cat(sprintf("  ✗ percell_nan HarmonizR ComBat mode %d: %s\n", m, e$message))
+  })
+}
+
+tryCatch({
+  result <- harmonizR(
+    data_as_input        = as.data.frame(data_pcnan),
+    description_as_input = desc_pcnan,
+    algorithm            = "limma",
+    sort = FALSE, plot = FALSE,
+    output_file          = FALSE,
+    verbosity = 0, cores = 1
+  )
+  write_matrix(as.matrix(result), file.path(out_dir, "percell_nan_limma.tsv"))
+  cat("  ✓ percell_nan HarmonizR limma\n")
+}, error = function(e) {
+  cat(sprintf("  ✗ percell_nan HarmonizR limma: %s\n", e$message))
+})

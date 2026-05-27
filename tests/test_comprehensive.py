@@ -614,14 +614,37 @@ class TestCombatFailureModes:
         with pytest.raises(ValueError, match="2-D"):
             combat(np.zeros((2, 3, 4)), np.array([0, 0, 1]))
 
-    def test_nan_raises(self):
-        data = np.array([[1.0, 2.0, 3.0, 4.0], [np.nan, 6.0, 7.0, 8.0]])
-        with pytest.raises(ValueError, match="NaN"):
-            combat(data, np.array([0, 0, 1, 1]))
+    def test_nan_rows_dropped(self):
+        """Rows with any NaN stay NaN in output; clean rows are adjusted.
 
-    def test_single_feature_rejected(self):
-        with pytest.raises(ValueError, match="at least 2 features"):
-            combat(np.array([[1.0, 2.0, 3.0, 4.0]]), np.array([0, 0, 1, 1]))
+        Failure condition: NaN propagates to clean rows, or the
+        adjustment fails for clean rows.
+
+        Matches R sva::ComBat na.omit behavior.
+        """
+        data = np.array([
+            [1.0, 2.0, 3.0, 4.0],
+            [np.nan, 6.0, 7.0, 8.0],
+        ])
+        batch = np.array([0, 0, 1, 1])
+        # Mode 2 (parametric, mean_only) works with 1 clean feature
+        result = combat(data, batch, par_prior=True, mean_only=True)
+        # Row 0 (clean) is adjusted
+        assert not np.isnan(result[0, :]).any()
+        # Row 1 (has NaN) stays NaN
+        assert np.isnan(result[1, :]).all()
+        assert result.shape == data.shape
+
+    def test_single_feature_passed_through(self):
+        """Single feature returns copy (ComBat cannot estimate EB prior).
+
+        Failure condition: the function crashes on 1-feature input
+        instead of returning a copy.
+        """
+        data = np.array([[1.0, 2.0, 3.0, 4.0]])
+        result = combat(data.copy(), np.array([0, 0, 1, 1]))
+        assert result.shape == (1, 4)
+        np.testing.assert_array_equal(result, data)
 
     def test_batch_length_mismatch(self):
         data = np.random.default_rng(1).normal(size=(5, 6))
@@ -799,10 +822,18 @@ class TestLimmaFailureModes:
         with pytest.raises(ValueError, match="2-D"):
             remove_batch_effect(np.array([1, 2, 3]), np.array([0, 0, 1]))
 
-    def test_nan_rejected(self):
+    def test_nan_allowed(self):
+        """NaN is allowed and handled by row-dropping (matching R's na.omit).
+
+        Failure condition: a ValueError is raised for NaN input instead
+        of correct row-dropping behavior.
+        """
         data = np.array([[1.0, np.nan], [3.0, 4.0]])
-        with pytest.raises(ValueError, match="NaN"):
-            remove_batch_effect(data, np.array([0, 1]))
+        result = remove_batch_effect(data, np.array([0, 1]))
+        # Row 0 (has NaN) stays all-NaN
+        assert np.isnan(result[0, :]).all()
+        # Row 1 (clean) is adjusted
+        assert not np.isnan(result[1, :]).any()
 
     def test_batch_length_mismatch(self):
         data = np.random.default_rng(1).normal(size=(5, 4))
@@ -1614,19 +1645,23 @@ class TestNeededValuesParameter:
 
 
 class TestNaNPropagation:
-    """Step 4: verify the NaN firewall between the pipeline and adjusters.
+    """Per-cell NaN within qualifying affiliation groups reaches the engines and is handled.
 
-    The core invariant: sub-dataframes handed to adjust_combat / adjust_limma
-    must never contain NaN, even when the input data has structural
-    (whole-batch) missing values.  Verified via monkeypatching.
+    The core invariant: when a sub-matrix has per-cell NaN (stochastic dropout
+    within a block that passes the affiliation threshold), the engines must
+    handle it by dropping affected rows before computation (matching R
+    sva::ComBat's na.omit).  Clean rows must be adjusted; rows with any NaN
+    stay all-NaN in the output.
     """
 
     @staticmethod
     def _structural_nan_data():
-        """10 features x 9 samples; 3 batches of 3; structured whole-batch NaN.
+        """10 features x 9 samples; 3 batches of 3; structured + per-cell NaN.
 
-        Feature 0: absent in batch 3. Feature 1: absent in batches 2+3.
+        Feature 0: absent entirely in batch 3 (structural).
+        Feature 1: absent entirely in batches 2+3 (structural).
         Features 2-9: fully present.
+        Feature 2: has per-cell NaN in sample 0 (batch 1) — stochastic dropout.
         """
         rng = np.random.default_rng(300)
         data = pd.DataFrame(
@@ -1636,8 +1671,9 @@ class TestNaNPropagation:
         )
         data.iloc[:, 3:6] += 2.0
         data.iloc[:, 6:] += 4.0
-        data.iloc[0, 6:] = np.nan  # feature 0 absent in batch 3
-        data.iloc[1, 3:] = np.nan  # feature 1 absent in batches 2+3
+        data.iloc[0, 6:] = np.nan  # structural: feature 0 absent in batch 3
+        data.iloc[1, 3:] = np.nan  # structural: feature 1 absent in batches 2+3
+        data.iloc[2, 0] = np.nan   # per-cell: feature 2 has stochastic NaN in batch 1
         desc = pd.DataFrame(
             {
                 "ID": data.columns.tolist(),
@@ -1647,112 +1683,95 @@ class TestNaNPropagation:
         )
         return data, desc
 
-    # ------------------------------------------------------------------
-    # Monkeypatch spy tests
-    # ------------------------------------------------------------------
+    def test_per_cell_nan_reaches_combat_and_is_handled(self, monkeypatch):
+        """Engines receive NaN and correctly handle it (row dropping).
 
-    def test_no_nan_reaches_combat(self, monkeypatch):
-        """Sub-dataframes sent to combat must never contain NaN."""
+        Failure condition: NaN causes a crash, or clean rows are not
+        adjusted.
+
+        When a feature has per-cell NaN, the engine drops the entire row
+        (matching R sva::ComBat's na.omit), leaving it all-NaN in output.
+        """
         import harmonizepy.splitting as split_mod
 
         original = split_mod.combat
-        nan_call_counts = []
+        received_nan = []
 
         def spy(data, batch, *, par_prior=True, mean_only=False, ref_batch=None):
-            if np.isnan(data).any():
-                nan_call_counts.append(int(np.isnan(data).sum()))
+            has_nan = np.isnan(data).any()
+            received_nan.append(has_nan)
             return original(data, batch, par_prior=par_prior, mean_only=mean_only, ref_batch=ref_batch)
 
         monkeypatch.setattr(split_mod, "combat", spy)
 
         data, desc = self._structural_nan_data()
-        harmonize(data, desc, algorithm="ComBat", combat_mode=2)
+        result = harmonize(data, desc, algorithm="ComBat", combat_mode=2)
 
-        assert len(nan_call_counts) == 0, (
-            f"combat received NaN in {len(nan_call_counts)} call(s): {nan_call_counts}"
+        # Engines received at least one call with NaN
+        assert any(received_nan), "Engine should have received NaN data"
+
+        # Feature 2 (per-cell NaN) is entirely NaN in output (row dropped by engine)
+        assert np.isnan(result.iloc[2, :]).all(), (
+            "Feature with per-cell NaN should be all-NaN (row dropped by engine)"
         )
 
-    def test_no_nan_reaches_limma(self, monkeypatch):
-        """Sub-dataframes sent to remove_batch_effect must never contain NaN."""
+        # Features 3-9 (fully present) have no NaN
+        assert not np.isnan(result.iloc[3:].values).any(), (
+            "Fully-present features should have no NaN in output"
+        )
+
+    def test_per_cell_nan_reaches_limma_and_is_handled(self, monkeypatch):
+        """limma engines receive NaN and correctly handle it."""
         import harmonizepy.splitting as split_mod
 
         original = split_mod.remove_batch_effect
-        nan_call_counts = []
+        received_nan = []
 
         def spy(data, batch):
-            if np.isnan(data).any():
-                nan_call_counts.append(int(np.isnan(data).sum()))
+            has_nan = np.isnan(data).any()
+            received_nan.append(has_nan)
             return original(data, batch)
 
         monkeypatch.setattr(split_mod, "remove_batch_effect", spy)
 
         data, desc = self._structural_nan_data()
-        harmonize(data, desc, algorithm="limma")
-
-        assert len(nan_call_counts) == 0, (
-            f"remove_batch_effect received NaN in {len(nan_call_counts)} call(s): {nan_call_counts}"
-        )
-
-    # ------------------------------------------------------------------
-    # Output NaN correctness
-    # ------------------------------------------------------------------
-
-    def test_combat_no_new_nan_on_clean_input(self):
-        """All-numeric input to ComBat produces no NaN in output."""
-        rng = np.random.default_rng(301)
-        data = pd.DataFrame(
-            rng.normal(10, 2, size=(20, 8)),
-            index=[f"p_{i}" for i in range(20)],
-            columns=[f"s_{j}" for j in range(8)],
-        )
-        data.iloc[:, 4:] += 3.0
-        desc = pd.DataFrame(
-            {
-                "ID": data.columns.tolist(),
-                "sample": list(range(1, 9)),
-                "batch": [1] * 4 + [2] * 4,
-            }
-        )
-        result = harmonize(data, desc, algorithm="ComBat", combat_mode=2)
-        assert not np.isnan(result.values).any(), "Clean input must produce no NaN in output"
-
-    def test_limma_no_new_nan_on_clean_input(self):
-        """All-numeric input to limma produces no NaN in output."""
-        rng = np.random.default_rng(302)
-        data = pd.DataFrame(
-            rng.normal(10, 2, size=(20, 8)),
-            index=[f"p_{i}" for i in range(20)],
-            columns=[f"s_{j}" for j in range(8)],
-        )
-        data.iloc[:, 4:] += 3.0
-        desc = pd.DataFrame(
-            {
-                "ID": data.columns.tolist(),
-                "sample": list(range(1, 9)),
-                "batch": [1] * 4 + [2] * 4,
-            }
-        )
         result = harmonize(data, desc, algorithm="limma")
-        assert not np.isnan(result.values).any(), "Clean input must produce no NaN in output"
 
-    def test_present_features_no_nan_despite_missing_neighbours(self):
-        """Features fully present in all batches have no NaN in output, even when
-        neighbouring features are structurally missing from some batches."""
+        assert any(received_nan), "Engine should have received NaN data"
+        assert np.isnan(result.iloc[2, :]).all(), (
+            "Feature with per-cell NaN should be all-NaN (row dropped by engine)"
+        )
+        assert not np.isnan(result.iloc[3:].values).any(), (
+            "Fully-present features should have no NaN in output"
+        )
+
+    def test_fully_present_features_no_nan_in_output(self):
+        """Features fully present in all batches have no NaN in output.
+
+        Failure condition: per-cell NaN from other features leaks into
+        fully-present features via column operations.
+        """
         data, desc = self._structural_nan_data()
         result = harmonize(data, desc, algorithm="ComBat", combat_mode=2)
-        # Features 2-9 are fully present → their output rows must have no NaN
-        assert not np.isnan(result.iloc[2:].values).any(), (
+        # Features 3-9 are fully present
+        assert not np.isnan(result.iloc[3:].values).any(), (
             "Fully-present features should have no NaN in output"
         )
 
     def test_output_nan_confined_to_absent_batch_columns(self):
-        """For a structurally absent batch, NaN in output is confined to that batch's columns."""
+        """For structurally absent batches, NaN is confined to those columns.
+
+        Failure condition: a structurally absent batch produces NaN in
+        columns outside that batch.
+        """
         data, desc = self._structural_nan_data()
         result = harmonize(data, desc, algorithm="ComBat", combat_mode=2)
-        # Feature 0 absent in batch 3 (cols 6-8) → NaN there, values elsewhere
+
+        # Feature 0 absent in batch 3 (cols 6-8)
         assert np.isnan(result.iloc[0, 6:]).all()
         assert not np.isnan(result.iloc[0, :6]).any()
-        # Feature 1 absent in batches 2+3 (cols 3-8) → NaN there, values in batch 1 (cols 0-2)
+
+        # Feature 1 absent in batches 2+3 (cols 3-8)
         assert np.isnan(result.iloc[1, 3:]).all()
         assert not np.isnan(result.iloc[1, :3]).any()
 

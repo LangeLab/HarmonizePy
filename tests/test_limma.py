@@ -118,15 +118,24 @@ class TestLimmaBasic:
 
 
 class TestLimmaEdgeCases:
-    def test_nan_rejected(self):
-        """Input containing NaN must raise ValueError.
+    def test_nan_rows_stay_nan(self):
+        """Rows with any NaN remain all-NaN in output; clean rows are adjusted.
 
-        Failure condition: NaN values are silently accepted.
+        Failure condition: NaN propagates to clean rows, shape changes,
+        or clean rows are not adjusted.
         """
-        data = np.array([[1.0, 2.0, np.nan, 4.0], [5.0, 6.0, 7.0, 8.0]])
-        batches = np.array([0, 0, 1, 1])
-        with pytest.raises(ValueError, match="NaN"):
-            remove_batch_effect(data, batches)
+        rng = np.random.default_rng(42)
+        n_clean, n_nan, n_samples = 8, 2, 6
+        data = rng.normal(10, 2, size=(n_clean + n_nan, n_samples))
+        data[-2:, 0] = np.nan
+        batch = np.array([0, 0, 0, 1, 1, 1])
+
+        result = remove_batch_effect(data, batch)
+
+        assert result.shape == data.shape
+        assert np.isnan(result[-2:, :]).all()
+        assert not np.isnan(result[:-2, :]).any()
+        assert not np.allclose(result[:-2, :], data[:-2, :])
 
     def test_single_batch_passthrough(self):
         """Single batch input must be returned unchanged.

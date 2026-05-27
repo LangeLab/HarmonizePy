@@ -110,59 +110,57 @@ class TestSplittingBasic:
 
 
 class TestSplittingNanAudit:
-    def test_combat_subframes_are_nan_free(self, monkeypatch: Any) -> None:
-        """Sub-DataFrames sent to combat must never contain NaN.
+    def test_per_cell_nan_passed_to_combat(self, monkeypatch: Any) -> None:
+        """Sub-DataFrames with per-cell NaN are passed to combat, which handles it.
 
-        Failure condition: a NaN leaks into the adjustment step,
-        which would cause the engine to raise ValueError.
+        Failure condition: splitting tries to drop columns or otherwise
+        prevent NaN from reaching the engine, losing valid data.
+
+        This matches R HarmonizR behavior: per-cell NaN within qualifying
+        blocks reaches sva::ComBat, which handles it via na.omit.
         """
         import harmonizepy.splitting as split_mod
 
-        called_with_nan = False
+        called_with_nan = [False]
 
         def tracking(data: np.ndarray, batch: np.ndarray, **kwargs: Any) -> np.ndarray:
-            nonlocal called_with_nan
             if np.isnan(data).any():
-                called_with_nan = True
+                called_with_nan[0] = True
             return _combat(data, batch, **kwargs)
 
         monkeypatch.setattr(split_mod, "combat", tracking)
 
         data = _make_data(6, 6)
-        data.iloc[0, 0:3] = np.nan
-        data.iloc[1, 3:6] = np.nan
+        data.iloc[0, 0] = np.nan    # per-cell NaN, still qualifies for batch 1
+        data.iloc[0, 3] = np.nan    # per-cell NaN, still qualifies for batch 2
         batch = np.array([1, 1, 1, 2, 2, 2])
         block = batch.copy()
         affil = build_affiliation_list(data, batch, block, needed_values=2)
+        # Feature 0 still qualifies (2 non-NaN per batch)
         splitting(affil, data, batch, block, algorithm="ComBat", combat_mode=2)
-        assert not called_with_nan
+        assert called_with_nan[0], "Engine should have received NaN data"
 
-    def test_limma_subframes_are_nan_free(self, monkeypatch: Any) -> None:
-        """Sub-DataFrames sent to remove_batch_effect must never contain NaN.
-
-        Failure condition: a NaN leaks into the adjustment step,
-        which would cause the engine to raise ValueError.
-        """
+    def test_per_cell_nan_passed_to_limma(self, monkeypatch: Any) -> None:
+        """Sub-DataFrames with per-cell NaN are passed to remove_batch_effect."""
         import harmonizepy.splitting as split_mod
 
-        called_with_nan = False
+        called_with_nan = [False]
 
         def tracking(data: np.ndarray, batch: np.ndarray) -> np.ndarray:
-            nonlocal called_with_nan
             if np.isnan(data).any():
-                called_with_nan = True
+                called_with_nan[0] = True
             return _remove_batch_effect(data, batch)
 
         monkeypatch.setattr(split_mod, "remove_batch_effect", tracking)
 
         data = _make_data(6, 6)
-        data.iloc[0, 0:3] = np.nan
-        data.iloc[1, 3:6] = np.nan
+        data.iloc[0, 0] = np.nan
+        data.iloc[0, 3] = np.nan
         batch = np.array([1, 1, 1, 2, 2, 2])
         block = batch.copy()
         affil = build_affiliation_list(data, batch, block, needed_values=2)
         splitting(affil, data, batch, block, algorithm="limma")
-        assert not called_with_nan
+        assert called_with_nan[0], "Engine should have received NaN data"
 
 
 class TestSplittingIntegration:

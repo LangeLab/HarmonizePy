@@ -110,17 +110,43 @@ class TestCombatModes:
 
 
 class TestEdgeCases:
-    def test_nan_rejected(self):
-        """Input containing NaN must raise ValueError.
+    def test_nan_rows_stay_nan(self):
+        """Rows with any NaN remain all-NaN in output; clean rows are adjusted.
 
-        Failure condition: NaN values are silently accepted or
-        produce incorrect results instead of raising.
+        Failure condition: NaN propagates to clean rows, or clean rows
+        are not adjusted, or the output shape changes.
+
+        This matches R sva::ComBat's na.omit behavior: features with
+        missing values are dropped from the EB computation and do not
+        appear adjusted in the output.
         """
-        df, batches = make_test_data(n_proteins=10, n_samples_per_batch=3, n_batches=2)
-        data = df.values.copy()
-        data[0, 0] = np.nan
-        with pytest.raises(ValueError, match="NaN"):
-            combat(data, batches)
+        rng = np.random.default_rng(42)
+        n_clean, n_nan, n_samples = 8, 2, 6
+        data = rng.normal(10, 2, size=(n_clean + n_nan, n_samples))
+        data[-2:, 0] = np.nan  # last 2 rows have NaN
+        batch = np.array([0, 0, 0, 1, 1, 1])
+
+        result = combat(data, batch, par_prior=True, mean_only=True)
+
+        # Shape preserved
+        assert result.shape == data.shape
+        # NaN rows stayed NaN
+        assert np.isnan(result[-2:, :]).all()
+        # Clean rows have no NaN
+        assert not np.isnan(result[:-2, :]).any()
+        # Clean rows were actually adjusted (different from input)
+        assert not np.allclose(result[:-2, :], data[:-2, :])
+
+    def test_all_nan_rows_returns_all_nan(self):
+        """All rows have NaN -> output is all-NaN (nothing to adjust).
+
+        Failure condition: a crash or partial output.
+        """
+        data = np.full((5, 6), np.nan)
+        batch = np.array([0, 0, 0, 1, 1, 1])
+        result = combat(data, batch)
+        assert result.shape == data.shape
+        assert np.isnan(result).all()
 
     def test_single_batch_passthrough(self):
         """Single batch input must be returned unchanged.
@@ -133,15 +159,20 @@ class TestEdgeCases:
         result = combat(df.values, batches)
         np.testing.assert_array_equal(result, df.values)
 
-    def test_too_few_features(self):
-        """Fewer than 2 features must raise ValueError.
+    def test_too_few_features_passed_through(self):
+        """Single feature with no NaN is passed through (combat can't adjust).
 
-        Failure condition: single-feature input is accepted.
+        Failure condition: the function crashes or produces NaN for the
+        single feature.
+
+        R sva::ComBat requires >= 2 features.  The pipeline handles this
+        via single-feature pass-through in splitting.py; the low-level
+        combat() returns raw data for < 2 clean features.
         """
         data = np.array([[1.0, 2.0, 3.0]])
         batches = np.array([0, 0, 1])
-        with pytest.raises(ValueError, match="at least 2 features"):
-            combat(data, batches)
+        result = combat(data, batches, par_prior=True, mean_only=True)
+        np.testing.assert_array_equal(result, data)
 
     def test_wrapper_invalid_mode(self):
         """Invalid combat mode passed to wrapper must raise ValueError.

@@ -257,10 +257,15 @@ def combat(
 ) -> _Array:
     """Apply ComBat batch-effect correction.
 
+    Per-cell NaN is handled by dropping affected feature rows before
+    computation, matching R ``sva::ComBat``'s internal ``na.omit``.
+    NaN rows stay NaN in the output.
+
     Parameters
     ----------
     data : ndarray, shape (n_features, n_samples)
-        Expression / abundance matrix.  **Must not contain NaN.**
+        Expression / abundance matrix.  Per-cell NaN is allowed;
+        rows with any NaN are omitted from the EB computation.
     batch : ndarray, shape (n_samples,)
         Integer batch labels, 0-indexed and contiguous (``0 .. n_batch-1``).
     par_prior : bool
@@ -274,12 +279,14 @@ def combat(
     Returns
     -------
     ndarray, shape (n_features, n_samples)
-        Batch-corrected data (same dtype as input promoted to float64).
+        Batch-corrected data.  Rows with any NaN in the input remain
+        all-NaN in the output.  All other rows are adjusted.
 
     Raises
     ------
     ValueError
-        On NaN in *data*, fewer than 2 features, or fewer than 2 batches.
+        On wrong dimensionality, fewer than 2 clean features, or
+        batch length mismatch.
 
     Examples
     --------
@@ -297,6 +304,59 @@ def combat(
     # ---- Input validation --------------------------------------------------
     validate_combat_input(data, batch_int)
 
+    n_features = data.shape[0]
+
+    # ---- Handle per-cell NaN (match R sva::ComBat na.omit) -----------------
+    # R sva::ComBat drops feature rows that contain any NaN, adjusts only
+    # the fully-observed rows, and the dropped rows are absent from output.
+    # We keep the same shape but leave dropped rows as all-NaN.
+    nan_rows = np.isnan(data).any(axis=1)
+    if nan_rows.any():
+        clean_data = data[~nan_rows]
+        n_clean = clean_data.shape[0]
+        logger.debug(
+            "Removed %d feature row(s) with NaN before adjustment; "
+            "%d clean feature(s) remain",
+            int(nan_rows.sum()),
+            n_clean,
+        )
+        result = np.full_like(data, np.nan)
+        if n_clean >= 2:
+            corrected_clean = _combat_dense(
+                clean_data, batch_int,
+                par_prior=par_prior, mean_only=mean_only, ref_batch=ref_batch,
+            )
+            result[~nan_rows] = corrected_clean
+        elif n_clean == 1:
+            # Single clean feature: can't estimate variance (t2 is NaN).
+            # Return the raw values unchanged.
+            logger.debug(
+                "Single clean feature after NaN removal: passing through raw values"
+            )
+            result[~nan_rows] = clean_data
+        return result
+
+    # No NaN in data.  Single-feature input cannot estimate variance
+    # across features (ddof=1 produces NaN for t2).  Return copy.
+    if n_features < 2:
+        logger.debug("Single feature input, returning copy")
+        return data.copy()
+
+    return _combat_dense(
+        data, batch_int,
+        par_prior=par_prior, mean_only=mean_only, ref_batch=ref_batch,
+    )
+
+
+def _combat_dense(
+    data: _Array,
+    batch_int: npt.NDArray[np.intp],
+    *,
+    par_prior: bool = True,
+    mean_only: bool = False,
+    ref_batch: int | None = None,
+) -> _Array:
+    """Dense (NaN-free) ComBat correction.  See ``combat()`` for docs."""
     n_features, n_samples = data.shape
 
     unique_batches = np.unique(batch_int)
@@ -316,7 +376,7 @@ def combat(
         n_batch,
     )
 
-    # Remap batch labels to 0..n_batch-1 (in case the caller passes e.g. [1,1,2,2])
+    # Remap batch labels to 0..n_batch-1
     label_map = {old: new for new, old in enumerate(unique_batches)}
     batch_int = np.array([label_map[b] for b in batch_int], dtype=np.intp)
 
@@ -330,62 +390,44 @@ def combat(
     else:
         ref_idx = None
 
-    # Batch membership indices
     batches_ind = [np.where(batch_int == i)[0] for i in range(n_batch)]
     batch_sizes = np.array([len(b) for b in batches_ind], dtype=np.float64)
 
-    # Force mean_only when any batch has < 2 samples (mirrors R sva::ComBat).
-    # Variance cannot be estimated from a single observation, so scale
-    # correction is impossible.  Override the caller's setting silently.
     if not mean_only and np.any(batch_sizes < 2):
         logger.debug("Forcing mean_only=True: batch with < 2 samples detected")
         mean_only = True
 
-    # ---- Design matrix (one-hot) -------------------------------------------
-    design = _make_design(batch_int, n_batch)  # (n_batch, n_samples)
+    design = _make_design(batch_int, n_batch)
 
     # ---- Standardise -------------------------------------------------------
-    # Regression: B_hat = (X X')^{-1} X Y'   where X=design, Y=data
-    XXT = design @ design.T  # (n_batch, n_batch) diagonal  # noqa: N806
-    B_hat = np.linalg.solve(XXT, design @ data.T)  # (n_batch, n_features)  # noqa: N806
+    XXT = design @ design.T
+    B_hat = np.linalg.solve(XXT, design @ data.T)
 
     if ref_idx is not None:
-        grand_mean = B_hat[ref_idx]  # (n_features,)
+        grand_mean = B_hat[ref_idx]
     else:
-        grand_mean = (batch_sizes / n_samples) @ B_hat  # (n_features,)
+        grand_mean = (batch_sizes / n_samples) @ B_hat
 
-    # Pooled variance
     if ref_idx is not None:
         ref_cols = batches_ind[ref_idx]
-        fitted = design[:, ref_cols].T @ B_hat  # (n_ref, n_features)
-        residuals = data[:, ref_cols].T - fitted  # (n_ref, n_features)
-        var_pooled = (residuals**2).mean(axis=0)  # (n_features,)
+        fitted = design[:, ref_cols].T @ B_hat
+        residuals = data[:, ref_cols].T - fitted
+        var_pooled = (residuals**2).mean(axis=0)
     else:
-        fitted = design.T @ B_hat  # (n_samples, n_features)
-        residuals = data.T - fitted  # (n_samples, n_features)
-        var_pooled = (residuals**2).mean(axis=0)  # (n_features,)
+        fitted = design.T @ B_hat
+        residuals = data.T - fitted
+        var_pooled = (residuals**2).mean(axis=0)
 
-    # Avoid division by zero for near-constant features.
-    # Features with essentially zero variance are clamped to a small
-    # positive value so standardisation does not produce Inf.
     var_pooled = np.maximum(var_pooled, 1e-12)
-    std_pooled = np.sqrt(var_pooled)  # (n_features,)
-
-    # stand_mean: grand_mean broadcast to (n_features, n_samples)
-    stand_mean = grand_mean[:, np.newaxis]  # will broadcast
-
-    # Standardised data
+    std_pooled = np.sqrt(var_pooled)
+    stand_mean = grand_mean[:, np.newaxis]
     s_data = (data - stand_mean) / std_pooled[:, np.newaxis]
 
     # ---- Estimate batch effects --------------------------------------------
-    # gamma_hat: additive effect per batch  (n_batch, n_features)
-    batch_design = design  # (n_batch, n_samples)
     gamma_hat = np.linalg.solve(
-        batch_design @ batch_design.T,
-        batch_design @ s_data.T,
-    )  # (n_batch, n_features)
+        design @ design.T, design @ s_data.T,
+    )
 
-    # delta_hat: multiplicative effect per batch
     if mean_only:
         delta_hat = np.ones_like(gamma_hat)
     else:
@@ -393,13 +435,9 @@ def combat(
         for i, idx in enumerate(batches_ind):
             delta_hat[i] = s_data[:, idx].var(axis=1, ddof=1)
 
-    # Prior parameters
-    gamma_bar = gamma_hat.mean(axis=1)  # (n_batch,)
-    t2 = gamma_hat.var(axis=1, ddof=1)  # (n_batch,)
+    gamma_bar = gamma_hat.mean(axis=1)
+    t2 = gamma_hat.var(axis=1, ddof=1)
 
-    # a_prior/b_prior are only used by the parametric iterative solver.
-    # For non-parametric mode, computing them on near-zero delta_hat would
-    # produce NaN (s2=0 → divide-by-zero) that triggers spurious RuntimeWarnings.
     if par_prior and not mean_only:
         a_prior = np.array([_aprior(delta_hat[i]) for i in range(n_batch)])
         b_prior = np.array([_bprior(delta_hat[i]) for i in range(n_batch)])
@@ -407,12 +445,11 @@ def combat(
         a_prior = np.ones(n_batch)
         b_prior = np.ones(n_batch)
 
-    # ---- Solve for batch effects -------------------------------------------
-    gamma_star = np.empty_like(gamma_hat)  # (n_batch, n_features)
-    delta_star = np.empty_like(gamma_hat)  # (n_batch, n_features)
+    gamma_star = np.empty_like(gamma_hat)
+    delta_star = np.empty_like(gamma_hat)
 
     for i, idx in enumerate(batches_ind):
-        batch_s_data = s_data[:, idx]  # (n_features, n_batch_i)
+        batch_s_data = s_data[:, idx]
         if par_prior:
             if mean_only:
                 t2_n = t2[i] * 1.0
@@ -421,24 +458,15 @@ def combat(
                 delta_star[i] = 1.0
             else:
                 gamma_star[i], delta_star[i] = _it_sol(
-                    batch_s_data,
-                    gamma_hat[i],
-                    delta_hat[i],
-                    gamma_bar[i],
-                    t2[i],
-                    a_prior[i],
-                    b_prior[i],
+                    batch_s_data, gamma_hat[i], delta_hat[i],
+                    gamma_bar[i], t2[i], a_prior[i], b_prior[i],
                 )
         else:
-            if mean_only:
-                d_hat_i = np.ones_like(delta_hat[i])
-            else:
-                d_hat_i = delta_hat[i]
+            d_hat_i = np.ones_like(delta_hat[i]) if mean_only else delta_hat[i]
             g_star_i, d_star_i = _int_eprior(batch_s_data, gamma_hat[i], d_hat_i)
             gamma_star[i] = g_star_i
             delta_star[i] = d_star_i if not mean_only else 1.0
 
-    # Reference batch stays unadjusted
     if ref_idx is not None:
         gamma_star[ref_idx] = 0.0
         delta_star[ref_idx] = 1.0
@@ -446,15 +474,11 @@ def combat(
     # ---- Adjust data -------------------------------------------------------
     corrected = s_data.copy()
     for i, idx in enumerate(batches_ind):
-        # Guard against negative delta_star (possible from _postvar with
-        # pathological data) which would make np.sqrt return NaN.
         sqrt_delta = np.sqrt(np.maximum(delta_star[i], 1e-12))[:, np.newaxis]
         corrected[:, idx] = (corrected[:, idx] - gamma_star[i][:, np.newaxis]) / sqrt_delta
 
-    # De-standardise
     corrected = corrected * std_pooled[:, np.newaxis] + stand_mean
 
-    # Restore reference batch from original data
     if ref_idx is not None:
         corrected[:, batches_ind[ref_idx]] = data[:, batches_ind[ref_idx]]
 

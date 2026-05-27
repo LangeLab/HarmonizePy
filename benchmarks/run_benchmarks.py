@@ -44,7 +44,7 @@ _DATA_DIR = Path(__file__).parent / "data"
 _RESULTS_DIR = Path(__file__).parent / "results"
 _RESULTS_MD = Path(__file__).parent / "RESULTS.md"
 
-_DATASETS = ["small", "medium", "large", "scp_small", "scp_large"]
+_DATASETS = ["small", "medium", "large", "scp_small", "scp_large", "murine_medulloblastoma"]
 _SCP_DATASETS = {"scp_small", "scp_large"}
 _R_AVAILABLE = shutil.which("Rscript") is not None
 
@@ -76,18 +76,23 @@ if _R_AVAILABLE:
 
 _BENCHMARKS: list[tuple[str, str, int | None, int | None, str | None]] = [
     # Bulk proteomics (small/medium/large)
-    *[(ds, "limma", None, None, None) for ds in _DATASETS if ds not in _SCP_DATASETS],
-    *[(ds, "ComBat", m, None, None) for ds in _DATASETS if ds not in _SCP_DATASETS for m in [1, 2, 3, 4]],
-    *[(ds, "ComBat", m, 2, None) for ds in _DATASETS if ds not in _SCP_DATASETS for m in [1, 2, 3, 4]],
+    *[(ds, "limma", None, None, None) for ds in _DATASETS if ds not in _SCP_DATASETS and ds != "murine_medulloblastoma"],
+    *[(ds, "ComBat", m, None, None) for ds in _DATASETS if ds not in _SCP_DATASETS and ds != "murine_medulloblastoma" for m in [1, 2, 3, 4]],
+    *[(ds, "ComBat", m, 2, None) for ds in _DATASETS if ds not in _SCP_DATASETS and ds != "murine_medulloblastoma" for m in [1, 2, 3, 4]],
     *[(ds, "ComBat", m, 2, "sparsity") for ds in ["medium", "large"] for m in [1, 2, 3, 4]],
     # Single-cell proteomics (Python only, no block/sort)
     *[(ds, "limma", None, None, None) for ds in _SCP_DATASETS],
     *[(ds, "ComBat", m, None, None) for ds in _SCP_DATASETS for m in [1, 2, 3, 4]],
+    # Real murine data
+    *[(ds, "limma", None, None, None) for ds in ["murine_medulloblastoma"]],
+    *[(ds, "ComBat", m, None, None) for ds in ["murine_medulloblastoma"] for m in [1, 2, 3, 4]],
+    *[(ds, "ComBat", m, 2, None) for ds in ["murine_medulloblastoma"] for m in [1, 2, 3, 4]],
 ]
 
 _DS_FEATURES: dict[str, int] = {
     "small": 1000, "medium": 5000, "large": 10000,
     "scp_small": 3000, "scp_large": 5000,
+    "murine_medulloblastoma": 4753,
 }
 
 _DS_INFO: dict[str, dict[str, int | float]] = {
@@ -96,6 +101,7 @@ _DS_INFO: dict[str, dict[str, int | float]] = {
     "large": {"features": 10000, "samples": 100, "batches": 20, "missing": 0.05},
     "scp_small": {"features": 3000, "samples": 1000, "batches": 20, "missing": 0.50},
     "scp_large": {"features": 5000, "samples": 10000, "batches": 100, "missing": 0.60},
+    "murine_medulloblastoma": {"features": 4753, "samples": 25, "batches": 4, "missing": 0.49},
 }
 
 
@@ -118,10 +124,17 @@ class RunResult:
 def _generate_datasets(datasets: list[str]) -> None:
     for ds in datasets:
         data_file = _DATA_DIR / f"{ds}_input.tsv"
-        if not data_file.exists():
-            subprocess.run(
-                [sys.executable, str(_GENERATE_SCRIPT), "--dataset", ds],
-                check=True,
+        if data_file.exists():
+            continue
+        # Only attempt generation for datasets known to the generator
+        result = subprocess.run(
+            [sys.executable, str(_GENERATE_SCRIPT), "--dataset", ds],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"Failed to generate dataset '{ds}': {result.stderr.strip()}"
             )
 
 
@@ -304,7 +317,7 @@ def _generate_data_specs_table() -> str:
         "large": "Bulk proteomics, large",
         "scp_small": "SCP cohort, small",
         "scp_large": "SCP cohort, large",
-        "scp_xlarge": "SCP cohort, x-large",
+        "murine_medulloblastoma": "Real murine medulloblastoma",
     }
     lines = [
         "## Data Specifications",

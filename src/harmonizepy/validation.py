@@ -114,15 +114,16 @@ def validate_combat_input(data: _Array, batch: npt.NDArray[np.integer[Any]]) -> 
     Parameters
     ----------
     data : ndarray, shape (n_features, n_samples)
-        Features x samples matrix.  Must be 2-D and NaN-free.
+        Features x samples matrix.  Per-cell NaN is allowed and handled
+        by dropping affected rows inside combat() (matching R
+        sva::ComBat ``na.omit``).
     batch : ndarray, shape (n_samples,)
         Integer batch labels; length must equal the number of samples.
 
     Raises
     ------
     ValueError
-        On NaN in *data*, wrong dimensionality, < 2 features, or
-        batch length mismatch.
+        On wrong dimensionality or batch length mismatch.
 
     Examples
     --------
@@ -135,18 +136,6 @@ def validate_combat_input(data: _Array, batch: npt.NDArray[np.integer[Any]]) -> 
         raise ValueError(f"data must be a 2-D array (features x samples), got {data.ndim}-D.")
 
     n_features, n_samples = data.shape
-
-    if n_features < 2:
-        raise ValueError(
-            f"ComBat requires at least 2 features (rows), got {n_features}. "
-            f"Use limma for single-feature scenarios."
-        )
-
-    if np.isnan(data).any():
-        raise ValueError(
-            "data must not contain NaN before calling combat(). "
-            "Use harmonize() which handles structural missingness automatically."
-        )
 
     if batch.shape[0] != n_samples:
         raise ValueError(
@@ -161,14 +150,15 @@ def validate_limma_input(data: _Array, batch: _Array) -> None:
     Parameters
     ----------
     data : ndarray, shape (n_features, n_samples)
-        Features x samples matrix.  Must be 2-D and NaN-free.
+        Features x samples matrix.  Per-cell NaN is allowed and handled
+        by dropping affected rows.
     batch : ndarray, shape (n_samples,)
         Integer batch labels; length must equal the number of samples.
 
     Raises
     ------
     ValueError
-        On NaN in *data*, wrong dimensionality, or batch length mismatch.
+        On wrong dimensionality or batch length mismatch.
 
     Examples
     --------
@@ -179,12 +169,6 @@ def validate_limma_input(data: _Array, batch: _Array) -> None:
     """
     if data.ndim != 2:
         raise ValueError(f"data must be a 2-D array (features x samples), got {data.ndim}-D.")
-
-    if np.isnan(data).any():
-        raise ValueError(
-            "data must not contain NaN before calling remove_batch_effect(). "
-            "Use harmonize() which handles structural missingness automatically."
-        )
 
     _, n_samples = data.shape
 

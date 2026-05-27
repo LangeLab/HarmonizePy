@@ -36,22 +36,27 @@ def remove_batch_effect(
 ) -> _Array:
     """Remove batch effects using a linear model (limma-style).
 
+    Per-cell NaN is handled by dropping affected feature rows before
+    computation.  NaN rows stay NaN in the output.
+
     Parameters
     ----------
     data : ndarray, shape (n_features, n_samples)
-        Expression / abundance matrix.  **Must not contain NaN.**
+        Expression / abundance matrix.  Per-cell NaN is allowed;
+        rows with any NaN are omitted from the OLS fit.
     batch : ndarray, shape (n_samples,)
         Integer batch labels.
 
     Returns
     -------
     ndarray, shape (n_features, n_samples)
-        Batch-corrected data.
+        Batch-corrected data.  Rows with any NaN in the input remain
+        all-NaN in the output.  All other rows are adjusted.
 
     Raises
     ------
     ValueError
-        On NaN in *data* or fewer than 2 batches.
+        On wrong dimensionality or batch length mismatch.
 
     Examples
     --------
@@ -68,6 +73,28 @@ def remove_batch_effect(
 
     validate_limma_input(data, batch)
 
+    # ---- Handle per-cell NaN: drop rows with any NaN -----------------------
+    # Match R's implicit row-omission behavior for missing data.
+    nan_rows = np.isnan(data).any(axis=1)
+    if nan_rows.any():
+        clean_data = data[~nan_rows]
+        logger.debug(
+            "Removed %d feature row(s) with NaN before adjustment; "
+            "%d clean feature(s) remain",
+            int(nan_rows.sum()),
+            int(clean_data.shape[0]),
+        )
+        result = np.full_like(data, np.nan)
+        if clean_data.shape[0] >= 1:
+            corrected_clean = _remove_batch_effect_dense(clean_data, batch)
+            result[~nan_rows] = corrected_clean
+        return result
+
+    return _remove_batch_effect_dense(data, batch)
+
+
+def _remove_batch_effect_dense(data: _Array, batch: _Array) -> _Array:
+    """Dense (NaN-free) limma-style batch correction.  See ``remove_batch_effect``."""
     _, n_samples = data.shape
 
     unique_batches = np.unique(batch)
@@ -77,9 +104,6 @@ def remove_batch_effect(
         return data.copy()
 
     # --- Sum-to-zero contrasts (R's contr.sum) ---
-    # For k levels, produces (n_samples, k-1) matrix.
-    # Level i (i < k): column j = 1 if i==j, else 0
-    # Level k (last):  all columns = -1
     label_map = {b: i for i, b in enumerate(unique_batches)}
     batch_idx = np.array([label_map[b] for b in batch], dtype=np.intp)
 
@@ -88,16 +112,12 @@ def remove_batch_effect(
         X_batch[batch_idx == j, j] = 1.0
     X_batch[batch_idx == n_batch - 1, :] = -1.0
 
-    # --- Design: intercept + batch contrasts ---
     intercept = np.ones((n_samples, 1), dtype=np.float64)
-    design = np.hstack([intercept, X_batch])  # (n_samples, 1 + n_batch-1)
+    design = np.hstack([intercept, X_batch])
 
-    # --- OLS fit: beta = (X'X)^{-1} X' Y'  →  (n_coefs, n_features) ---
-    # Then beta.T → (n_features, n_coefs)
-    beta = np.linalg.lstsq(design, data.T, rcond=None)[0].T  # (n_features, n_coefs)
+    beta = np.linalg.lstsq(design, data.T, rcond=None)[0].T
 
-    # --- Subtract batch effect (columns after intercept) ---
-    beta_batch = beta[:, 1:]  # (n_features, n_batch-1)
+    beta_batch = beta[:, 1:]
     beta_batch = np.nan_to_num(beta_batch, nan=0.0)
 
     corrected = data - beta_batch @ X_batch.T
