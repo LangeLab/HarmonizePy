@@ -76,6 +76,10 @@ def remove_batch_effect(
     if not has_nan:
         return _remove_batch_effect_dense(data, batch)
 
+    if np.isnan(data).all():
+        logger.debug("All-NaN input, returning copy")
+        return data.copy()
+
     return _remove_batch_effect_nan(data, batch)
 
 

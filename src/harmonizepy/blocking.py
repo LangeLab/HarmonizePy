@@ -85,22 +85,18 @@ def build_block_list(
         )
 
     # Assign each unique batch to a block index (0-based), then +1 for 1-indexing
-    batch_to_block = {}
-    for i, bid in enumerate(unique_batches):
-        batch_to_block[int(bid)] = i // block_size + 1
+    batch_to_block = {int(bid): i // block_size + 1 for i, bid in enumerate(unique_batches)}
 
-    block_arr = np.empty_like(batch_arr)
-    for j, bid in enumerate(batch_arr):
-        block_arr[j] = batch_to_block[int(bid)]
+    block_arr = np.vectorize(batch_to_block.__getitem__)(batch_arr).astype(batch_arr.dtype)
 
-    n_blocks = len(np.unique(block_arr))
+    n_blocks = int(block_arr[-1])
     logger.debug(
         "Built %d blocks of size %d from %d batches",
         n_blocks,
         block_size,
         n_batches,
     )
-    return block_arr
+    return block_arr  # type: ignore[no-any-return]
 
 
 # ---------------------------------------------------------------------------

@@ -6,35 +6,36 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-27
+
 ### Added
 
 - NaN handling: per-feature Beta.NA computation in ComBat and limma engines, matching R sva v3.60.0. NaN-shaped sub-matrices pass through to engines; each feature independently omits NaN from OLS, variance, and EB computations.
 - NaN-safe iterative (`_it_sol`) and non-parametric (`_int_eprior`) EB solvers using per-gene non-NA counts.
 - Per-cell NaN R concordance fixtures and murine medulloblastoma real-data verification. All modes concordant at max_rel 0.0003.
-- Benchmark suite: synthetic data generator, timing/memory harness, R comparison template, RESULTS.md with data specs and per-scenario tables.
-- Benchmark datasets: small/medium/large (bulk proteomics), scp_small/scp_large (SCP with abundance-dependent missingness), murine_medulloblastoma (real).
-- CLI logging flags (`--log-file`, `--no-log`), module-level logging, pipeline timing.
-- CI workflow (ruff, mypy, pytest via uv).
-- FEATURE_PARITY.md and MASTER_REFERENCE.md with complete R vs Python difference inventory.
-- STYLE_GUIDE.md and TESTING.md documentation.
+- FEATURE_PARITY.md with complete R vs Python difference inventory.
+- DIA real-proteomics dataset verification: 8470 proteins, 2 batches, perfect concordance at machine epsilon.
 
 ### Changed
 
 - Engine NaN handling: replaced row-dropping with per-feature Beta.NA path. Dense path unchanged.
 - `splitting.py`: removed column-dropping logic. Per-cell NaN flows through to engines.
 - `validation.py`: NaN allowed in engine inputs; validation checks only structural properties.
-- Performance: `_int_eprior` binomial formula optimization (mode 3: 2.2x faster), `build_affiliation_list` vectorization (7x faster), `splitting.py` numpy-only hot loop (1.4-2.2x faster).
-- IO: parquet default output (12x faster writes, 2x smaller), pyarrow CSV engine auto-detect, removed feather support.
 - Test NaN invariants: now verify correct NaN handling rather than asserting NaN-free input.
-- Console logging to stderr. Logger propagation disabled.
+- Code cleanup: removed redundant copies, consolidated duplicated helpers, vectorized block assignment.
+- Benchmark runner: R memory measurement, expanded concordance metrics, corrected blocked mode results.
 
 ### Fixed
 
 - `_it_sol`: `t2_n_g_hat` uses original `g_hat` per iteration (not updated `g_new`), matching R's `postmean` formula. Prevents divergence with NaN data.
 - `_int_eprior`: likelihood normalization uses per-gene `n_i` instead of fixed batch size. Enables correct non-parametric EB with per-cell NaN.
 - Benchmark data generator: minimum 4 samples per batch to satisfy needed_values=2.
-- Benchmark runner: unique tagged filenames per scenario.
+- Benchmark runner: unique tagged filenames per scenario, R memory measurement via `/usr/bin/time -v`.
 - Dry-run mode: pipeline DEBUG suppressed during plan output.
+
+### Performance
+
+Modes 1/2 run in ~1.3-1.7s on 8470x36 data. Modes 3/4 dominate at ~8.5s (80% spent in `_int_eprior` broadcast loop). Targets: binomial formula for `_int_eprior` (est. 2.8x on modes 3/4), grouped NaN-pattern solving for per-feature OLS/variance.
 
 ## [0.2.0] - 2026-04-01
 

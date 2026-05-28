@@ -36,8 +36,8 @@ def validate_data_matrix(df: pd.DataFrame) -> None:
     >>> df = pd.DataFrame({"s1": [1.0, 2.0], "s2": [3.0, 4.0]})
     >>> validate_data_matrix(df)  # no error
     """
-    if df.index.duplicated().any():
-        dups = df.index[df.index.duplicated(keep=False)].unique().tolist()
+    dups = df.index[df.index.duplicated(keep=False)].unique().tolist()
+    if dups:
         raise ValueError(
             f"data contains duplicate feature names (first {len(dups[:5])}: "
             f"{dups[:5]}). Each row must have a unique identifier."
@@ -114,9 +114,10 @@ def validate_combat_input(data: _Array, batch: npt.NDArray[np.integer[Any]]) -> 
     Parameters
     ----------
     data : ndarray, shape (n_features, n_samples)
-        Features x samples matrix.  Per-cell NaN is allowed and handled
-        by dropping affected rows inside combat() (matching R
-        sva::ComBat ``na.omit``).
+        Features x samples matrix. Per-cell NaN is allowed and handled
+        inside ``combat()`` via per-feature computations that omit only
+        the NaN observations for the feature being fitted. NaN positions
+        are preserved in the output.
     batch : ndarray, shape (n_samples,)
         Integer batch labels; length must equal the number of samples.
 
@@ -150,8 +151,10 @@ def validate_limma_input(data: _Array, batch: _Array) -> None:
     Parameters
     ----------
     data : ndarray, shape (n_features, n_samples)
-        Features x samples matrix.  Per-cell NaN is allowed and handled
-        by dropping affected rows.
+        Features x samples matrix. Per-cell NaN is allowed and handled
+        inside ``remove_batch_effect()`` via per-feature fits that omit
+        only the NaN observations for the feature being fitted. NaN
+        positions are preserved in the output.
     batch : ndarray, shape (n_samples,)
         Integer batch labels; length must equal the number of samples.
 
@@ -180,6 +183,44 @@ def validate_limma_input(data: _Array, batch: _Array) -> None:
 
 
 _VALID_SORT_STRATEGIES: frozenset[str] = frozenset({"sparsity", "jaccard", "seriation"})
+
+
+def _validate_core_args(
+    algorithm: str,
+    combat_mode: int,
+    needed_values: int | None,
+    sort_strategy: str | None = None,
+    block_size: int | None = None,
+    unique_removal: bool = True,
+) -> None:
+    """Validate core parameter constraints shared by HarmonizeConfig and harmonize()."""
+    if algorithm not in ("ComBat", "limma"):
+        raise ValueError(f"algorithm must be 'ComBat' or 'limma', got {algorithm!r}.")
+    if combat_mode not in (1, 2, 3, 4):
+        raise ValueError(
+            f"combat_mode must be 1, 2, 3, or 4, got {combat_mode}. "
+            f"Modes 1/2 are parametric; 3/4 are non-parametric. "
+            f"Modes 1/3 adjust location+scale; 2/4 adjust location only."
+        )
+    if needed_values is not None and needed_values < 1:
+        raise ValueError(
+            f"needed_values must be >= 1 or None, got {needed_values}. "
+            f"Use needed_values=None to auto-select based on algorithm."
+        )
+    if sort_strategy is not None and sort_strategy not in _VALID_SORT_STRATEGIES:
+        raise ValueError(
+            f"sort must be one of {sorted(_VALID_SORT_STRATEGIES)!r} or None, "
+            f"got {sort_strategy!r}."
+        )
+    if block_size is not None and (not isinstance(block_size, int) or block_size < 2):
+        raise ValueError(
+            f"block must be an integer >= 2 or None, got {block_size!r}. "
+            f"Use block=None to disable blocking."
+        )
+    if not isinstance(unique_removal, bool):
+        raise TypeError(
+            f"unique_removal must be True or False, got {type(unique_removal).__name__!r}."
+        )
 
 
 def validate_harmonize_args(
@@ -228,36 +269,9 @@ def validate_harmonize_args(
     >>> validate_harmonize_args("ComBat", 1, 2, sort_strategy="sparsity",
     ...                         block_size=2, n_batches=4)  # no error
     """
-    if algorithm not in ("ComBat", "limma"):
-        raise ValueError(f"algorithm must be 'ComBat' or 'limma', got {algorithm!r}.")
-    if combat_mode not in (1, 2, 3, 4):
+    _validate_core_args(algorithm, combat_mode, needed_values, sort_strategy, block_size, unique_removal)
+    if n_batches is not None and block_size is not None and block_size >= n_batches:
         raise ValueError(
-            f"combat_mode must be 1, 2, 3, or 4, got {combat_mode}. "
-            f"Modes 1/2 are parametric; 3/4 are non-parametric. "
-            f"Modes 1/3 adjust location+scale; 2/4 adjust location only."
-        )
-    if needed_values < 1:
-        raise ValueError(
-            f"needed_values must be >= 1, got {needed_values}. "
-            f"Use needed_values=None to auto-select based on algorithm."
-        )
-    if sort_strategy is not None and sort_strategy not in _VALID_SORT_STRATEGIES:
-        raise ValueError(
-            f"sort must be one of {sorted(_VALID_SORT_STRATEGIES)!r} or None, "
-            f"got {sort_strategy!r}."
-        )
-    if block_size is not None:
-        if not isinstance(block_size, int) or block_size < 2:
-            raise ValueError(
-                f"block must be an integer >= 2 or None, got {block_size!r}. "
-                f"Use block=None to disable blocking."
-            )
-        if n_batches is not None and block_size >= n_batches:
-            raise ValueError(
-                f"block ({block_size}) must be less than the number of unique batches "
-                f"({n_batches}). Each block needs at least two batches to be meaningful."
-            )
-    if not isinstance(unique_removal, bool):
-        raise TypeError(
-            f"unique_removal must be True or False, got {type(unique_removal).__name__!r}."
+            f"block ({block_size}) must be less than the number of unique batches "
+            f"({n_batches}). Each block needs at least two batches to be meaningful."
         )

@@ -138,8 +138,6 @@ def harmonize(
     if isinstance(data, (str, Path)):
         logger.debug("Reading data from %s", data)
         data = read_main_data(str(data))
-    else:
-        data = data.copy()
     assert isinstance(data, pd.DataFrame)  # narrow: always DataFrame after load
 
     if isinstance(description, (str, Path)):
@@ -201,7 +199,7 @@ def harmonize(
         logger.info("Blocking: %d batches → blocks of size %d", n_batches, block)
         block_list = build_block_list(batch_list, block_size=block)
     else:
-        block_list = batch_list.copy()
+        block_list = batch_list
 
     # --- Spot missing values -----------------------------------------------
     affiliation_list = build_affiliation_list(data, batch_list, block_list, needed_values)

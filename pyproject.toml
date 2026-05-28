@@ -1,6 +1,6 @@
 [project]
 name = "harmonizepy"
-version = "0.2.0"
+version = "0.3.0"
 description = "Pure-Python batch-effect harmonization (ComBat + limma), validated against R sva/HarmonizR."
 readme = "README.md"
 license = "GPL-3.0-only"

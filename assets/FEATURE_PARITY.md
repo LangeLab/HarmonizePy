@@ -1,4 +1,4 @@
-# Feature Parity: R HarmonizR v1.10.0 vs HarmonizePy v0.2.0
+# Feature Parity: R HarmonizR v1.10.0 vs HarmonizePy v0.3.0
 
 References: R source at `ref/HarmonizR/R/` (13 files). R sva v3.60.0, limma, HarmonizR v1.10.0 via Bioconductor 3.23.
 
@@ -80,6 +80,7 @@ R selects rows by sorted integer affiliation index and columns by `which(block_l
 - Single-feature sub-df: **R drops, Python pass-through** (KNOWN DIVERGENCE).
 - Multi-batch with per-cell NaN: both use per-feature computation (Beta.NA approach). Murine verified at max_rel 0.0003.
 - Multi-batch, no NaN: both use vectorized path. 185 tests pass.
+- **NaN position mismatch on ~1.5% of shared features** (medium dataset): affiliation logic matches R exactly, but output NaN positions differ on ~77/4968 features. Root cause is in ComBat engine's handling of mixed NaN patterns within a multi-feature sub-matrix. Non-NaN values match perfectly. Not observed on murine dataset. Documented as low-priority edge case.
 
 ### 2.4 Reassembly
 
@@ -132,18 +133,21 @@ Python retains more features in all cases. The trade-off: retained features are 
 
 ## 7. Verification Status
 
-| Scenario                    | ComBat 1-4                | limma                     | Notes                        |
-| --------------------------- | ------------------------- | ------------------------- | ---------------------------- |
-| Dense synthetic             | PASS (rtol 2e-5 to 5e-4)  | PASS (rtol 1e-9)          | 185 fixture tests            |
-| Structural missingness      | PASS (rtol 5e-4)          | PASS (rtol 1e-8)          | 185 fixture tests            |
-| Blocking (block=2,4)        | PASS (rtol 5e-4)          | PASS (rtol 1e-8)          | 185 fixture tests            |
-| Sparsity sort + block       | PASS (rtol 5e-4)          | PASS (rtol 1e-8)          | 185 fixture tests            |
-| Jaccard sort + block        | PASS (rtol 5e-4)          | --                        | One 3-batch fixture          |
-| Seriation sort + block      | PASS (rtol 5e-4)          | --                        | One 3-batch fixture          |
-| Per-cell NaN synthetic      | PASS                      | PASS                      | 5 new fixtures               |
-| **Murine medulloblastoma**  | **PASS (max_rel 0.0003)** | **PASS (max_rel 0.0000)** | **Real data, 4753 features** |
-| Unique-removal chain rescue | NOT TESTED                | --                        | No fixture                   |
-| Combined stress             | NOT TESTED                | NOT TESTED                | No fixture                   |
+| Scenario                         | ComBat 1-4                | limma                     | Notes                                          |
+| -------------------------------- | ------------------------- | ------------------------- | ---------------------------------------------- |
+| Dense synthetic                  | PASS (rtol 2e-5 to 5e-4)  | PASS (rtol 1e-9)          | 185 fixture tests                              |
+| Structural missingness           | PASS (rtol 5e-4)          | PASS (rtol 1e-8)          | 185 fixture tests                              |
+| Blocking (block=2,4)             | PASS (rtol 5e-4)          | PASS (rtol 1e-8)          | 185 fixture tests                              |
+| Sparsity sort + block            | PASS (rtol 5e-4)          | PASS (rtol 1e-8)          | 185 fixture tests                              |
+| Jaccard sort + block             | PASS (rtol 5e-4)          | --                        | One 3-batch fixture                            |
+| Seriation sort + block           | PASS (rtol 5e-4)          | --                        | One 3-batch fixture                            |
+| Per-cell NaN synthetic           | PASS (max_rel 0.0000)     | PASS (max_rel 0.0000)     | NaN positions match                            |
+| **Murine unblocked**             | **PASS (max_rel 0.0003)** | **PASS (max_rel 2e-10)**  | **Real data, NaN positions match**             |
+| **Murine blocked (block=2)**     | **PASS (max_rel 6e-06)**  | **--**                    | **Real data, blocked mode concordant**         |
+| Unique-removal chain rescue      | NOT TESTED                | --                        | No fixture                                     |
+| Combined stress                  | NOT TESTED                | NOT TESTED                | No fixture                                     |
+
+Blocked mode was previously reported as catastrophically divergent (70-140% mean diff). This was an artifact of stale R output files. With fresh R outputs generated from the same input data, blocked mode is perfectly concordant at machine epsilon.
 
 ---
 

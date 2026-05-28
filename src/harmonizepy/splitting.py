@@ -126,9 +126,11 @@ def splitting(
             output[np.ix_(row_idx, col_indices)] = sub_data
             continue
 
-        # Per-cell NaN within a qualifying block is handled by the engines
-        # (combat.py / limma_wrapper.py) which drop affected rows before
-        # computation, matching R sva::ComBat's na.omit behavior.
+        # Per-cell NaN within a qualifying block is handled inside the
+        # engines on a per-feature basis. They omit only the NaN
+        # observations from each feature's computation and preserve NaN
+        # positions in the output, matching the Beta.NA-style behavior
+        # used by current R sva::ComBat.
 
         # Apply adjustment
         if algorithm == "limma":

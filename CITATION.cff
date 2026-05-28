@@ -3,8 +3,8 @@ title: "HarmonizePy: Pure-Python batch-effect harmonization with structural miss
 message: "If you use HarmonizePy in your research, please cite it using the metadata below."
 type: software
 repository-code: "https://github.com/LangeLab/HarmonizePy"
-version: 0.2.0
-date-released: "2026-04-01"
+version: 0.3.0
+date-released: "2026-05-27"
 license: GPL-3.0
 abstract: >
   HarmonizePy is a Pure-Python batch-effect correction toolkit for omics
@@ -17,22 +17,23 @@ abstract: >
   It provides all four modes of ComBat (Johnson, Li & Rabinovic, 2007):
   parametric and non-parametric, with and without scale correction. It
   also implements limma-style batch removal via sum-to-zero contrasts
-  (Ritchie et al., 2015). The pipeline matches HarmonizR v1.10.0: per-row
-  batch-presence detection splits the matrix into NaN-free sub-frames,
-  each adjusted independently and then reassembled into the original
-  shape. Three sort strategies reorder batches so similar ones become
-  neighbours before blocking; batch blocking groups consecutive batches
-  into blocks to reduce sub-matrix count and memory; unique-combination
-  removal rescues singletons by cropping their affiliation to the nearest
-  shared pattern before splitting.
+  (Ritchie et al., 2015). The pipeline targets HarmonizR v1.10.0 feature
+  parity: per-feature batch-presence detection groups the matrix into
+  compatible subsets, each adjusted independently and then reassembled
+  into the original shape without imputation. Missing observations remain
+  missing in the output. Three sort strategies reorder batches so similar
+  ones become neighbours before blocking; batch blocking groups
+  consecutive batches into blocks to reduce sub-matrix count and memory;
+  unique-combination removal rescues singletons by cropping their
+  affiliation to the nearest shared pattern before splitting.
 
 
   The engine layer is pure NumPy with no compiled extensions. Both a
   programmatic API and a full CLI are available, supporting config files
   (TOML, JSON, YAML), dry-run validation, JSON run summaries, and output
-  in TSV, CSV, or Feather. The implementation is verified against R
-  reference output with 576 tests covering all four ComBat modes, limma,
-  and the full HarmonizR pipeline across twelve dataset scenarios.
+  in TSV, CSV, or Parquet. The implementation is verified against R
+  reference outputs for `sva::ComBat`, `limma::removeBatchEffect`, and
+  HarmonizR workflows across synthetic and real-data scenarios.
 authors:
   - family-names: Ergin
     given-names: Enes Kemal

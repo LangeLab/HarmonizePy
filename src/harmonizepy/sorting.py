@@ -20,6 +20,7 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
+from .blocking import _unique_ordered
 from .validation import _VALID_SORT_STRATEGIES
 
 logger = logging.getLogger(__name__)
@@ -95,7 +96,7 @@ def sort_batches(
             f"Use sort=None to disable sorting."
         )
 
-    unique_batches = _unique_batches_ordered(batch_list)
+    unique_batches = np.array(_unique_ordered(batch_list), dtype=batch_list.dtype)
     presence = _build_presence_matrix(data, batch_list, unique_batches, needed_values)
     logger.debug(
         "Sorting %d batches by '%s' (presence matrix: %d features x %d batches)",
@@ -116,7 +117,7 @@ def sort_batches(
     col_order = _column_order(batch_list, ordered_batches)
 
     cols = data.columns.tolist()
-    sorted_data = data[[cols[i] for i in col_order]].copy()
+    sorted_data = data[[cols[i] for i in col_order]]
     sorted_batch_list = batch_list[col_order]
 
     return sorted_data, sorted_batch_list, col_order
@@ -125,17 +126,6 @@ def sort_batches(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-
-def _unique_batches_ordered(batch_list: npt.NDArray[np.integer]) -> npt.NDArray[np.integer]:
-    """Return unique batch IDs in first-appearance order."""
-    seen: set[int] = set()
-    result: list[int] = []
-    for b in batch_list:
-        if b not in seen:
-            seen.add(b)
-            result.append(int(b))
-    return np.array(result, dtype=batch_list.dtype)
 
 
 def _build_presence_matrix(

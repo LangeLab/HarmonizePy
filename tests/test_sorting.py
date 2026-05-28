@@ -23,13 +23,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from harmonizepy.blocking import _unique_ordered
 from harmonizepy.sorting import (
     _build_presence_matrix,
     _column_order,
     _jaccard_order,
     _seriation_order,
     _sparsity_order,
-    _unique_batches_ordered,
     sort_batches,
 )
 
@@ -461,7 +461,7 @@ class TestHelperFunctions:
         or out-of-range indices.
         """
         df, batch = _make_dataset(n_batches=4, missing_frac=0.2, seed=99)
-        unique = _unique_batches_ordered(batch)
+        unique = _unique_ordered(batch)
         presence = _build_presence_matrix(df, batch, unique, needed_values=2)
         order = _seriation_order(presence)
         assert len(order) == 4
@@ -496,7 +496,7 @@ class TestPresenceMatrix:
         Failure condition: dimensions are swapped or dtype is not bool.
         """
         df, batch = _make_dataset(n_features=10, n_batches=3, n_per_batch=4)
-        unique = _unique_batches_ordered(batch)
+        unique = _unique_ordered(batch)
         p = _build_presence_matrix(df, batch, unique, needed_values=2)
         assert p.shape == (10, 3)
         assert p.dtype == np.bool_
@@ -507,7 +507,7 @@ class TestPresenceMatrix:
         Failure condition: missing values are falsely detected.
         """
         df, batch = _make_dataset(n_features=5, n_batches=2, n_per_batch=3, missing_frac=0.0)
-        unique = _unique_batches_ordered(batch)
+        unique = _unique_ordered(batch)
         p = _build_presence_matrix(df, batch, unique, needed_values=2)
         assert p.all()
 
@@ -518,7 +518,7 @@ class TestPresenceMatrix:
         """
         df, batch = _make_dataset(n_features=5, n_batches=2, n_per_batch=3)
         df.iloc[:, 3:] = np.nan
-        unique = _unique_batches_ordered(batch)
+        unique = _unique_ordered(batch)
         p = _build_presence_matrix(df, batch, unique, needed_values=2)
         assert p[:, 0].all()  # batch 1 present
         assert not p[:, 1].any()  # batch 2 absent
@@ -532,7 +532,7 @@ class TestPresenceMatrix:
         df, batch = _make_dataset(n_features=4, n_batches=2, n_per_batch=3)
         df.iloc[0, 1:3] = np.nan
         df.iloc[0, 4:6] = np.nan
-        unique = _unique_batches_ordered(batch)
+        unique = _unique_ordered(batch)
         p2 = _build_presence_matrix(df, batch, unique, needed_values=2)
         p1 = _build_presence_matrix(df, batch, unique, needed_values=1)
         assert not p2[0, 0] and not p2[0, 1]
@@ -547,7 +547,7 @@ class TestUniqueOrderedBatches:
         by appearance order.
         """
         batch = np.array([3, 3, 1, 1, 2, 2])
-        result = _unique_batches_ordered(batch)
+        result = _unique_ordered(batch)
         np.testing.assert_array_equal(result, [3, 1, 2])
 
     def test_already_sorted(self):
@@ -556,7 +556,7 @@ class TestUniqueOrderedBatches:
         Failure condition: the function reorders an already-sorted input.
         """
         batch = np.array([1, 1, 2, 2, 3, 3])
-        result = _unique_batches_ordered(batch)
+        result = _unique_ordered(batch)
         np.testing.assert_array_equal(result, [1, 2, 3])
 
 

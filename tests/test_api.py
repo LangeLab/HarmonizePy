@@ -592,7 +592,7 @@ class TestHarmonizeConfig:
         """
         from harmonizepy import HarmonizeConfig
 
-        with pytest.raises(ValueError, match="sort_strategy"):
+        with pytest.raises(ValueError, match="sort must be one of"):
             HarmonizeConfig(sort_strategy="unknown")
 
     def test_invalid_block_size_zero(self):
@@ -602,7 +602,7 @@ class TestHarmonizeConfig:
         """
         from harmonizepy import HarmonizeConfig
 
-        with pytest.raises(ValueError, match="block_size"):
+        with pytest.raises(ValueError, match="block must be an integer"):
             HarmonizeConfig(block_size=0)
 
     def test_invalid_block_size_one(self):
@@ -612,7 +612,7 @@ class TestHarmonizeConfig:
         """
         from harmonizepy import HarmonizeConfig
 
-        with pytest.raises(ValueError, match="block_size"):
+        with pytest.raises(ValueError, match="block must be an integer"):
             HarmonizeConfig(block_size=1)
 
     def test_unique_removal_not_bool(self):

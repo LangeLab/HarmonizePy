@@ -9,10 +9,10 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.12--3.14-2D7D46?style=flat-square&logo=python&logoColor=white" alt="Python 3.12-3.14">
-  <img src="https://img.shields.io/badge/version-0.2.0-8B5CF6?style=flat-square" alt="v0.2.0">
+  <img src="https://img.shields.io/badge/version-0.3.0-8B5CF6?style=flat-square" alt="v0.3.0">
   <img src="https://img.shields.io/badge/status-alpha-C17D10?style=flat-square" alt="Alpha">
-  <img src="https://github.com/LangeLab/HarmonizePy/actions/workflows/ci.yml/badge.svg" alt="CI">
-  <img src="https://img.shields.io/badge/576%20tests-passing-22C55E?style=flat-square" alt="576 tests">
+  <!-- <img src="https://github.com/LangeLab/HarmonizePy/actions/workflows/ci.yml/badge.svg" alt="CI"> -->
+  <!-- <img src="https://img.shields.io/badge/576%20tests-passing-22C55E?style=flat-square" alt="576 tests"> -->
   <img src="https://codecov.io/gh/LangeLab/HarmonizePy/branch/main/graph/badge.svg" alt="Coverage">
   <img src="https://img.shields.io/badge/license-GPL--3.0-4B9D6E?style=flat-square" alt="GPL-3.0">
 </p>
@@ -24,7 +24,7 @@
   <a href="#quick-start"><img src="https://img.shields.io/badge/docs-README-0F766E?style=flat-square" alt="Docs"></a>
 </p>
 
-HarmonizePy provides batch-effect correction for omics data with structural missingness. Standard ComBat and limma require complete matrices. The high-level `harmonize()` entry point handles this automatically: it detects which features are absent in which batches, dissects the input into NaN-free sub-matrices, adjusts each independently, and reassembles the result. For dense, clean data the low-level `combat()` and `remove_batch_effect()` engines are also exposed directly. HarmonizePy reimplements the full HarmonizR v1.10.0 pipeline in pure Python with no R dependency at runtime, validated against R reference output with 576 tests.
+HarmonizePy provides batch-effect correction for omics data with structural missingness and per-cell missing values. The high-level `harmonize()` entry point groups features by batch availability, applies ComBat or limma within compatible subsets, and reassembles the result without imputation. Missing observations remain missing in the output. Low-level `combat()` and `remove_batch_effect()` functions are also exposed for direct NumPy workflows. HarmonizePy implements the core HarmonizR workflow in pure Python with no runtime R dependency and is compared against HarmonizR, `sva::ComBat`, and `limma::removeBatchEffect` reference outputs.
 
 ## Capabilities
 
@@ -39,12 +39,12 @@ HarmonizePy provides batch-effect correction for omics data with structural miss
 
 **HarmonizR-compatible pipeline (feature parity with v1.10.0):**
 
-- Structural missingness handled automatically: the input matrix is dissected into NaN-free sub-matrices, each adjusted independently, then reassembled.
+- Structural missingness handled automatically: features are grouped by observed batch support, corrected in compatible subsets, and reassembled into the original matrix shape.
 - Batch sorting: reorder batches so similar ones become neighbours. Three strategies: `"sparsity"` (completeness-based, fastest), `"jaccard"` (pairwise feature-overlap similarity), `"seriation"` (PCA-based ordering, more accurate for many batches).
 - Batch blocking: group `block=N` consecutive (optionally sorted) batches into a single sub-matrix, reducing peak memory and improving adjustment quality for datasets with many batches.
 - Unique-combination removal (`unique_removal=True`, default): features whose batch-presence pattern is unique across the dataset get rescued. They would otherwise form a singleton sub-matrix and be dropped. The algorithm crops their affiliation to the nearest shared pattern, trading some non-missing data for inclusion in a group adjustment.
 
-**Validation against R HarmonizR v1.10.0:** all core algorithms are concordant at machine epsilon for unblocked modes (mode 1/3/limma). With blocking, feature retention may differ: R drops single-feature groups entirely, while HarmonizePy passes them through unchanged to preserve more data. The pipeline logs at INFO level report how many features were corrected versus passed through. See `assets/FEATURE_PARITY.md` for a detailed comparison.
+**Validation against R reference workflows:** the package is tested against `sva::ComBat`, `limma::removeBatchEffect`, and HarmonizR v1.10.0 reference outputs across synthetic and real-data scenarios. For the main pipeline, the goal is feature parity with HarmonizR. Known edge-case differences remain in retention policy: HarmonizePy preserves more data in some cases by passing through single-feature groups and retaining all-NaN outputs where no correction is possible.
 
 ## Installation
 
@@ -87,12 +87,14 @@ data_df = pd.read_csv("data.tsv", sep="\t", index_col=0)
 desc_df = pd.read_csv("description.csv")
 result = harmonize(data_df, desc_df, algorithm="limma", sort="sparsity", block=2)
 
-# Low-level API (NaN-free ndarray in, ndarray out)
+# Low-level API (ndarray in, ndarray out)
 from harmonizepy import combat, remove_batch_effect
 
 corrected = combat(data_matrix, batch_labels, par_prior=True, mean_only=False)
 corrected = remove_batch_effect(data_matrix, batch_labels)
 ```
+
+The low-level engines handle missing observations per feature and preserve NaN positions in the returned array.
 
 ### Input format
 
@@ -110,7 +112,7 @@ corrected = remove_batch_effect(data_matrix, batch_labels)
 | `block` | int >= 2 or `None` | `None` | Group N consecutive batches into one sub-matrix block |
 | `unique_removal` | bool | `True` | Rescue singleton features by cropping to nearest shared pattern |
 | `config` | `HarmonizeConfig` or `None` | `None` | Reproducible run configuration (overrides individual kwargs) |
-| `output_file` | str, Path, or `None` | `None` | Write corrected matrix to this TSV path |
+| `output_file` | str, Path, or `None` | `None` | Write corrected matrix to this path. Format is inferred from `.tsv`, `.csv`, `.parquet`, or `.pq` |
 
 ### Choosing algorithm, mode, and strategy
 
@@ -127,7 +129,7 @@ Leave `unique_removal=True` (the default) unless you need strict missingness-pat
 ## CLI usage
 
 ```bash
-harmonizepy data.tsv batch.csv -o corrected.tsv
+harmonizepy data.tsv batch.csv -o corrected.parquet
 
 # Algorithm and mode
 harmonizepy data.tsv batch.csv --algorithm limma -o corrected.tsv
@@ -143,7 +145,7 @@ harmonizepy data.tsv batch.csv --config run.toml
 # Dry-run: validates inputs and prints the run plan, exits without computing
 harmonizepy data.tsv batch.csv --dry-run
 # Prints:
-#   HarmonizePy 0.2.0 dry run
+#   HarmonizePy 0.3.0 dry run
 #   ────────────────────────────────────────────────────
 #   Features:        1500
 #   Samples:         45
@@ -162,7 +164,7 @@ harmonizepy data.tsv batch.csv -o corrected.tsv --summary run.json --json
 ## Running tests
 
 ```bash
-uv run pytest               # all 576 tests (R concordance auto-skips if fixtures absent)
+uv run pytest               # full test suite (R concordance auto-skips if fixtures absent)
 uv run pytest tests/ -v     # verbose
 ```
 
@@ -170,9 +172,9 @@ The test suite covers:
 
 - R concordance against `sva::ComBat`, `limma::removeBatchEffect`, and `HarmonizR` (blocking, sort+block, `ur` toggle)
 - Edge cases: unbalanced batches, minimal dimensions, extreme values, near-constant features, negative data, many batches, singleton batches, sparse missingness
-- Failure modes: invalid inputs, NaN rejection, dimension mismatches
+- Failure modes: invalid inputs, dimension mismatches, unsupported parameter combinations
 - Numerical stability: determinism, float32 promotion, memory isolation
-- CLI integration: flag parsing, config files, dry-run, output formats (TSV, CSV, Feather)
+- CLI integration: flag parsing, config files, dry-run, output formats (TSV, CSV, Parquet)
 
 ### Regenerating R fixtures
 
@@ -193,7 +195,7 @@ src/harmonizepy/
     core.py              # Pipeline orchestrator (harmonize)
     types.py             # Shared data structures (HarmonizeConfig)
     validation.py        # Centralised input validation
-    io.py                # TSV/CSV/Feather read/write
+    io.py                # TSV/CSV/Parquet read/write
     affiliation.py       # Per-feature batch affiliation, UR logic
     sorting.py           # Batch sorting strategies (sparsity, jaccard, seriation)
     blocking.py          # Batch blocking (build_block_list)
@@ -237,4 +239,4 @@ HarmonizePy is licensed under [GPL-3.0](LICENSE).
 - HarmonizR R package (Bioconductor): <https://www.bioconductor.org/packages/release/bioc/html/HarmonizR.html>
 - HarmonizR source (GitHub): <https://github.com/HSU-HPC/HarmonizR>
 
-The ComBat algorithm was introduced by Johnson, Li & Rabinovic (2007). `limma::removeBatchEffect` was published by Ritchie et al. (2015). The HarmonizR pipeline (structural-missingness dissection, batch sorting, blocking, unique-combination removal) was developed by Voß et al. (2022) and Schlumbohm, Neumann & Neumann (2025). HarmonizePy is not a line-by-line port of the R sources: the engine logic was reimplemented from the published manuscripts and cross-validated against R reference output.
+The ComBat algorithm was introduced by Johnson, Li & Rabinovic (2007). `limma::removeBatchEffect` was published by Ritchie et al. (2015). The HarmonizR pipeline (structural-missingness handling, batch sorting, blocking, unique-combination removal) was developed by Voß et al. (2022) and Schlumbohm, Neumann & Neumann (2025). HarmonizePy is not a line-by-line port of the R sources: the engine logic was reimplemented from the published manuscripts and validated against R reference output.

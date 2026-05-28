@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .validation import _VALID_SORT_STRATEGIES
+from .validation import _validate_core_args
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,21 +59,7 @@ class HarmonizeConfig:
     unique_removal: bool = True
 
     def __post_init__(self) -> None:
-        if self.algorithm not in ("ComBat", "limma"):
-            raise ValueError(f"algorithm must be 'ComBat' or 'limma', got {self.algorithm!r}")
-        if self.combat_mode not in (1, 2, 3, 4):
-            raise ValueError(f"combat_mode must be 1-4, got {self.combat_mode}")
-        if self.needed_values is not None and self.needed_values < 1:
-            raise ValueError(f"needed_values must be >= 1 or None, got {self.needed_values}")
-        if self.sort_strategy not in _VALID_SORT_STRATEGIES and self.sort_strategy is not None:
-            raise ValueError(
-                f"sort_strategy must be one of "
-                f"{sorted(_VALID_SORT_STRATEGIES)!r} or None, "
-                f"got {self.sort_strategy!r}"
-            )
-        if self.block_size is not None and self.block_size < 2:
-            raise ValueError(f"block_size must be >= 2 or None, got {self.block_size}")
-        if not isinstance(self.unique_removal, bool):
-            raise TypeError(
-                f"unique_removal must be bool, got {type(self.unique_removal).__name__!r}"
-            )
+        _validate_core_args(
+            self.algorithm, self.combat_mode, self.needed_values,
+            self.sort_strategy, self.block_size, self.unique_removal,
+        )

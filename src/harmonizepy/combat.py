@@ -323,6 +323,11 @@ def combat(
             par_prior=par_prior, mean_only=mean_only, ref_batch=ref_batch,
         )
 
+    # All-NaN data: return copy immediately (nothing to adjust)
+    if np.isnan(data).all():
+        logger.debug("All-NaN input, returning copy")
+        return data.copy()
+
     # Per-cell NaN present: use per-feature NaN-safe path (matches R
     # sva::ComBat v3.60.0 Beta.NA approach).
     return _combat_nan(
