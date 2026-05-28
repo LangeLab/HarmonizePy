@@ -8,6 +8,8 @@ ref/
 # Benchmark outputs
 benchmarks/data/
 benchmarks/results/
+benchmarks/results/tmp/
+benchmarks/results/r_cache/
 
 # Python bytecode and caches.
 __pycache__/

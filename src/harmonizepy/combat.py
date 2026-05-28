@@ -219,7 +219,7 @@ def _int_eprior(
         mask[i] = False
         g = g_hat[mask]
         d_i = d[mask]
-        n_i = n_per_gene[i]
+        n_i = n_per_gene[i]  # type: ignore[index]
         if n_i < 1:
             g_star[i] = g_hat[i]
             d_star[i] = d_hat[i]

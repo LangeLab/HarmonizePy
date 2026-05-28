@@ -145,10 +145,10 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="{1,2,3,4}",
         help=(
             "ComBat variant (ignored when --algorithm limma). "
-            "1 = parametric, full correction (default, best for most datasets). "
-            "2 = non-parametric, full correction (use for very small batches, n < 10). "
-            "3 = parametric, location-only (no variance correction). "
-            "4 = non-parametric, location-only."
+            "1 = parametric, location + scale (default, best for most datasets). "
+            "2 = parametric, location only (no variance correction). "
+            "3 = non-parametric, location + scale (use for very small batches, n < 10). "
+            "4 = non-parametric, location only."
         ),
     )
     parser.add_argument(

@@ -1,0 +1,166 @@
+# benchmarks/config.yaml
+# -------------------------------------------------------------------------
+# Datasets: short name to file paths, metadata, and scenario group membership.
+#
+# IMPORTANT: each dataset has a `scenarios` list that declares which groups
+# from scenario_matrix it participates in. scenarios.py reads this to build
+# the registry; the mapping is NEVER inferred from tags or comments.
+#
+# "murine" maps to the murine_medulloblastoma_* files.
+# "dia" matrix is CSV (comma-separated); desc is also CSV. The benchmark
+# data loader must use pd.read_csv() instead of pd.read_csv(sep="\t") for
+# any dataset with input_format: csv.
+#
+# features/samples/batches are metadata for documentation and for the runner
+# to assert at startup (mismatch means error, not silent wrong results).
+# -------------------------------------------------------------------------
+datasets:
+  small:
+    input:        data/small_input.tsv
+    desc:         data/small_batch.csv
+    tags:         [bulk, synthetic]
+    r_eligible:   true
+    features:     1000
+    samples:      20
+    batches:      5
+    missing_frac: 0.30
+    missing_mode: per_batch
+    scenarios:    [bulk]
+    # block=2 with 5 batches is valid (2-3 blocks); sort not benchmarked at this scale
+
+  medium:
+    input:        data/medium_input.tsv
+    desc:         data/medium_batch.csv
+    tags:         [bulk, synthetic]
+    r_eligible:   true
+    features:     5000
+    samples:      60
+    batches:      10
+    missing_frac: 0.20
+    missing_mode: per_batch
+    scenarios:    [bulk, bulk_sorted]
+
+  large:
+    input:        data/large_input.tsv
+    desc:         data/large_batch.csv
+    tags:         [bulk, synthetic]
+    r_eligible:   true
+    features:     10000
+    samples:      100
+    batches:      20
+    missing_frac: 0.05
+    missing_mode: per_batch
+    scenarios:    [bulk, bulk_sorted]
+
+  murine:
+    input:        data/murine_medulloblastoma_input.tsv
+    desc:         data/murine_medulloblastoma_batch.csv
+    tags:         [bulk, real]
+    r_eligible:   true
+    features:     4753
+    samples:      25
+    batches:      4
+    scenarios:    [bulk]
+    # 4 batches; block=2 gives 2 blocks, valid. Sort not applied to real datasets.
+
+  dia:
+    input:        data/DIA_protein_matrix.csv
+    desc:         data/DIA_description.csv
+    input_format: csv             # pd.read_csv(), NOT sep="\t". Both input and desc are CSV.
+    tags:         [bulk, real, proteomics]
+    r_eligible:   true
+    features:     8470
+    samples:      36
+    batches:      2
+    scenarios:    [bulk_noblock]
+    # Only 2 batches: block=2 would put ALL data in 1 block (degenerate, identical to
+    # no blocking). Block scenarios are excluded. limma + ComBat m1-4 are valid.
+
+  scp_small:
+    input:        data/scp_small_input.tsv
+    desc:         data/scp_small_batch.csv
+    tags:         [scp, synthetic]
+    r_eligible:   false           # R times out on large-sample SCP workloads
+    features:     3000
+    samples:      1000
+    batches:      20
+    missing_frac: 0.50
+    missing_mode: abundance
+    scenarios:    [scp]
+
+  scp_large:
+    input:        data/scp_large_input.tsv
+    desc:         data/scp_large_batch.csv
+    tags:         [scp, synthetic]
+    r_eligible:   false
+    features:     5000
+    samples:      10000
+    batches:      100
+    missing_frac: 0.60
+    missing_mode: abundance
+    scenarios:    [scp]
+
+# -------------------------------------------------------------------------
+# Scenario matrix: named groups of (algorithm, mode, block, sort) combos.
+# Each dataset above declares which groups it participates in via `scenarios`.
+# scenarios.py iterates: for each dataset, for each group in dataset.scenarios,
+# expand modes and yield one Scenario per (dataset, algorithm, mode, block, sort).
+#
+# All scenarios: unique_removal=True, needed_values=None (auto-derived by
+# _bench.py: needed_values=2 for limma and ComBat modes 1,3; =1 for modes 2,4).
+# -------------------------------------------------------------------------
+scenario_matrix:
+  bulk:                 # limma + ComBat m1-4 plain, plus ComBat m1-4 with block=2
+    - {algorithm: limma}
+    - {algorithm: ComBat, modes: [1, 2, 3, 4]}
+    - {algorithm: ComBat, modes: [1, 2, 3, 4], block: 2}
+
+  bulk_sorted:          # adds sparsity-sort + block=2 on top of bulk
+    - {algorithm: ComBat, modes: [1, 2, 3, 4], block: 2, sort: sparsity}
+
+  bulk_noblock:         # limma + ComBat m1-4, no blocking
+    - {algorithm: limma}         # for datasets where block is degenerate (n_batches <= 2)
+    - {algorithm: ComBat, modes: [1, 2, 3, 4]}
+
+  scp:                  # same scenarios as bulk_noblock; separate group for report labeling
+    - {algorithm: limma}         # block not validated for SCP, can be added here later
+    - {algorithm: ComBat, modes: [1, 2, 3, 4]}
+
+# -------------------------------------------------------------------------
+# R caching. Both core variants are cached as separate, independent baselines.
+# Reports show R-16, R-1, and Python columns side by side.
+# Populate with: bench.py cache-r --cores 16 1
+# -------------------------------------------------------------------------
+r_cache:
+  cores_variants: [1, 16]        # both cached; each is an independent cache entry
+  default_cores: 1               # which variant --with-r / --with-r-cores uses by default
+  timeout_s: 300                 # per-scenario hard limit inside R withTimeout()
+  # Note: withTimeout() comes from the R.utils package. benchmark_r.R must
+  # load R.utils before the scenario loop.
+
+# -------------------------------------------------------------------------
+# Python runner timing budgets and repetition counts (adaptive strategy).
+# -------------------------------------------------------------------------
+python_runner:
+  budget_s:  30                  # per-scenario adaptive rep budget
+  min_reps:   3
+  max_reps:  10
+  warmup:    true                # always run one untimed warmup before timed reps
+
+# -------------------------------------------------------------------------
+# R runner timing budgets (R is slower; higher budget).
+# No warmup: libraries load before the loop; first rep is already warm.
+# -------------------------------------------------------------------------
+r_runner:
+  budget_s:  180
+  min_reps:    2
+  max_reps:    5
+
+# -------------------------------------------------------------------------
+# Output paths (relative to benchmarks/).
+# -------------------------------------------------------------------------
+paths:
+  data_dir:    data
+  results_dir: results
+  tmp_dir:     results/tmp        # cleared at start of every bench.py run
+  cache_dir:   results/r_cache    # persistent; gitignored
