@@ -6,6 +6,22 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Changed
+
+- `splitting.py`: collapse split-and-rebuild into one final assembled matrix and cache per-affiliation column indices, removing repeated `np.isin` scans in fragmented workflows.
+- Internal optimization and benchmark-status documents now distinguish completed solver and pipeline refactors from the remaining memory-focused work.
+
+### Fixed
+
+- Benchmark R wrapper: `block` is now passed to HarmonizR as numeric, so blocked R scenarios no longer silently fall back to unblocked execution.
+- Blocked benchmark interpretation: historical `Block = 2` markdown and JSON summary rows are now treated as invalid until regenerated with the fixed wrapper.
+
+### Performance
+
+- Non-parametric ComBat: `_int_eprior` now uses the binomial residual formula with precomputed terms, reducing large mode 3 runtime from 9.76s to 5.87s.
+- NaN-heavy paths: grouped valid-mask solving now batches `_beta_na` and `_row_var_nan`, and `_it_sol` short-circuits all-NaN genes instead of iterating to the cap.
+- Pipeline hot loop: representative reruns after the direct-assembly and column-cache refactors improved medium and SCP timings, including medium limma 0.15s -> 0.09s, medium ComBat mode 1 0.69s -> 0.63s, scp_small limma 0.16s -> 0.13s, and scp_small ComBat mode 1 0.36s -> 0.32s.
+
 ## [0.3.0] - 2026-05-27
 
 ### Added
@@ -23,7 +39,7 @@ All notable changes to this project are documented in this file. The format is b
 - `validation.py`: NaN allowed in engine inputs; validation checks only structural properties.
 - Test NaN invariants: now verify correct NaN handling rather than asserting NaN-free input.
 - Code cleanup: removed redundant copies, consolidated duplicated helpers, vectorized block assignment.
-- Benchmark runner: R memory measurement, expanded concordance metrics, corrected blocked mode results.
+- Benchmark runner: R memory measurement and expanded concordance metrics.
 
 ### Fixed
 

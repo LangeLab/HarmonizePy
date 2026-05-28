@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from harmonizepy.combat import combat
+from harmonizepy.combat import _beta_na, _beta_na_grouped, _int_eprior, _it_sol, _row_var_nan, _row_var_nan_grouped, combat
 from harmonizepy.combat_wrapper import adjust_combat
 
 # ---------------------------------------------------------------------------
@@ -50,6 +50,63 @@ def make_test_data(n_proteins=50, n_samples_per_batch=5, n_batches=3, seed=42):
         columns=[f"sample_{j}" for j in range(n_samples)],
     )
     return df, batch_labels
+
+
+def _int_eprior_reference(
+    s_data: np.ndarray,
+    g_hat: np.ndarray,
+    d_hat: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Reference implementation matching the pre-optimization broadcast formula."""
+    n_genes, _ = s_data.shape
+    g_star = np.empty(n_genes)
+    d_star = np.empty(n_genes)
+
+    d = np.maximum(d_hat, 1e-12)
+    not_nan = ~np.isnan(s_data)
+
+    mask = np.ones(n_genes, dtype=bool)
+    for i in range(n_genes):
+        mask[i] = False
+        g = g_hat[mask]
+        d_i = d[mask]
+        n_i = float(not_nan[i].sum())
+        if n_i < 1:
+            g_star[i] = g_hat[i]
+            d_star[i] = d_hat[i]
+            mask[i] = True
+            continue
+
+        x_i = s_data[i, not_nan[i]]
+        dat = np.broadcast_to(x_i, (len(g), int(n_i)))
+        resid2 = (dat - g[:, np.newaxis]) ** 2
+        sum2 = resid2.sum(axis=1)
+
+        log_lh = -0.5 * n_i * (np.log(2.0 * np.pi * d_i)) - sum2 / (2.0 * d_i)
+        log_lh -= log_lh.max()
+        lh = np.exp(log_lh)
+
+        total = lh.sum()
+        if total == 0.0 or not np.isfinite(total):
+            total = 1.0
+            lh = np.ones_like(lh) / len(lh)
+
+        g_star[i] = (g * lh).sum() / total
+        d_star[i] = (d_i * lh).sum() / total
+
+        mask[i] = True
+
+    return g_star, d_star
+
+
+def _beta_na_grouped_reference(data: np.ndarray, design: np.ndarray) -> np.ndarray:
+    """Reference grouped Beta.NA using the existing per-row implementation."""
+    return np.column_stack([_beta_na(data[i, :], design) for i in range(data.shape[0])])
+
+
+def _row_var_nan_grouped_reference(data: np.ndarray) -> np.ndarray:
+    """Reference grouped row variance using the existing per-row helper."""
+    return np.array([_row_var_nan(data[i, :]) for i in range(data.shape[0])], dtype=np.float64)
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +167,110 @@ class TestCombatModes:
 
 
 class TestEdgeCases:
+    def test_it_sol_all_nan_short_circuits_without_warning(self, caplog: pytest.LogCaptureFixture):
+        """All-NaN input to `_it_sol` must return immediately.
+
+        Failure condition: the parametric solver enters its iteration
+        loop for genes with no observed values and logs a non-
+        convergence warning.
+        """
+        s_data = np.full((3, 4), np.nan, dtype=np.float64)
+        g_hat = np.array([np.nan, np.nan, np.nan], dtype=np.float64)
+        d_hat = np.array([1.0, 1.0, 1.0], dtype=np.float64)
+
+        with caplog.at_level("WARNING"):
+            result_g, result_d = _it_sol(s_data, g_hat, d_hat, g_bar=0.0, t2=1.0, a=2.0, b=2.0)
+
+        np.testing.assert_array_equal(result_g, g_hat)
+        np.testing.assert_array_equal(result_d, d_hat)
+        assert "did not converge" not in caplog.text
+
+    def test_int_eprior_matches_reference_formula(self):
+        """Optimized `_int_eprior` must match the broadcast reference math.
+
+        Failure condition: the binomial-form optimization changes the
+        posterior estimates relative to the original likelihood formula.
+
+        Tolerances: rtol=1e-12/atol=1e-12 because both implementations
+        evaluate the same formula in float64 with only algebraic
+        rearrangement.
+        """
+        s_data = np.array(
+            [
+                [0.5, np.nan, 1.5, 0.0],
+                [1.0, 1.5, np.nan, 0.5],
+                [np.nan, np.nan, np.nan, np.nan],
+                [0.2, -0.3, 0.1, np.nan],
+            ],
+            dtype=np.float64,
+        )
+        g_hat = np.array([0.4, -0.2, 0.1, 0.8], dtype=np.float64)
+        d_hat = np.array([1.2, 0.9, 0.7, 1.5], dtype=np.float64)
+
+        expected_g, expected_d = _int_eprior_reference(s_data, g_hat, d_hat)
+        result_g, result_d = _int_eprior(s_data, g_hat, d_hat)
+
+        np.testing.assert_allclose(result_g, expected_g, rtol=1e-12, atol=1e-12)
+        np.testing.assert_allclose(result_d, expected_d, rtol=1e-12, atol=1e-12)
+
+    def test_beta_na_grouped_matches_rowwise_reference(self):
+        """Grouped Beta.NA must match the existing per-feature OLS exactly.
+
+        Failure condition: batching rows with identical NaN masks changes
+        coefficients, all-NaN handling, or row ordering.
+
+        Tolerances: rtol=1e-12/atol=1e-12 because both paths call the same
+        float64 least-squares solver on the same reduced designs.
+        """
+        design = np.array(
+            [
+                [1.0, 1.0, 0.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 1.0, 1.0],
+            ],
+            dtype=np.float64,
+        )
+        data = np.array(
+            [
+                [10.0, 11.0, 20.0, 21.0, 22.0],
+                [8.0, 9.0, np.nan, 19.0, 18.0],
+                [7.0, 8.0, np.nan, 17.0, 16.0],
+                [np.nan, np.nan, 5.0, 6.0, 7.0],
+                [np.nan, np.nan, np.nan, np.nan, np.nan],
+            ],
+            dtype=np.float64,
+        )
+
+        expected = _beta_na_grouped_reference(data, design)
+        result = _beta_na_grouped(data, design)
+
+        np.testing.assert_allclose(result, expected, rtol=1e-12, atol=1e-12, equal_nan=True)
+
+    def test_row_var_nan_grouped_matches_rowwise_reference(self):
+        """Grouped row variance must match the current per-feature helper.
+
+        Failure condition: batching identical NaN masks changes sample
+        variance values or special-case handling for 0/1 valid entries.
+
+        Tolerances: rtol=1e-12/atol=1e-12 because both paths compute the
+        same float64 sample variance on the same reduced row data.
+        """
+        data = np.array(
+            [
+                [10.0, 11.0, 20.0, 21.0, 22.0],
+                [8.0, 9.0, np.nan, 19.0, 18.0],
+                [7.0, 8.0, np.nan, 17.0, 16.0],
+                [np.nan, np.nan, 5.0, 6.0, 7.0],
+                [np.nan, np.nan, 4.0, np.nan, np.nan],
+                [np.nan, np.nan, np.nan, np.nan, np.nan],
+            ],
+            dtype=np.float64,
+        )
+
+        expected = _row_var_nan_grouped_reference(data)
+        result = _row_var_nan_grouped(data)
+
+        np.testing.assert_allclose(result, expected, rtol=1e-12, atol=1e-12)
+
     def test_nan_rows_stay_nan(self):
         """Per-cell NaN positions stay NaN in output; quantified cells adjusted.
 

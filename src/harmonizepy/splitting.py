@@ -2,10 +2,11 @@
 
 Groups features by their affiliation (missingness pattern), extracts
 sub-matrices containing only the columns (samples) present for that
-group, applies ComBat or limma adjustment, and returns the list of
-corrected sub-DataFrames.
+group, applies ComBat or limma adjustment, and returns the fully
+assembled corrected DataFrame.
 
-This mirrors R ``HarmonizR:::splitting``.
+This mirrors the split-and-rebuild effect of R ``HarmonizR:::splitting``
+without materializing one full-width DataFrame per affiliation group.
 """
 
 from __future__ import annotations
@@ -30,8 +31,8 @@ def splitting(
     block_list: np.ndarray,
     algorithm: str = "ComBat",
     combat_mode: int = 1,
-) -> list[pd.DataFrame]:
-    """Split data by affiliation, adjust each sub-frame, return results.
+) -> pd.DataFrame:
+    """Split data by affiliation, adjust each sub-frame, return result.
 
     Parameters
     ----------
@@ -51,10 +52,9 @@ def splitting(
 
     Returns
     -------
-    list[DataFrame]
-        Corrected sub-DataFrames, one per unique non-empty affiliation.
-        Features with empty affiliations are included with all-NaN values
-        to preserve completeness.
+    DataFrame
+        Fully assembled corrected matrix. Features with empty affiliations
+        remain all-NaN to preserve completeness.
 
     Raises
     ------
@@ -70,9 +70,9 @@ def splitting(
     >>> data.iloc[:, 2:] += 1.0
     >>> affil = [(1, 2), (1, 2), (1, 2)]
     >>> batch = np.array([1, 1, 2, 2])
-    >>> sub_dfs = splitting(affil, data, batch, batch, algorithm="ComBat", combat_mode=2)
-    >>> len(sub_dfs)
-    1
+    >>> result = splitting(affil, data, batch, batch, algorithm="ComBat", combat_mode=2)
+    >>> result.shape
+    (3, 4)
     """
     batch_arr = np.asarray(batch_list)
     block_arr = np.asarray(block_list)
@@ -82,6 +82,21 @@ def splitting(
 
     # Group features by affiliation using the shared reducer
     affil_to_features = reduce_to_unique_groups(affiliation_list)
+
+    # Cache sample indices once per block and affiliation to avoid
+    # rescanning block_arr for every unique group.
+    block_to_cols: dict[int, list[int]] = {}
+    for col_index, block_id in enumerate(block_arr.tolist()):
+        block_to_cols.setdefault(int(block_id), []).append(col_index)
+    block_to_cols_arr = {
+        block_id: np.asarray(col_indices, dtype=np.intp)
+        for block_id, col_indices in block_to_cols.items()
+    }
+    affil_to_cols = {
+        affil: np.concatenate([block_to_cols_arr[block_id] for block_id in affil])
+        for affil in affil_to_features
+        if affil
+    }
 
     n_groups = sum(1 for affil in affil_to_features if affil)
     logger.debug(
@@ -106,9 +121,8 @@ def splitting(
         if len(affil) == 0:
             continue  # rows stay NaN
 
-        # Select columns belonging to the blocks in this affiliation
-        col_mask = np.isin(block_arr, affil)
-        col_indices = np.where(col_mask)[0]
+        # Select cached columns for the blocks in this affiliation.
+        col_indices = affil_to_cols[affil]
 
         # Extract sub-matrix and batch labels as numpy arrays
         sub_data = data_np[np.ix_(row_idx, col_indices)]
@@ -150,16 +164,4 @@ def splitting(
             n_single_feature,
         )
 
-    # Build the result list for backward compatibility with downstream concat.
-    # Each non-empty group becomes its own sub-DataFrame.
-    results: list[pd.DataFrame] = []
-    for _, row_indices in affil_to_features.items():
-        row_idx = np.array(row_indices, dtype=np.intp)
-        sub = pd.DataFrame(
-            output[np.ix_(row_idx, np.arange(n_samples))],
-            index=data.index[row_idx],
-            columns=data.columns,
-        )
-        results.append(sub)
-
-    return results
+    return pd.DataFrame(output, index=data.index, columns=data.columns)

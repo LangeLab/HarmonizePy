@@ -24,7 +24,7 @@ combat_mode <- args[5]
 if (is.na(combat_mode) || combat_mode == "NA") combat_mode <- 1L else combat_mode <- as.integer(combat_mode)
 
 block_size <- args[6]
-if (is.na(block_size) || block_size == "NA") block_size <- NULL else block_size <- as.integer(block_size)
+if (is.na(block_size) || block_size == "NA") block_size <- NULL else block_size <- as.numeric(block_size)
 
 sort_strategy <- args[7]
 if (is.na(sort_strategy) || sort_strategy == "NA") sort_strategy <- FALSE

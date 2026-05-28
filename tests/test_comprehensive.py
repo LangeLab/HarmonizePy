@@ -1329,8 +1329,7 @@ class TestSplittingRebuild:
         block = batch.copy()
         affiliation = build_affiliation_list(data, batch, block, needed_values=2)
 
-        sub_dfs = splitting(affiliation, data, batch, block, algorithm="ComBat", combat_mode=2)
-        result = pd.concat(sub_dfs, axis=0)
+        result = splitting(affiliation, data, batch, block, algorithm="ComBat", combat_mode=2)
 
         # Should match direct combat
         direct = adjust_combat(data, batch, mode=2)
@@ -1349,8 +1348,7 @@ class TestSplittingRebuild:
         block = batch.copy()
         affiliation = build_affiliation_list(data, batch, block, needed_values=2)
 
-        sub_dfs = splitting(affiliation, data, batch, block, algorithm="ComBat", combat_mode=2)
-        result = pd.concat(sub_dfs, axis=0)
+        result = splitting(affiliation, data, batch, block, algorithm="ComBat", combat_mode=2)
 
         # Feature 0: NaN in batch 3 columns
         assert np.isnan(result.iloc[0, 6:]).all()
@@ -1370,8 +1368,7 @@ class TestSplittingRebuild:
         block = batch.copy()
         affiliation = build_affiliation_list(data, batch, block, needed_values=2)
 
-        sub_dfs = splitting(affiliation, data, batch, block, algorithm="limma")
-        result = pd.concat(sub_dfs, axis=0)
+        result = splitting(affiliation, data, batch, block, algorithm="limma")
         assert np.isnan(result.iloc[0]).all()
 
     def test_limma_through_splitting(self):
@@ -1387,8 +1384,7 @@ class TestSplittingRebuild:
         block = batch.copy()
         affiliation = build_affiliation_list(data, batch, block, needed_values=2)
 
-        sub_dfs = splitting(affiliation, data, batch, block, algorithm="limma")
-        result = pd.concat(sub_dfs, axis=0)
+        result = splitting(affiliation, data, batch, block, algorithm="limma")
 
         direct = adjust_limma(data, batch)
         np.testing.assert_allclose(result.values, direct.values, atol=1e-12)

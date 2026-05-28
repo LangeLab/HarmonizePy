@@ -120,6 +120,13 @@ def _it_sol(
     """
     nan_mask = np.isnan(s_data)
     all_nan = nan_mask.all(axis=1)
+    active = ~all_nan
+
+    # Genes with no observed values cannot inform the EB update. Keep their
+    # initial estimates and skip the iterative solver entirely.
+    if not np.any(active):
+        return g_hat.copy(), d_hat.copy()
+
     n_per_gene = np.float64((~nan_mask).sum(axis=1))
     n_per_gene = np.maximum(n_per_gene, 1.0)
 
@@ -129,13 +136,18 @@ def _it_sol(
     t2_n = t2 * n_per_gene
     t2_n_g_hat = t2_n * g_hat  # uses ORIGINAL g_hat, not updated g_new
 
-    g_old = g_hat.copy()
-    d_old = d_hat.copy()
+    g_old = g_hat[active].copy()
+    d_old = d_hat[active].copy()
+    t2_n_active = t2_n[active]
+    t2_n_g_hat_active = t2_n_g_hat[active]
+    sum_x_active = sum_x[active]
+    sum_x2_active = sum_x2[active]
+    n_per_gene_active = n_per_gene[active]
 
     for _ in range(max_iter):
-        g_new = _postmean(g_bar, d_old, t2_n, t2_n_g_hat)
-        sum2 = sum_x2 - 2.0 * g_new * sum_x + n_per_gene * g_new * g_new
-        d_new = _postvar(sum2, n_per_gene, a, b)
+        g_new = _postmean(g_bar, d_old, t2_n_active, t2_n_g_hat_active)
+        sum2 = sum_x2_active - 2.0 * g_new * sum_x_active + n_per_gene_active * g_new * g_new
+        d_new = _postvar(sum2, n_per_gene_active, a, b)
 
         delta_g = np.abs(g_new - g_old)
         delta_d = np.abs(d_new - d_old)
@@ -156,11 +168,12 @@ def _it_sol(
             change,
         )
 
-    # All-NaN features keep their initial estimates
-    g_new[all_nan] = g_hat[all_nan]
-    d_new[all_nan] = d_hat[all_nan]
+    gamma_star = g_hat.copy()
+    delta_star = d_hat.copy()
+    gamma_star[active] = g_new
+    delta_star[active] = d_new
 
-    return g_new, d_new
+    return gamma_star, delta_star
 
 
 # ---------------------------------------------------------------------------
@@ -196,34 +209,33 @@ def _int_eprior(
 
     d = np.maximum(d_hat, 1e-12)
     not_nan = ~np.isnan(s_data)
+    n_per_gene = np.float64(not_nan.sum(axis=1))
+    sum_x = np.nansum(s_data, axis=1)
+    sum_x2 = np.nansum(s_data * s_data, axis=1)
+    log_two_pi_d = np.log(2.0 * np.pi * d)
 
     mask = np.ones(n_genes, dtype=bool)
     for i in range(n_genes):
         mask[i] = False
         g = g_hat[mask]
         d_i = d[mask]
-        n_i = float(not_nan[i].sum())
+        n_i = n_per_gene[i]
         if n_i < 1:
             g_star[i] = g_hat[i]
             d_star[i] = d_hat[i]
             mask[i] = True
             continue
 
-        x_i = s_data[i, not_nan[i]]
-        j = np.ones(int(n_i), dtype=np.float64)
+        # For gene i and candidate prior mean g_j:
+        # sum((x_i - g_j)^2) = sum_x2_i - 2*g_j*sum_x_i + n_i*g_j^2
+        sum2 = sum_x2[i] - 2.0 * g * sum_x[i] + n_i * (g * g)
 
-        # Broadcast: (n_genes-1) x n_i matrix, each row = gene_i's data
-        dat = np.broadcast_to(x_i, (len(g), int(n_i)))
-        resid2 = (dat - g[:, np.newaxis]) ** 2
-        sum2 = resid2 @ j
-
-        log_lh = -0.5 * n_i * (np.log(2.0 * np.pi * d_i)) - sum2 / (2.0 * d_i)
+        log_lh = -0.5 * n_i * log_two_pi_d[mask] - sum2 / (2.0 * d_i)
         log_lh -= log_lh.max()
         lh = np.exp(log_lh)
-        lh = np.nan_to_num(lh, nan=0.0)
 
         total = lh.sum()
-        if total == 0.0:
+        if total == 0.0 or not np.isfinite(total):
             total = 1.0
             lh = np.ones_like(lh) / len(lh)
 
@@ -361,6 +373,79 @@ def _beta_na(y: _Array, design: _Array) -> _Array:
     return np.linalg.lstsq(des, y1, rcond=None)[0]
 
 
+def _group_valid_rows(data: _Array) -> tuple[npt.NDArray[np.bool_], dict[bytes, list[int]]]:
+    """Group row indices by identical non-NaN masks."""
+    valid_masks = ~np.isnan(data)
+    packed_masks = np.packbits(valid_masks, axis=1)
+    grouped_rows: dict[bytes, list[int]] = {}
+    for row_index in range(data.shape[0]):
+        grouped_rows.setdefault(packed_masks[row_index].tobytes(), []).append(row_index)
+    return valid_masks, grouped_rows
+
+
+def _beta_na_grouped(data: _Array, design: _Array) -> _Array:
+    """Per-feature OLS grouped by identical valid-observation masks.
+
+    For a fixed validity mask, Beta.NA solves the same reduced design
+    matrix against different feature vectors. Solve that system once with
+    batched right-hand sides to preserve the rowwise result while reducing
+    repeated `lstsq` calls.
+
+    Parameters
+    ----------
+    data : (n_features, n_samples) matrix, may contain NaN
+    design : (n_batch, n_samples) design matrix
+
+    Returns
+    -------
+    (n_batch, n_features) coefficient matrix
+    """
+    n_features, _ = data.shape
+    betas = np.empty((design.shape[0], n_features), dtype=np.float64)
+
+    valid_masks, grouped_rows = _group_valid_rows(data)
+
+    for row_indices in grouped_rows.values():
+        row_indexer = np.asarray(row_indices, dtype=np.intp)
+        valid = valid_masks[row_indexer[0]]
+        if not valid.any():
+            betas[:, row_indexer] = np.nan
+            continue
+
+        reduced_design = design[:, valid].T
+        reduced_data = data[row_indexer][:, valid].T
+        betas[:, row_indexer] = np.linalg.lstsq(reduced_design, reduced_data, rcond=None)[0]
+
+    return betas
+
+
+def _row_var_nan_grouped(data: _Array) -> _Array:
+    """Row-wise sample variance grouped by identical valid-observation masks.
+
+    For a fixed validity mask, rows share the same reduced submatrix.
+    Compute `ddof=1` variances on that reduced view in one batched pass
+    while preserving the rowwise `_row_var_nan` behavior for 0/1 valid
+    observations.
+    """
+    n_features, _ = data.shape
+    variances = np.empty(n_features, dtype=np.float64)
+
+    valid_masks, grouped_rows = _group_valid_rows(data)
+    for row_indices in grouped_rows.values():
+        row_indexer = np.asarray(row_indices, dtype=np.intp)
+        valid = valid_masks[row_indexer[0]]
+        n_valid = int(valid.sum())
+
+        if n_valid <= 1:
+            variances[row_indexer] = 1.0
+            continue
+
+        reduced_data = data[row_indexer][:, valid]
+        variances[row_indexer] = np.var(reduced_data, axis=1, ddof=1)
+
+    return variances
+
+
 
 def _row_var_nan(x: _Array) -> float:
     """Sample variance, excluding NaN (``var(x, na.rm=TRUE)``)."""
@@ -427,9 +512,7 @@ def _combat_nan(
     design = _make_design(batch_int, n_batch)
 
     # ---- Per-feature B.hat (Beta.NA) ---------------------------------------
-    B_hat = np.zeros((n_batch, n_features))  # noqa: N806
-    for i in range(n_features):
-        B_hat[:, i] = _beta_na(data[i, :], design)
+    B_hat = _beta_na_grouped(data, design)  # noqa: N806
 
     # ---- Grand mean and pooled variance (per-feature, NaN-safe) ------------
     # NOTE: R sva::ComBat uses DIFFERENT formulas:
@@ -438,16 +521,12 @@ def _combat_nan(
     if ref_idx is not None:
         grand_mean = B_hat[ref_idx]
         ref_cols = batches_ind[ref_idx]
-        var_n = np.array([
-            _row_var_nan(data[i, ref_cols] - design[:, ref_cols].T @ B_hat[:, i])
-            for i in range(n_features)
-        ])
+        fitted_ref = (design[:, ref_cols].T @ B_hat).T
+        var_n = _row_var_nan_grouped(data[:, ref_cols] - fitted_ref)
     else:
         grand_mean = (batch_sizes / n_samples) @ B_hat
-        var_n = np.array([
-            _row_var_nan(data[i, :] - design.T @ B_hat[:, i])
-            for i in range(n_features)
-        ])
+        fitted = (design.T @ B_hat).T
+        var_n = _row_var_nan_grouped(data - fitted)
 
     var_pooled = np.maximum(var_n, 1e-12)
     std_pooled = np.sqrt(var_pooled)
@@ -460,9 +539,7 @@ def _combat_nan(
         s_data[i, ~valid] = np.nan
 
     # ---- Per-feature gamma.hat (Beta.NA) -----------------------------------
-    gamma_hat = np.zeros((n_batch, n_features))
-    for i in range(n_features):
-        gamma_hat[:, i] = _beta_na(s_data[i, :], design)
+    gamma_hat = _beta_na_grouped(s_data, design)
 
     # ---- delta.hat (per-batch, per-feature, NaN-safe) ----------------------
     if mean_only:
@@ -471,8 +548,7 @@ def _combat_nan(
         delta_hat = np.empty_like(gamma_hat)
         for b in range(n_batch):
             idx = batches_ind[b]
-            for i in range(n_features):
-                delta_hat[b, i] = _row_var_nan(s_data[i, idx])
+            delta_hat[b] = _row_var_nan_grouped(s_data[:, idx])
 
     # ---- EB prior (same as dense path) ------------------------------------
     gamma_bar = gamma_hat.mean(axis=1)

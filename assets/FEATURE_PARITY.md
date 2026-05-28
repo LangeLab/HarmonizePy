@@ -143,11 +143,11 @@ Python retains more features in all cases. The trade-off: retained features are 
 | Seriation sort + block           | PASS (rtol 5e-4)          | --                        | One 3-batch fixture                            |
 | Per-cell NaN synthetic           | PASS (max_rel 0.0000)     | PASS (max_rel 0.0000)     | NaN positions match                            |
 | **Murine unblocked**             | **PASS (max_rel 0.0003)** | **PASS (max_rel 2e-10)**  | **Real data, NaN positions match**             |
-| **Murine blocked (block=2)**     | **PASS (max_rel 6e-06)**  | **--**                    | **Real data, blocked mode concordant**         |
+| **Murine blocked (block=2, direct recheck)** | **PASS (ComBat mode 1: max_rel 6e-06)** | **--** | **Current benchmark summaries used an invalid R wrapper. Full blocked summary must be regenerated.** |
 | Unique-removal chain rescue      | NOT TESTED                | --                        | No fixture                                     |
 | Combined stress                  | NOT TESTED                | NOT TESTED                | No fixture                                     |
 
-Blocked mode was previously reported as catastrophically divergent (70-140% mean diff). This was an artifact of stale R output files. With fresh R outputs generated from the same input data, blocked mode is perfectly concordant at machine epsilon.
+The catastrophic blocked benchmark rows previously reported in markdown and JSON artifacts were not real algorithmic divergences. The benchmark R wrapper passed `block` as an integer, HarmonizR rejected it, and the R side silently ran unblocked while Python still ran blocked. A corrected direct rerun on murine `ComBat` mode 1 with `block=2` gives `max_rel 5.73e-06`, `p95_rel 5.48e-15`, and `nan_match 1.0`. Treat existing benchmark-summary rows with `Block = 2` as invalid until they are regenerated with the fixed wrapper.
 
 ---
 

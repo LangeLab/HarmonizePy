@@ -228,7 +228,7 @@ def harmonize(
     # --- Split, adjust, rebuild --------------------------------------------
     n_groups = len({a for a in affiliation_list if len(a) > 0})
     logger.info("Adjusting %d unique affiliation group(s)…", n_groups)
-    sub_dfs = splitting(
+    result = splitting(
         affiliation_list,
         data,
         batch_list,
@@ -236,7 +236,6 @@ def harmonize(
         algorithm=algorithm,
         combat_mode=combat_mode,
     )
-    result = pd.concat(sub_dfs, axis=0) if sub_dfs else pd.DataFrame()
 
     # --- Re-sort columns to original order ---------------------------------
     if col_order is not None and result.shape[1] > 0:

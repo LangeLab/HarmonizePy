@@ -35,7 +35,7 @@ def _make_data(n_features: int = 6, n_samples: int = 6) -> pd.DataFrame:
 
 class TestSplittingBasic:
     def test_all_features_one_group(self) -> None:
-        """All features in one affiliation group produce a single sub-DataFrame.
+        """All features in one affiliation group produce one output matrix.
 
         Failure condition: features are split across multiple groups
         when they share the same affiliation.
@@ -45,13 +45,12 @@ class TestSplittingBasic:
         block = batch.copy()
         affil = _affil(*[(1, 2)] * data.shape[0])
         result = splitting(affil, data, batch, block, algorithm="ComBat", combat_mode=2)
-        assert len(result) == 1
-        concat = pd.concat(result, axis=0)
-        assert concat.shape == data.shape
-        assert not concat.isna().any().any()
+        assert result.shape == data.shape
+        assert list(result.index) == list(data.index)
+        assert not result.isna().any().any()
 
     def test_two_groups(self) -> None:
-        """Two affiliation groups produce two sub-DataFrames.
+        """Two affiliation groups still produce one assembled DataFrame.
 
         Failure condition: groups are merged or dropped.
         """
@@ -60,9 +59,8 @@ class TestSplittingBasic:
         block = batch.copy()
         affil = _affil((1,), (1,), (1, 2), (1, 2))
         result = splitting(affil, data, batch, block, algorithm="limma")
-        assert len(result) == 2
-        concat = pd.concat(result, axis=0)
-        assert concat.shape == data.shape
+        assert result.shape == data.shape
+        assert list(result.index) == list(data.index)
 
     def test_empty_affiliation_stays_nan(self) -> None:
         """Features with empty affiliation remain all-NaN in output.
@@ -75,9 +73,8 @@ class TestSplittingBasic:
         block = batch.copy()
         affil = _affil((), (1, 2), (1, 2), (1, 2))
         result = splitting(affil, data, batch, block, algorithm="limma")
-        concat = pd.concat(result, axis=0)
-        assert concat.index[0] == data.index[0]
-        assert concat.iloc[0].isna().all()
+        assert result.index[0] == data.index[0]
+        assert result.iloc[0].isna().all()
 
     def test_single_batch_group_copies_raw(self) -> None:
         """Single-batch groups pass raw values through, no adjustment.
@@ -89,9 +86,8 @@ class TestSplittingBasic:
         block = batch.copy()
         affil = _affil((1,), (1,), (1,), (1,))
         result = splitting(affil, data, batch, block, algorithm="ComBat", combat_mode=2)
-        concat = pd.concat(result, axis=0)
-        np.testing.assert_allclose(concat.values[:, :3], data.values[:, :3])
-        assert concat.iloc[:, 3:].isna().all().all()
+        np.testing.assert_allclose(result.values[:, :3], data.values[:, :3])
+        assert result.iloc[:, 3:].isna().all().all()
 
     def test_single_feature_group_copies_raw(self) -> None:
         """Single-feature groups pass raw values through, no adjustment.
@@ -104,8 +100,7 @@ class TestSplittingBasic:
         block = batch.copy()
         affil = _affil((1,), (1, 2), (1, 2), (1, 2))
         result = splitting(affil, data, batch, block, algorithm="ComBat", combat_mode=2)
-        concat = pd.concat(result, axis=0)
-        assert concat.shape == data.shape
+        assert result.shape == data.shape
 
 
 class TestSplittingNanAudit:
@@ -151,18 +146,17 @@ class TestSplittingNanAudit:
         block = batch.copy()
         affil = build_affiliation_list(data, batch, block, needed_values=2)
         result = splitting(affil, data, batch, block, algorithm="ComBat", combat_mode=2)
-        concat = pd.concat(result, axis=0)
         # Feature 0: only cells [0, 0] and [0, 3] stay NaN
-        assert np.isnan(concat.iloc[0, 0])
-        assert np.isnan(concat.iloc[0, 3])
-        assert not np.isnan(concat.iloc[0, [1, 2, 4, 5]]).any()
+        assert np.isnan(result.iloc[0, 0])
+        assert np.isnan(result.iloc[0, 3])
+        assert not np.isnan(result.iloc[0, [1, 2, 4, 5]]).any()
         # Other features: no NaN
-        assert not np.isnan(concat.iloc[1:, :]).any(axis=None)
+        assert not np.isnan(result.iloc[1:, :]).any(axis=None)
 
 
 class TestSplittingIntegration:
     def test_no_missing_data_produces_one_group(self) -> None:
-        """Complete data yields a single affiliation group and one sub-DataFrame.
+        """Complete data yields a single affiliation group and one output matrix.
 
         Failure condition: complete data is split into multiple groups.
         """
@@ -172,8 +166,7 @@ class TestSplittingIntegration:
         affil = build_affiliation_list(data, batch, block, needed_values=2)
         assert all(a == (1, 2) for a in affil)
         result = splitting(affil, data, batch, block, algorithm="limma")
-        concat = pd.concat(result, axis=0)
-        assert concat.shape == data.shape
+        assert result.shape == data.shape
 
     def test_partial_missing_produces_multiple_groups(self) -> None:
         """Partial missing data produces multiple affiliation groups.
@@ -191,5 +184,4 @@ class TestSplittingIntegration:
         assert affil[1] == (1,)
         assert all(a == (1, 2) for a in affil[2:])
         result = splitting(affil, data, batch, block, algorithm="ComBat", combat_mode=2)
-        concat = pd.concat(result, axis=0)
-        assert concat.shape == data.shape
+        assert result.shape == data.shape
