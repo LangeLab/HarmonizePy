@@ -24,10 +24,7 @@ build/
 dist/
 pip-wheel-metadata/
 
-# Generated test fixtures (regenerate via R scripts in tests/fixtures/).
-# TODO: When making the repo-public stop ignoring for better transparency.
-tests/fixtures/*.tsv
-tests/fixtures/*.csv
+# Generated fixture logs remain local noise.
 tests/fixtures/*.log
 
 # Test, lint, and coverage artifacts.
