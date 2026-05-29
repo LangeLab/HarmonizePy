@@ -4,6 +4,21 @@
 
 All notable changes to this project are documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Fixture-backed CI workflow with a representative test subset for push and pull request runs.
+
+### Changed
+
+- R-generated TSV and CSV fixtures are now tracked in git so CI can run concordance coverage without regenerating them.
+- Package metadata, smoke checks, and parity docs are aligned on version 0.3.1.
+
+### Fixed
+
+- Repo-wide Ruff and mypy failures cleared on the current CI target.
+
 ## [0.3.1] - 2026-05-28
 
 ### Added

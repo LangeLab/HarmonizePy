@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -255,7 +255,7 @@ def _int_eprior(
 
     d = np.maximum(d_hat, 1e-12)
     not_nan = ~np.isnan(s_data)
-    n_per_gene = np.float64(not_nan.sum(axis=1))
+    n_per_gene = not_nan.sum(axis=1).astype(np.float64)
     sum_x = np.nansum(s_data, axis=1)
     sum_x2 = np.nansum(s_data * s_data, axis=1)
     g_hat_sq = g_hat * g_hat
@@ -618,25 +618,25 @@ def _combat_nan(
     grouped_design_layouts = _prepare_grouped_batch_design_layouts(design, valid_row_groups)
 
     # ---- Per-feature B.hat (Beta.NA) ---------------------------------------
-    B_hat = _beta_na_grouped_batch_design(
+    b_hat = _beta_na_grouped_batch_design(
         data,
         design,
         valid_row_groups,
         grouped_design_layouts,
-    )  # noqa: N806
+    )
 
     # ---- Grand mean and pooled variance (per-feature, NaN-safe) ------------
     # NOTE: R sva::ComBat uses DIFFERENT formulas:
     #   No NaN: mean(residuals^2)
     #   Has NaN: rowVars(residuals, na.rm=TRUE)  (sample variance, ddof=1)
     if ref_idx is not None:
-        grand_mean = B_hat[ref_idx]
+        grand_mean = b_hat[ref_idx]
         ref_cols = batches_ind[ref_idx]
-        fitted_ref = (design[:, ref_cols].T @ B_hat).T
+        fitted_ref = (design[:, ref_cols].T @ b_hat).T
         var_n = _row_var_nan_grouped(data[:, ref_cols] - fitted_ref)
     else:
-        grand_mean = (batch_sizes / n_samples) @ B_hat
-        fitted = (design.T @ B_hat).T
+        grand_mean = (batch_sizes / n_samples) @ b_hat
+        fitted = (design.T @ b_hat).T
         var_n = _row_var_nan_grouped(data - fitted, valid_row_groups)
 
     var_pooled = np.maximum(var_n, 1e-12)
@@ -714,7 +714,7 @@ def _combat_nan(
     if ref_idx is not None:
         corrected[:, batches_ind[ref_idx]] = data[:, batches_ind[ref_idx]]
 
-    return corrected
+    return cast(_Array, corrected)
 
 
 def _combat_dense(

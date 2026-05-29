@@ -467,6 +467,34 @@ class TestHelperFunctions:
         assert len(order) == 4
         np.testing.assert_array_equal(np.sort(order), [0, 1, 2, 3])
 
+    def test_seriation_order_anchors_pc1_sign(self):
+        """_seriation_order anchors the PC1 sign deterministically.
+
+        Failure condition: the SVD sign flips and reverses the order for the
+        same presence matrix across runs or platforms.
+        """
+        presence = np.array(
+            [
+                [True, False, False],
+                [True, False, False],
+                [False, True, False],
+                [False, True, True],
+                [False, False, True],
+            ],
+            dtype=np.bool_,
+        )
+
+        centered = presence.T.astype(np.float64)
+        centered -= centered.mean(axis=0)
+        u, s, _vt = np.linalg.svd(centered, full_matrices=False)
+        raw_pc1 = u[:, 0] * s[0]
+
+        assert raw_pc1[np.argmax(np.abs(raw_pc1))] < 0
+
+        order = _seriation_order(presence)
+
+        np.testing.assert_array_equal(order, np.argsort(-raw_pc1, kind="stable"))
+
     def test_column_order_groups_by_batch(self):
         """_column_order appends indices in the requested batch order.
 

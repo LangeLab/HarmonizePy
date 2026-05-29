@@ -9,7 +9,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.12--3.14-2D7D46?style=flat-square&logo=python&logoColor=white" alt="Python 3.12-3.14">
-  <img src="https://img.shields.io/badge/version-0.3.0-8B5CF6?style=flat-square" alt="v0.3.0">
+  <img src="https://img.shields.io/badge/version-0.3.1-8B5CF6?style=flat-square" alt="v0.3.1">
   <img src="https://img.shields.io/badge/status-alpha-C17D10?style=flat-square" alt="Alpha">
   <!-- <img src="https://github.com/LangeLab/HarmonizePy/actions/workflows/ci.yml/badge.svg" alt="CI"> -->
   <!-- <img src="https://img.shields.io/badge/576%20tests-passing-22C55E?style=flat-square" alt="576 tests"> -->
@@ -145,7 +145,7 @@ harmonizepy data.tsv batch.csv --config run.toml
 # Dry-run: validates inputs and prints the run plan, exits without computing
 harmonizepy data.tsv batch.csv --dry-run
 # Prints:
-#   HarmonizePy 0.3.0 dry run
+#   HarmonizePy 0.3.1 dry run
 #   ────────────────────────────────────────────────────
 #   Features:        1500
 #   Samples:         45

@@ -1,6 +1,6 @@
 [project]
 name = "harmonizepy"
-version = "0.3.0"
+version = "0.3.1"
 description = "Pure-Python batch-effect harmonization (ComBat + limma), validated against R sva/HarmonizR."
 readme = "README.md"
 license = "GPL-3.0-only"
@@ -49,6 +49,7 @@ Issues = "https://github.com/LangeLab/HarmonizePy/issues"
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+    "pytest-cov>=5.0",
     "mypy>=1.9",
     "ruff>=0.4",
     "pandas-stubs>=2.0",
@@ -61,15 +62,17 @@ build-backend = "hatchling.build"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+[tool.coverage.run]
+source = ["src/harmonizepy"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+
 [tool.mypy]
 strict = true
 python_version = "3.12"
 ignore_missing_imports = false
-
-[[tool.mypy.overrides]]
-module = "tests.*"
-disallow_untyped_defs = false
-disallow_untyped_calls = false
 
 [[tool.mypy.overrides]]
 module = "pyarrow"

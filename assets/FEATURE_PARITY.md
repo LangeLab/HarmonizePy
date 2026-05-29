@@ -1,16 +1,18 @@
-# Feature Parity: R HarmonizR v1.10.0 vs HarmonizePy v0.3.0
+# Feature Parity: R HarmonizR v1.10.0 vs HarmonizePy v0.3.1
 
 References: R source at `ref/HarmonizR/R/` (13 files). R sva v3.60.0, limma, HarmonizR v1.10.0 via Bioconductor 3.23.
 
 ---
 
-## WARNING: Fixture Limitations Remain
+## Current Validation Boundaries
 
-185 existing concordance tests use synthetic data with clean structural missingness only. Per-cell NaN testing is now covered by 5 new `percell_nan_*` fixtures and verified against the murine_medulloblastoma real dataset. However:
+The parity surface is broader than the original structural-missingness fixture suite. In addition to the dense and structural-missingness fixtures, the repository now includes dedicated checks for per-cell NaN handling, medium `jaccard` and `seriation` sort+block cases, chain-rescue `unique_removal` toggles, and the combined stress case (`sort + block + ur + per-cell NaN`).
 
-- Jaccard/Seriation sort only verified on one 3-batch fixture each
-- Unique-removal chain-rescue scenario not tested
-- Combined stress (sort+block+ur+per-cell NaN) not tested
+Remaining limits are narrower:
+
+- Jaccard and seriation are fixture-backed and unit-tested, but exact algorithm matching to R is intentionally out of scope.
+- Combined-stress validation is now fixture-backed, but exact NaN-position parity on every feature is still not used as a release gate because of the documented mixed-NaN edge case.
+- Python source coverage is now measured directly in-repo and is currently 94% for `src/harmonizepy`.
 
 ---
 
@@ -104,7 +106,7 @@ R uses `plyr::rbind.fill` (align by row name). Python uses pre-allocated array +
 
 ## 4. Unique-Removal Algorithm: MINOR DIVERGENCE
 
-R updates affiliation list in-place enabling chain rescues. Python pre-computes non-unique set from original list; rescued singletons don't become new targets. Only verified on highmiss dataset. Chain-rescue scenario not tested.
+R updates affiliation list in-place enabling chain rescues. Python pre-computes the non-unique target set from the original list, so rescued singletons do not become new targets in the same pass. This difference is now covered by dedicated `chain_rescue` fixtures for both `ur=True` and `ur=False`.
 
 ---
 
@@ -133,19 +135,19 @@ Python retains more features in all cases. The trade-off: retained features are 
 
 ## 7. Verification Status
 
-| Scenario                         | ComBat 1-4                | limma                     | Notes                                          |
-| -------------------------------- | ------------------------- | ------------------------- | ---------------------------------------------- |
-| Dense synthetic                  | PASS (rtol 2e-5 to 5e-4)  | PASS (rtol 1e-9)          | 185 fixture tests                              |
-| Structural missingness           | PASS (rtol 5e-4)          | PASS (rtol 1e-8)          | 185 fixture tests                              |
-| Blocking (block=2,4)             | PASS (rtol 5e-4)          | PASS (rtol 1e-8)          | 185 fixture tests                              |
-| Sparsity sort + block            | PASS (rtol 5e-4)          | PASS (rtol 1e-8)          | 185 fixture tests                              |
-| Jaccard sort + block             | PASS (rtol 5e-4)          | --                        | One 3-batch fixture                            |
-| Seriation sort + block           | PASS (rtol 5e-4)          | --                        | One 3-batch fixture                            |
-| Per-cell NaN synthetic           | PASS (max_rel 0.0000)     | PASS (max_rel 0.0000)     | NaN positions match                            |
-| **Murine unblocked**             | **PASS (max_rel 0.0003)** | **PASS (max_rel 2e-10)**  | **Real data, NaN positions match**             |
-| **Murine blocked (block=2, direct recheck)** | **PASS (ComBat mode 1: max_rel 6e-06)** | **--** | **Current benchmark summaries used an invalid R wrapper. Full blocked summary must be regenerated.** |
-| Unique-removal chain rescue      | NOT TESTED                | --                        | No fixture                                     |
-| Combined stress                  | NOT TESTED                | NOT TESTED                | No fixture                                     |
+| Scenario | ComBat 1-4 | limma | Notes |
+| --- | --- | --- | --- |
+| Dense synthetic | PASS (rtol 2e-5 to 5e-4) | PASS (rtol 1e-9) | baseline fixture suite |
+| Structural missingness | PASS (rtol 5e-4) | PASS (rtol 1e-8) | baseline fixture suite |
+| Blocking (block=2,4) | PASS (rtol 5e-4) | PASS (rtol 1e-8) | fixture-backed |
+| Sparsity sort + block | PASS (rtol 5e-4) | PASS (rtol 1e-8) | fixture-backed |
+| Jaccard sort + block | PASS (rtol 5e-4) | -- | medium block=2 fixture plus broad unit coverage |
+| Seriation sort + block | PASS (rtol 5e-4) | -- | medium block=2 fixture plus broad unit coverage |
+| Per-cell NaN synthetic | PASS (max_rel 0.0000) | PASS (max_rel 0.0000) | NaN positions match |
+| Murine unblocked | PASS (max_rel 0.0003) | PASS (max_rel 2e-10) | real data, NaN positions match |
+| Murine blocked (block=2) | PASS (ComBat mode 1: max_rel 6e-06) | -- | benchmark wrapper bug fixed; blocked summary should still be regenerated |
+| Unique-removal chain rescue | PASS (rtol 1e-4) | -- | dedicated `ur=True` and `ur=False` fixtures |
+| Combined stress | PASS on value concordance for NaN-matching features | -- | dedicated fixture; minority NaN-position mismatch allowed |
 
 The catastrophic blocked benchmark rows previously reported in markdown and JSON artifacts were not real algorithmic divergences. The benchmark R wrapper passed `block` as an integer, HarmonizR rejected it, and the R side silently ran unblocked while Python still ran blocked. A corrected direct rerun on murine `ComBat` mode 1 with `block=2` gives `max_rel 5.73e-06`, `p95_rel 5.48e-15`, and `nan_match 1.0`. Treat existing benchmark-summary rows with `Block = 2` as invalid until they are regenerated with the fixed wrapper.
 

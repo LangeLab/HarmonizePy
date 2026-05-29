@@ -323,8 +323,8 @@ class TestBenchmarkHarness:
             "benchmarks.harness.resolve_dataset_paths",
             lambda *_args, **_kwargs: DatasetPaths(
                 name="tiny",
-                input_path=Path("."),
-                desc_path=Path("."),
+                input_path=Path(),
+                desc_path=Path(),
                 features=3,
                 samples=4,
                 batches=2,
@@ -405,8 +405,8 @@ class TestBenchmarkLoading:
 
         paths = DatasetPaths(
             name="tiny",
-            input_path=Path("."),
-            desc_path=Path("."),
+            input_path=Path(),
+            desc_path=Path(),
             features=2,
             samples=4,
             batches=2,

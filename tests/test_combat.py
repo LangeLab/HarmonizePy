@@ -18,7 +18,14 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from harmonizepy.combat import _beta_na_grouped_batch_design, _group_valid_rows, _int_eprior, _it_sol, _row_var_nan_grouped, combat
+from harmonizepy.combat import (
+    _beta_na_grouped_batch_design,
+    _group_valid_rows,
+    _int_eprior,
+    _it_sol,
+    _row_var_nan_grouped,
+    combat,
+)
 from harmonizepy.combat_wrapper import adjust_combat
 
 # ---------------------------------------------------------------------------

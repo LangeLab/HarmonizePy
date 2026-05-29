@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Ruff
+        run: uv run ruff check src/ tests/
+
+      - name: Mypy
+        run: uv run mypy src/
+
+      - name: Pytest representative subset
+        run: |
+          uv run pytest -q \
+            tests/test_smoke.py \
+            tests/test_api.py \
+            tests/test_io.py \
+            tests/test_validation.py \
+            tests/test_sorting.py \
+            tests/test_blocking.py \
+            tests/test_unique_removal.py \
+            tests/test_splitting.py \
+            tests/test_combat.py \
+            tests/test_limma.py \
+            tests/test_pipeline.py \
+            tests/test_cli.py \
+            tests/test_benchmarks.py
