@@ -1,4 +1,4 @@
-# Feature Parity: R HarmonizR v1.10.0 vs HarmonizePy v0.3.1
+# Feature Parity: R HarmonizR v1.10.0 vs HarmonizePy v0.3.2
 
 References: R source at `ref/HarmonizR/R/` (13 files). R sva v3.60.0, limma, HarmonizR v1.10.0 via Bioconductor 3.23.
 

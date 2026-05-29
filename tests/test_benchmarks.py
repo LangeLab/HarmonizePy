@@ -12,9 +12,9 @@ import pandas as pd
 
 from benchmarks.harness import BenchmarkHarness
 from benchmarks.metrics import SingleRunMetrics, aggregate_metrics, assess_rss_stability
-from benchmarks.report import build_report_json
+from benchmarks.report import build_report_json, generate_markdown
 from benchmarks.runners import python_runner
-from benchmarks.scenarios import Config, Scenario
+from benchmarks.scenarios import Config, DatasetSpec, Scenario
 
 
 def _make_input() -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -384,6 +384,63 @@ class TestBenchmarkReport:
         assert py["rss_delta_kb"] == 40
         assert py["rss_delta_post_gc_kb"] == 10
         assert py["rss_stability"]["status"] == "insufficient-data"
+
+    def test_report_labels_python_only_datasets(self) -> None:
+        """Dataset metadata should preserve Python-only benchmark coverage.
+
+        Failure condition: mixed benchmark reports hide that some datasets are
+        intentionally Python-only and make them look like missing R data.
+        """
+        cfg = Config(
+            datasets={
+                "tiny": DatasetSpec(
+                    input="missing.tsv",
+                    desc="missing.csv",
+                    tags=["bulk", "synthetic"],
+                    r_eligible=False,
+                    features=2,
+                    samples=4,
+                    batches=2,
+                    scenarios=["bulk"],
+                )
+            },
+            scenario_matrix={},
+            r_cache_cores=[1],
+            r_cache_default_cores=1,
+            r_cache_timeout_s=300,
+            python_budget_s=1,
+            python_min_reps=1,
+            python_max_reps=1,
+            python_warmup=True,
+            r_budget_s=1,
+            r_min_reps=1,
+            r_max_reps=1,
+            paths_data_dir="",
+            paths_results_dir="",
+            paths_tmp_dir="",
+            paths_cache_dir="",
+        )
+        scenario = Scenario(dataset="tiny", algorithm="limma", tags=frozenset({"py_only"}))
+        metrics = SingleRunMetrics(
+            elapsed_s=0.2,
+            cpu_pct=20.0,
+            tracemalloc_peak_mb=2.0,
+            rss_before_kb=100,
+            rss_after_kb=140,
+            rss_post_gc_kb=110,
+            rss_delta_kb=40,
+            rss_delta_post_gc_kb=10,
+            result={"n_total": 2, "n_corrected": 2, "n_passthrough": 0},
+        )
+
+        report = build_report_json(
+            [(scenario, aggregate_metrics([metrics]), None, None)],
+            cfg,
+        )
+
+        assert report["datasets"]["tiny"]["baseline"] == "Python only"
+        markdown = generate_markdown(report)
+        assert "| tiny | Bulk proteomics | Python only |" in markdown
 
 
 class TestBenchmarkLoading:

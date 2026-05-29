@@ -101,24 +101,29 @@ def build_report_json(
                 ds_type = "SCP cohort"
             else:
                 ds_type = "Bulk proteomics"
+            baseline = "Python + R" if ds_spec.r_eligible else "Python only"
             # Calculate file sizes
             from .datasets import resolve_dataset_paths
-            paths = resolve_dataset_paths(config, ds_name)
-            input_size = paths.input_path.stat().st_size if paths.input_path.is_file() else 0
-            desc_size = paths.desc_path.stat().st_size if paths.desc_path.is_file() else 0
-            total_kb = (input_size + desc_size) / 1024.0
-            size_str = f"{total_kb:.0f} KB" if total_kb < 1024 else f"{total_kb / 1024.0:.1f} MB"
+            try:
+                paths = resolve_dataset_paths(config, ds_name)
+                input_size = paths.input_path.stat().st_size if paths.input_path.is_file() else 0
+                desc_size = paths.desc_path.stat().st_size if paths.desc_path.is_file() else 0
+                total_kb = (input_size + desc_size) / 1024.0
+                size_str = f"{total_kb:.0f} KB" if total_kb < 1024 else f"{total_kb / 1024.0:.1f} MB"
+            except OSError:
+                size_str = "N/A"
             datasets_meta[ds_name] = {
                 "type": ds_type,
+                "baseline": baseline,
                 "features": ds_spec.features,
                 "samples": ds_spec.samples,
                 "batches": ds_spec.batches,
                 "file_size": size_str,
                 "missing_frac": ds_spec.missing_frac,
             }
-        except (KeyError, OSError):
+        except KeyError:
             datasets_meta[ds_name] = {
-                "type": "Unknown", "features": 0, "samples": 0, "batches": 0,
+                "type": "Unknown", "baseline": "Unknown", "features": 0, "samples": 0, "batches": 0,
                 "file_size": "N/A", "missing_frac": None,
             }
 
@@ -332,18 +337,21 @@ def _add_data_specs(lines: list[str], report: dict[str, Any]) -> None:
 
     lines.append("## Data Specifications")
     lines.append("")
-    lines.append("| Dataset | Type | Features | Samples | Batches | Missing | File Size |")
-    lines.append("| --- | --- | --- | --- | --- | --- | --- |")
+    lines.append("| Dataset | Type | Baseline | Features | Samples | Batches | Missing | File Size |")
+    lines.append("| --- | --- | --- | --- | --- | --- | --- | --- |")
     for ds_name in sorted(datasets_meta):
         meta = datasets_meta[ds_name]
         ds_type = meta.get("type", "?")
+        baseline = meta.get("baseline", "?")
         feat = meta.get("features", "?")
         smp = meta.get("samples", "?")
         bat = meta.get("batches", "?")
         size_str = meta.get("file_size", "?")
         mf = meta.get("missing_frac")
         miss = f"{int(mf * 100)}%" if mf is not None else "N/A"
-        lines.append(f"| {ds_name} | {ds_type} | {feat} | {smp} | {bat} | {miss} | {size_str} |")
+        lines.append(
+            f"| {ds_name} | {ds_type} | {baseline} | {feat} | {smp} | {bat} | {miss} | {size_str} |"
+        )
     lines.append("")
 
 
@@ -368,9 +376,10 @@ def _add_speed_section(lines: list[str], results: list[dict[str, Any]], r_cores:
     lines.append("## Speed")
     lines.append("")
     lines.append(f"Wall-clock time per scenario. Python runs single-threaded. R uses {r_cores} core(s) with system BLAS threading.")
-    lines.append("")
-
     has_r = _has_r_data(results)
+    if has_r:
+        lines.append("Rows with `--` in the R columns are intentional Python-only scenarios or scenarios without a cached R baseline.")
+    lines.append("")
 
     header = "| Dataset | Algorithm | Mode | Block | Sort | Py Med (s) | Py Reps"
     sep    = "| --- | --- | --- | --- | --- | --- | ---"
@@ -425,9 +434,10 @@ def _add_memory_section(lines: list[str], results: list[dict[str, Any]], r_cores
     lines.append("## Memory")
     lines.append("")
     lines.append("Python RSS retained delta is measured from a post-GC baseline before the call to a post-GC RSS after transient benchmark objects are released. This is more stable across repeated in-process runs than a raw before/after delta. RSS stability summarizes the repeated timed runs: plateau means the last up to 3 post-GC samples stayed within 1024 KB, and growing means monotonic growth without a stable tail. Raw end-of-call RSS is still stored in the JSON output. Heap is Python tracemalloc peak and R gc() absolute heap. R runs all scenarios in one process, so later scenarios may reuse previously allocated memory.")
-    lines.append("")
-
     has_r = _has_r_data(results)
+    if has_r:
+        lines.append("Rows with blank R memory fields are intentional Python-only scenarios or scenarios without a cached R baseline.")
+    lines.append("")
 
     header = "| Dataset | Algorithm | Mode | Py RSS stability | Py RSS retained Δ (KB) | R RSS Δ (KB) | Py RSS post-GC (KB) | Py Heap (MB) | R Heap (MB) |"
     sep    = "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"
@@ -490,7 +500,7 @@ def _add_concordance_section(lines: list[str], results: list[dict[str, Any]]) ->
 
     lines.append("## Concordance")
     lines.append("")
-    lines.append("Python vs R corrected output comparison on shared features. Relative difference is |py - r| / |r| for non-NaN cells.")
+    lines.append("Python vs R corrected output comparison on shared features. Relative difference is |py - r| / |r| for non-NaN cells. Only scenarios with an R baseline appear below.")
     lines.append("")
 
     lines.extend([

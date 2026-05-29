@@ -9,10 +9,10 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.12--3.14-2D7D46?style=flat-square&logo=python&logoColor=white" alt="Python 3.12-3.14">
-  <img src="https://img.shields.io/badge/version-0.3.1-8B5CF6?style=flat-square" alt="v0.3.1">
+  <img src="https://img.shields.io/badge/version-0.3.2-8B5CF6?style=flat-square" alt="v0.3.2">
   <img src="https://img.shields.io/badge/status-alpha-C17D10?style=flat-square" alt="Alpha">
-  <!-- <img src="https://github.com/LangeLab/HarmonizePy/actions/workflows/ci.yml/badge.svg" alt="CI"> -->
-  <!-- <img src="https://img.shields.io/badge/576%20tests-passing-22C55E?style=flat-square" alt="576 tests"> -->
+  <img src="https://github.com/LangeLab/HarmonizePy/actions/workflows/ci.yml/badge.svg" alt="CI">
+  <img src="https://img.shields.io/badge/628%20tests-collected-22C55E?style=flat-square" alt="628 tests collected">
   <img src="https://codecov.io/gh/LangeLab/HarmonizePy/branch/main/graph/badge.svg" alt="Coverage">
   <img src="https://img.shields.io/badge/license-GPL--3.0-4B9D6E?style=flat-square" alt="GPL-3.0">
 </p>
@@ -46,10 +46,12 @@ HarmonizePy provides batch-effect correction for omics data with structural miss
 
 **Validation against R reference workflows:** the package is tested against `sva::ComBat`, `limma::removeBatchEffect`, and HarmonizR v1.10.0 reference outputs across synthetic and real-data scenarios. For the main pipeline, the goal is feature parity with HarmonizR. Known edge-case differences remain in retention policy: HarmonizePy preserves more data in some cases by passing through single-feature groups and retaining all-NaN outputs where no correction is possible.
 
+**Benchmarking and evidence:** the repository includes a modular benchmark system under `benchmarks/` plus a curated benchmark summary in `benchmarks/RESULTS.md`. The current benchmark policy deliberately splits the suite into an R-backed parity subset (`small`, `medium`, `dia`, `murine`, `scp_small`) and Python-only stress-scale runs (`large`, `scp_large`).
+
 ## Installation
 
 ```bash
-# PyPI (once published)
+# Package install (if published for this release)
 pip install harmonizepy
 
 # From GitHub
@@ -133,6 +135,10 @@ Leave `unique_removal=True` (the default) unless you need strict missingness-pat
 ```bash
 harmonizepy data.tsv batch.csv -o corrected.parquet
 
+# Default output path when -o is omitted
+# Writes <data_stem>_corrected.tsv next to the input file
+harmonizepy data.tsv batch.csv
+
 # Algorithm and mode
 harmonizepy data.tsv batch.csv --algorithm limma -o corrected.tsv
 harmonizepy data.tsv batch.csv --combat-mode 3 -o corrected.tsv
@@ -147,7 +153,7 @@ harmonizepy data.tsv batch.csv --config run.toml
 # Dry-run: validates inputs and prints the run plan, exits without computing
 harmonizepy data.tsv batch.csv --dry-run
 # Prints:
-#   HarmonizePy 0.3.1 dry run
+#   HarmonizePy 0.3.2 dry run
 #   ────────────────────────────────────────────────────
 #   Features:        1500
 #   Samples:         45
@@ -163,12 +169,16 @@ harmonizepy data.tsv batch.csv --dry-run
 harmonizepy data.tsv batch.csv -o corrected.tsv --summary run.json --json
 ```
 
+When `-o` is omitted, the CLI writes `<data_stem>_corrected.tsv` next to the input file. If `--output-format parquet` is given without `-o`, the default output path becomes `<data_stem>_corrected.parquet`.
+
 ## Running tests
 
 ```bash
-uv run pytest               # full test suite (R concordance auto-skips if fixtures absent)
+uv run pytest               # full test suite
 uv run pytest tests/ -v     # verbose
 ```
+
+Fixture-backed R concordance coverage is tracked in git, so a normal checkout can run the expected fixture-backed validation without regenerating artifacts. A live R environment is still needed when you want to regenerate the R fixtures themselves.
 
 The test suite covers:
 
@@ -177,6 +187,7 @@ The test suite covers:
 - Failure modes: invalid inputs, dimension mismatches, unsupported parameter combinations
 - Numerical stability: determinism, float32 promotion, memory isolation
 - CLI integration: flag parsing, config files, dry-run, output formats (TSV, CSV, Parquet)
+- Benchmark harness and report coverage via `tests/test_benchmarks.py`
 
 ### Regenerating R fixtures
 
@@ -191,6 +202,17 @@ Rscript tests/fixtures/generate_blocking_fixtures.R
 ## Project layout
 
 ```text
+benchmarks/
+    bench.py            # Benchmark CLI entry point
+    config.yaml         # Dataset and scenario policy
+    datasets.py         # Dataset specs and synthetic data generation
+    harness.py          # Python and R benchmark orchestration
+    metrics.py          # Runtime and memory measurement helpers
+    report.py           # JSON and Markdown benchmark report generation
+    runners/            # Python and R runner backends
+    scenarios.py        # Scenario registry expansion
+    validity.py         # Concordance and validity checks
+    RESULTS.md          # Curated benchmark summary for the current release
 src/harmonizepy/
     __init__.py          # Public API: harmonize, combat, remove_batch_effect
     __main__.py          # CLI entry point
@@ -208,6 +230,7 @@ src/harmonizepy/
 tests/
     test_smoke.py        # Version check
     test_api.py          # Public API surface tests
+    test_benchmarks.py   # Benchmark harness and report tests
     test_combat.py       # ComBat unit + R concordance
     test_limma.py        # limma unit + R concordance
     test_pipeline.py     # Full pipeline integration tests
@@ -219,7 +242,7 @@ tests/
     test_validation.py   # Validation unit tests
     test_cli.py          # CLI end-to-end tests
     test_comprehensive.py   # Edge-case, failure-mode, extended R concordance
-    fixtures/            # R-generated reference outputs (88 TSV + 12 CSV)
+    fixtures/            # R-generated reference outputs and fixture-generation scripts
 data/                    # Small showcase datasets (user-provided)
 ```
 

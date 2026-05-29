@@ -6,14 +6,17 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-05-29
+
 ### Added
 
 - Fixture-backed CI workflow with a representative test subset for push and pull request runs.
+- Top-level benchmark results documentation now summarizes dataset design, benchmark environment, R-vs-Python representative runtimes, and the mixed R-backed versus Python-only benchmark policy.
 
 ### Changed
 
 - R-generated TSV and CSV fixtures are now tracked in git so CI can run concordance coverage without regenerating them.
-- Package metadata, smoke checks, and parity docs are aligned on version 0.3.1.
+- Package metadata, smoke checks, README examples, parity docs, and workspace reference docs are aligned on version 0.3.2.
 - CLI default output now writes `<data_stem>_corrected.tsv` unless parquet is explicitly requested.
 
 ### Fixed

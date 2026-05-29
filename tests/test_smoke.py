@@ -6,9 +6,9 @@ from harmonizepy import __version__
 
 
 def test_version_is_defined() -> None:
-    """Package version string must be ``0.3.1``.
+    """Package version string must be ``0.3.2``.
 
     Failure condition: the version was bumped or a dev install does
     not match the released version.
     """
-    assert __version__ == "0.3.1"
+    assert __version__ == "0.3.2"

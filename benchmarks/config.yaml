@@ -44,7 +44,7 @@ datasets:
     input:        data/large_input.tsv
     desc:         data/large_batch.csv
     tags:         [bulk, synthetic]
-    r_eligible:   true
+    r_eligible:   false          # HarmonizR baseline is not reliable at this scale; benchmark Python only
     features:     10000
     samples:      100
     batches:      20
@@ -80,7 +80,7 @@ datasets:
     input:        data/scp_small_input.tsv
     desc:         data/scp_small_batch.csv
     tags:         [scp, synthetic]
-    r_eligible:   false           # R times out on large-sample SCP workloads
+    r_eligible:   true            # Keep an R-backed SCP baseline at the smaller scale
     features:     3000
     samples:      1000
     batches:      20
@@ -92,7 +92,7 @@ datasets:
     input:        data/scp_large_input.tsv
     desc:         data/scp_large_batch.csv
     tags:         [scp, synthetic]
-    r_eligible:   false
+    r_eligible:   false           # Python-only: current HarmonizR runs do not finish reliably here
     features:     5000
     samples:      10000
     batches:      100

@@ -3,8 +3,8 @@ title: "HarmonizePy: Pure-Python batch-effect harmonization with structural miss
 message: "If you use HarmonizePy in your research, please cite it using the metadata below."
 type: software
 repository-code: "https://github.com/LangeLab/HarmonizePy"
-version: 0.3.0
-date-released: "2026-05-27"
+version: 0.3.2
+date-released: "2026-05-29"
 license: GPL-3.0
 abstract: >
   HarmonizePy is a Pure-Python batch-effect correction toolkit for omics
