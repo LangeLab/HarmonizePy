@@ -1,6 +1,6 @@
 <!-- markdownlint-disable MD033 MD041 -->
 <p align="center">
-  <img src="assets/logo_readme.svg" alt="HarmonizePy" width="420">
+  <img src="https://raw.githubusercontent.com/LangeLab/HarmonizePy/main/assets/logo_readme.svg" alt="HarmonizePy" width="420">
 </p>
 
 <p align="center">
@@ -21,10 +21,22 @@
   <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/changelog-CHANGELOG-E05D44?style=flat-square" alt="Changelog"></a>
   <a href="CITATION.cff"><img src="https://img.shields.io/badge/cite-CITATION.cff-0066CC?style=flat-square" alt="Citation"></a>
   <a href="https://github.com/LangeLab/HarmonizePy/issues"><img src="https://img.shields.io/badge/issues-GitHub-8B5CF6?style=flat-square" alt="Issues"></a>
-  <a href="#quick-start"><img src="https://img.shields.io/badge/docs-README-0F766E?style=flat-square" alt="Docs"></a>
+  <a href="https://github.com/LangeLab/HarmonizePy/wiki"><img src="https://img.shields.io/badge/docs-Wiki-0F766E?style=flat-square" alt="Docs"></a>
 </p>
 
-HarmonizePy provides batch-effect correction for omics data with structural missingness and per-cell missing values. The high-level `harmonize()` entry point groups features by batch availability, applies ComBat or limma within compatible subsets, and reassembles the result without imputation. Missing observations remain missing in the output. Low-level `combat()` and `remove_batch_effect()` functions are also exposed for direct NumPy workflows. HarmonizePy implements the core HarmonizR workflow in pure Python with no runtime R dependency and is compared against HarmonizR, `sva::ComBat`, and `limma::removeBatchEffect` reference outputs.
+HarmonizePy is a pure-Python batch-effect correction package for omics data. The high-level `harmonize()` entry point handles structural missingness automatically: features are grouped by observed batch support, corrected with ComBat or limma within compatible subsets, and reassembled without imputation. No R installation is required at runtime.
+
+## Documentation
+
+- [Installation](https://github.com/LangeLab/HarmonizePy/wiki/Installation) - install options, optional extras
+- [Quick Start](https://github.com/LangeLab/HarmonizePy/wiki/Quick-Start) - minimal working examples
+- [Input Format](https://github.com/LangeLab/HarmonizePy/wiki/Input-Format) - data matrix and batch description spec
+- [Algorithms](https://github.com/LangeLab/HarmonizePy/wiki/Algorithms) - ComBat modes 1-4 and limma, when to use each
+- [Pipeline](https://github.com/LangeLab/HarmonizePy/wiki/Pipeline) - structural missingness, sorting, blocking, unique removal
+- [API Reference](https://github.com/LangeLab/HarmonizePy/wiki/API-Reference) - full function signatures
+- [CLI Reference](https://github.com/LangeLab/HarmonizePy/wiki/CLI-Reference) - all flags, config files, output formats
+- [R Compatibility](https://github.com/LangeLab/HarmonizePy/wiki/R-Compatibility) - validation scope and numerical tolerances
+- [Benchmarks](https://github.com/LangeLab/HarmonizePy/wiki/Benchmarks) - dataset catalog and runtime results
 
 ## Capabilities
 
@@ -44,9 +56,7 @@ HarmonizePy provides batch-effect correction for omics data with structural miss
 - Batch blocking: group `block=N` consecutive (optionally sorted) batches into a single sub-matrix, reducing peak memory and improving adjustment quality for datasets with many batches.
 - Unique-combination removal (`unique_removal=True`, default): features whose batch-presence pattern is unique across the dataset get rescued. They would otherwise form a singleton sub-matrix and be dropped. The algorithm crops their affiliation to the nearest shared pattern, trading some non-missing data for inclusion in a group adjustment.
 
-**Validation against R reference workflows:** the package is tested against `sva::ComBat`, `limma::removeBatchEffect`, and HarmonizR v1.10.0 reference outputs across synthetic and real-data scenarios. For the main pipeline, the goal is feature parity with HarmonizR. Known edge-case differences remain in retention policy: HarmonizePy preserves more data in some cases by passing through single-feature groups and retaining all-NaN outputs where no correction is possible.
-
-**Benchmarking and evidence:** the repository includes a modular benchmark system under `benchmarks/` plus a curated benchmark summary in `benchmarks/RESULTS.md`. The current benchmark policy deliberately splits the suite into an R-backed parity subset (`small`, `medium`, `dia`, `murine`, `scp_small`) and Python-only stress-scale runs (`large`, `scp_large`).
+**Validation against R reference workflows:** the package is tested against `sva::ComBat`, `limma::removeBatchEffect`, and HarmonizR v1.10.0 reference outputs. Known edge-case differences in retention policy are documented in the [R Compatibility](https://github.com/LangeLab/HarmonizePy/wiki/R-Compatibility) wiki page. Runtime benchmarks across six datasets are in [Benchmarks](https://github.com/LangeLab/HarmonizePy/wiki/Benchmarks).
 
 ## Installation
 
@@ -67,12 +77,7 @@ pip install harmonizepy[completion]  # Shell tab-completion via argcomplete
 pip install harmonizepy[io]          # Parquet IO and pyarrow-accelerated CSV/TSV paths
 ```
 
-### Dependencies
-
-- Python >= 3.12
-- numpy >= 1.24, pandas >= 2.0
-- pyarrow >= 14.0 optional for parquet IO and faster CSV/TSV reading via `harmonizepy[io]`
-- pytest >= 8.0 (dev)
+See [Installation](https://github.com/LangeLab/HarmonizePy/wiki/Installation) for the full dependency list and optional extras detail.
 
 ## Quick start
 
@@ -111,65 +116,34 @@ The low-level engines handle missing observations per feature and preserve NaN p
 | --- | --- | --- | --- |
 | `algorithm` | `"ComBat"` or `"limma"` | `"ComBat"` | Batch correction algorithm |
 | `combat_mode` | 1, 2, 3, 4 | 1 | ComBat variant (ignored for limma) |
-| `needed_values` | int or `None` | `None` (auto) | Min non-missing values per batch for a feature to be included. Auto sets 2 for modes 1, 3 and limma; 1 for modes 2, 4. |
 | `sort` | `"sparsity"`, `"jaccard"`, `"seriation"`, or `None` | `None` | Batch sorting strategy before blocking |
 | `block` | int >= 2 or `None` | `None` | Group N consecutive batches into one sub-matrix block |
 | `unique_removal` | bool | `True` | Rescue singleton features by cropping to nearest shared pattern |
-| `config` | `HarmonizeConfig` or `None` | `None` | Reproducible run configuration (overrides individual kwargs) |
-| `output_file` | str, Path, or `None` | `None` | Write corrected matrix to this path. Format is inferred from `.tsv`, `.csv`, `.parquet`, or `.pq` |
 
-### Choosing algorithm, mode, and strategy
+Full signature with all parameters is in the [API Reference](https://github.com/LangeLab/HarmonizePy/wiki/API-Reference).
 
-Start with the default (`ComBat`, mode 1, no sort/block). It handles most datasets well.
+### Choosing algorithm and strategy
 
-Use `algorithm="limma"` when you need a fast, moderate correction or have a single feature. It uses a closed-form linear model with no iterative solver.
-
-For very small batch sizes (n < 10 per batch), prefer `combat_mode=3` (non-parametric). When variance correction is unnecessary (e.g. pre-scaled data), use mode 2 or 4.
-
-For datasets with 5 or more batches, adding `sort="sparsity"` and `block=2` improves both runtime and adjustment quality by grouping similar-completeness batches together. Use `sort="jaccard"` when batch sizes are uneven: it groups by feature-overlap similarity rather than raw completeness counts.
-
-Leave `unique_removal=True` (the default) unless you need strict missingness-pattern matching. It keeps more features in the output by rescuing singletons at minimal cost.
+Start with the default (`ComBat`, mode 1). For very small batch sizes (n < 10 per batch), prefer `combat_mode=3` (non-parametric). For datasets with 5 or more batches, `sort="sparsity"` and `block=2` group similar batches together before correction. Use `sort="jaccard"` when batch sizes are uneven. See [Algorithms](https://github.com/LangeLab/HarmonizePy/wiki/Algorithms) and [Pipeline](https://github.com/LangeLab/HarmonizePy/wiki/Pipeline) for full guidance.
 
 ## CLI usage
 
 ```bash
-harmonizepy data.tsv batch.csv -o corrected.parquet
+# Basic
+harmonizepy data.tsv batch.csv -o corrected.tsv
 
-# Default output path when -o is omitted
-# Writes <data_stem>_corrected.tsv next to the input file
-harmonizepy data.tsv batch.csv
-
-# Algorithm and mode
+# Algorithm, sort, and block
 harmonizepy data.tsv batch.csv --algorithm limma -o corrected.tsv
-harmonizepy data.tsv batch.csv --combat-mode 3 -o corrected.tsv
+harmonizepy data.tsv batch.csv --combat-mode 3 --sort sparsity --block 2 -o corrected.tsv
 
-# Sort, block, and feature-handling flags
-harmonizepy data.tsv batch.csv --sort sparsity --block 2 -o corrected.tsv
-harmonizepy data.tsv batch.csv --needed-values 3 --no-unique-removal -o corrected.tsv
+# Validate inputs without running correction
+harmonizepy data.tsv batch.csv --dry-run
 
 # Config file (TOML, JSON, or YAML with [config] extra)
 harmonizepy data.tsv batch.csv --config run.toml
-
-# Dry-run: validates inputs and prints the run plan, exits without computing
-harmonizepy data.tsv batch.csv --dry-run
-# Prints:
-#   HarmonizePy 0.3.2 dry run
-#   ────────────────────────────────────────────────────
-#   Features:        1500
-#   Samples:         45
-#   Batches:         5
-#   Sub-matrices:    3  (unique affiliation groups)
-#   Algorithm:        ComBat mode 1
-#   Sort strategy:    none
-#   Block size:       none
-#   Unique removal:   enabled
-#   Inputs valid. Use without --dry-run to run correction.
-
-# Reproducible run with JSON summary
-harmonizepy data.tsv batch.csv -o corrected.tsv --summary run.json --json
 ```
 
-When `-o` is omitted, the CLI writes `<data_stem>_corrected.tsv` next to the input file. If `--output-format parquet` is given without `-o`, the default output path becomes `<data_stem>_corrected.parquet`.
+When `-o` is omitted, the output is written as `<data_stem>_corrected.tsv` next to the input file. See [CLI Reference](https://github.com/LangeLab/HarmonizePy/wiki/CLI-Reference) for all flags, output formats, and config file syntax.
 
 ## Running tests
 
@@ -178,72 +152,15 @@ uv run pytest               # full test suite
 uv run pytest tests/ -v     # verbose
 ```
 
-Fixture-backed R concordance coverage is tracked in git, so a normal checkout can run the expected fixture-backed validation without regenerating artifacts. A live R environment is still needed when you want to regenerate the R fixtures themselves.
-
-The test suite covers:
-
-- R concordance against `sva::ComBat`, `limma::removeBatchEffect`, and `HarmonizR` (blocking, sort+block, `ur` toggle)
-- Edge cases: unbalanced batches, minimal dimensions, extreme values, near-constant features, negative data, many batches, singleton batches, sparse missingness
-- Failure modes: invalid inputs, dimension mismatches, unsupported parameter combinations
-- Numerical stability: determinism, float32 promotion, memory isolation
-- CLI integration: flag parsing, config files, dry-run, output formats (TSV, CSV, Parquet)
-- Benchmark harness and report coverage via `tests/test_benchmarks.py`
-
-### Regenerating R fixtures
-
-Requires R with `sva`, `limma`, `HarmonizR`, and `seriation` (managed via `renv`):
-
-```bash
-Rscript tests/fixtures/generate_r_fixtures.R
-Rscript tests/fixtures/generate_edgecase_fixtures.R
-Rscript tests/fixtures/generate_blocking_fixtures.R
-```
+The suite covers R concordance, edge cases, failure modes, numerical stability, CLI integration, and the benchmark harness. R fixture outputs are committed to the repository, so the full concordance suite runs on a plain checkout without a live R environment. Regenerating fixtures from source requires R with `sva`, `limma`, `HarmonizR`, and `seriation` managed via `renv`.
 
 ## Project layout
 
 ```text
-benchmarks/
-    bench.py            # Benchmark CLI entry point
-    config.yaml         # Dataset and scenario policy
-    datasets.py         # Dataset specs and synthetic data generation
-    harness.py          # Python and R benchmark orchestration
-    metrics.py          # Runtime and memory measurement helpers
-    report.py           # JSON and Markdown benchmark report generation
-    runners/            # Python and R runner backends
-    scenarios.py        # Scenario registry expansion
-    validity.py         # Concordance and validity checks
-    RESULTS.md          # Curated benchmark summary for the current release
-src/harmonizepy/
-    __init__.py          # Public API: harmonize, combat, remove_batch_effect
-    __main__.py          # CLI entry point
-    core.py              # Pipeline orchestrator (harmonize)
-    types.py             # Shared data structures (HarmonizeConfig)
-    validation.py        # Centralised input validation
-    io.py                # TSV/CSV/Parquet read/write
-    affiliation.py       # Per-feature batch affiliation, UR logic
-    sorting.py           # Batch sorting strategies (sparsity, jaccard, seriation)
-    blocking.py          # Batch blocking (build_block_list)
-    combat.py            # Pure NumPy ComBat engine
-    combat_wrapper.py    # Mode dispatch (1-4) wrapper
-    limma_wrapper.py     # Pure NumPy limma::removeBatchEffect
-    splitting.py         # Sub-frame extraction, adjustment, reassembly
-tests/
-    test_smoke.py        # Version check
-    test_api.py          # Public API surface tests
-    test_benchmarks.py   # Benchmark harness and report tests
-    test_combat.py       # ComBat unit + R concordance
-    test_limma.py        # limma unit + R concordance
-    test_pipeline.py     # Full pipeline integration tests
-    test_sorting.py      # Sorting strategies unit tests
-    test_blocking.py     # Blocking unit tests
-    test_unique_removal.py  # Unique-combination removal unit tests
-    test_splitting.py    # Splitting unit + NaN audit tests
-    test_io.py           # I/O unit tests
-    test_validation.py   # Validation unit tests
-    test_cli.py          # CLI end-to-end tests
-    test_comprehensive.py   # Edge-case, failure-mode, extended R concordance
-    fixtures/            # R-generated reference outputs and fixture-generation scripts
-data/                    # Small showcase datasets (user-provided)
+src/harmonizepy/    # Package source: pipeline, engines, CLI, I/O
+tests/              # 628 tests: unit, integration, R concordance, CLI
+benchmarks/         # Benchmark CLI, dataset catalog, results
+data/               # Small showcase datasets
 ```
 
 ## License

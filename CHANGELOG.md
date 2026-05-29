@@ -12,12 +12,14 @@ All notable changes to this project are documented in this file. The format is b
 
 - Fixture-backed CI workflow with a representative test subset for push and pull request runs.
 - Top-level benchmark results documentation now summarizes dataset design, benchmark environment, R-vs-Python representative runtimes, and the mixed R-backed versus Python-only benchmark policy.
+- GitHub Wiki documentation added under `docs/`: 10 pages covering Installation, Quick Start, Input Format, Algorithms, Pipeline, API Reference, CLI Reference, R Compatibility, and Benchmarks. Includes `_Sidebar.md` and `_Footer.md` for navigation.
 
 ### Changed
 
 - R-generated TSV and CSV fixtures are now tracked in git so CI can run concordance coverage without regenerating them.
 - Package metadata, smoke checks, README examples, parity docs, and workspace reference docs are aligned on version 0.3.2.
 - CLI default output now writes `<data_stem>_corrected.tsv` unless parquet is explicitly requested.
+- README restructured: intro condensed, Documentation section added with wiki links, parameter table trimmed to most-used params, CLI section shortened, test coverage and project layout sections condensed. Logo uses absolute GitHub raw URL for PyPI compatibility. Docs badge links to the wiki.
 
 ### Fixed
 
