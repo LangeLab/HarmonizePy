@@ -15,7 +15,6 @@ Usage::
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -237,18 +236,6 @@ class Scenario:
             parts.append(self.sort)
         return "_".join(parts)
 
-    @property
-    def cache_key(self) -> str:
-        """Short hash for R cache directory naming.
-
-        The key is a SHA-256 truncated to 12 hex chars, computed from
-        the scenario id.  When full cache invalidation is needed (e.g.,
-        dataset file changed), callers should incorporate file hashes
-        externally.
-        """
-        h = hashlib.sha256(self.id.encode()).hexdigest()[:12]
-        return h
-
 
 # ---------------------------------------------------------------------------
 # Registry builder
@@ -342,9 +329,10 @@ def filter_registry(
     *,
     datasets: list[str] | None = None,
     algorithms: list[str] | None = None,
+    combat_modes: list[int] | None = None,
     tags: list[str] | None = None,
 ) -> list[Scenario]:
-    """Filter the scenario registry by dataset, algorithm, or tags.
+    """Filter the scenario registry by dataset, algorithm, combat mode, or tags.
 
     Parameters
     ----------
@@ -354,6 +342,9 @@ def filter_registry(
         If given, only scenarios matching these dataset names.
     algorithms : list[str] or None
         If given, only scenarios matching these algorithms.
+    combat_modes : list[int] or None
+        If given, only scenarios with matching combat_mode (None for limma).
+        When provided, limma scenarios are excluded unless None is included.
     tags : list[str] or None
         If given, only scenarios whose tags contain ALL specified tags.
 
@@ -371,6 +362,10 @@ def filter_registry(
     if algorithms is not None:
         algo_set = set(algorithms)
         result = [s for s in result if s.algorithm in algo_set]
+
+    if combat_modes is not None:
+        cm_set = set(combat_modes)
+        result = [s for s in result if s.combat_mode in cm_set]
 
     if tags is not None:
         tag_set = set(tags)

@@ -188,6 +188,7 @@ def harmonize(
 
     # --- Sort batches ------------------------------------------------------
     col_order: npt.NDArray[np.intp] | None = None
+    original_columns = data.columns
     if sort is not None:
         logger.info("Sorting %d batches by '%s'", n_batches, sort)
         data, batch_list, col_order = sort_batches(  # type: ignore[assignment]
@@ -201,8 +202,16 @@ def harmonize(
     else:
         block_list = batch_list
 
+    data_np = data.to_numpy(dtype=np.float64)
+
     # --- Spot missing values -----------------------------------------------
-    affiliation_list = build_affiliation_list(data, batch_list, block_list, needed_values)
+    affiliation_list = build_affiliation_list(
+        data,
+        batch_list,
+        block_list,
+        needed_values,
+        data_np=data_np,
+    )
     n_empty = sum(1 for a in affiliation_list if len(a) == 0)
     logger.debug(
         "Spotting: %d features with data, %d features dropped (insufficient observations)",
@@ -235,11 +244,10 @@ def harmonize(
         block_list,
         algorithm=algorithm,
         combat_mode=combat_mode,
+        output_col_order=col_order,
+        output_columns=original_columns if col_order is not None else None,
+        data_np=data_np,
     )
-
-    # --- Re-sort columns to original order ---------------------------------
-    if col_order is not None and result.shape[1] > 0:
-        result = result.iloc[:, np.argsort(col_order)]
 
     # --- Warn if all features were dropped --------------------------------
     if n_empty == n_features:

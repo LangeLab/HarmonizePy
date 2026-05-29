@@ -94,6 +94,20 @@ def assert_dataset_exists(paths: DatasetPaths) -> None:
         raise FileNotFoundError(f"Dataset description file not found: {paths.desc_path}")
 
 
+def load_dataset(paths: DatasetPaths) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Load a benchmark dataset using HarmonizePy's production IO layer.
+
+    This keeps benchmark dataset parsing aligned with the actual application
+    behavior, including extension-based format detection and input cleanup.
+    """
+    from harmonizepy.io import read_description, read_main_data
+
+    assert_dataset_exists(paths)
+    data_df = read_main_data(str(paths.input_path))
+    desc_df = read_description(str(paths.desc_path))
+    return data_df, desc_df
+
+
 # ---------------------------------------------------------------------------
 # Synthetic data generation
 # ---------------------------------------------------------------------------

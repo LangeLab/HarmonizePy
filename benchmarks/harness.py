@@ -21,7 +21,7 @@ import logging
 from collections import defaultdict
 from typing import Any
 
-from .datasets import resolve_dataset_paths
+from .datasets import load_dataset, resolve_dataset_paths
 from .metrics import ScenarioMetrics, aggregate_metrics
 from .runners.python_runner import run_once, run_scenario
 from .scenarios import Config, Scenario
@@ -98,26 +98,48 @@ class BenchmarkHarness:
             data_df, desc_df = self._load_dataset(paths)
 
             # Assert dataset dimensions match config (catch stale config)
-            if data_df.shape[0] != paths.features:
+            if data_df.shape[0] > paths.features:
                 raise ValueError(
                     f"Dataset '{dataset_name}': expected {paths.features} features, "
                     f"got {data_df.shape[0]}. Config may be stale."
+                )
+            if data_df.shape[0] < paths.features:
+                logger.info(
+                    "Dataset '%s' loaded %d/%d configured features after IO normalization",
+                    dataset_name,
+                    data_df.shape[0],
+                    paths.features,
                 )
             if data_df.shape[1] != paths.samples:
                 raise ValueError(
                     f"Dataset '{dataset_name}': expected {paths.samples} samples, "
                     f"got {data_df.shape[1]}. Config may be stale."
                 )
-            n_batches = int(desc_df.iloc[:, 2].nunique())
+            if "batch" in desc_df.columns:
+                n_batches = int(desc_df["batch"].nunique())
+            else:
+                n_batches = int(desc_df.iloc[:, 2].nunique())
             if n_batches != paths.batches:
                 raise ValueError(
                     f"Dataset '{dataset_name}': expected {paths.batches} batches, "
                     f"got {n_batches}. Config may be stale."
                 )
 
+            # --- Resolve R results once per dataset (shared across scenarios) ---
+            r_entries: dict[str, dict[str, Any] | None] = {}
+            if getattr(self.config, "r_cache_default_cores", None) is not None:
+                try:
+                    from .runners.r_runner import resolve_r_results
+                    r_entries = resolve_r_results(
+                        dataset_scenarios, self.config,
+                        self.config.paths_cache_dir,
+                    )
+                except Exception as exc:
+                    logger.debug("Could not resolve R results: %s", exc)
+
             for scenario in dataset_scenarios:
                 logger.info("  Running %s ...", scenario.id)
-                result = self._run_single_scenario(data_df, desc_df, scenario)
+                result = self._run_single_scenario(data_df, desc_df, scenario, r_entries)
                 results.append(result)
 
             # Release dataset
@@ -134,38 +156,24 @@ class BenchmarkHarness:
     def _load_dataset(paths: Any) -> tuple[Any, Any]:
         """Load a dataset from resolved paths.
 
-        Handles TSV and CSV input formats.
+        Uses HarmonizePy's production IO layer so benchmark loading matches
+        real application parsing behavior.
         """
-        import pandas as pd
-
-        if paths.input_format == "csv":
-            data_df = pd.read_csv(paths.input_path, index_col=0)
-        else:
-            data_df = pd.read_csv(paths.input_path, sep="\t", index_col=0)
-
-        desc_df = pd.read_csv(paths.desc_path)
-        return data_df, desc_df
+        return load_dataset(paths)
 
     def _run_single_scenario(
         self,
         data_df: Any,
         desc_df: Any,
         scenario: Scenario,
+        r_entries: dict[str, dict[str, Any] | None] | None = None,
     ) -> ScenarioResult:
         """Run warmup + timed reps for one scenario."""
 
-        # --- Resolve R results from cache (needed for concordance) ---
+        # --- Look up R results for this scenario ---
         r_entry: dict[str, Any] | None = None
-        if getattr(self.config, "r_cache_default_cores", None) is not None:
-            try:
-                from .runners.r_runner import resolve_r_results
-                resolved = resolve_r_results(
-                    [scenario], self.config,
-                    self.config.paths_cache_dir,
-                )
-                r_entry = resolved.get(scenario.id)
-            except Exception as exc:
-                logger.debug("Could not resolve R results: %s", exc)
+        if r_entries is not None:
+            r_entry = r_entries.get(scenario.id)
 
         # --- Warmup (untimed, for validity + concordance) ---
         validity: ValidityResult | None = None
@@ -218,6 +226,16 @@ class BenchmarkHarness:
             metrics.features_out = first_result.get("n_total", 0)
             metrics.features_corrected = first_result.get("n_corrected", 0)
             metrics.features_passthrough = first_result.get("n_passthrough", 0)
+
+        rss_stability = metrics.rss_stability
+        if rss_stability.status == "growing":
+            logger.warning(
+                "  RSS stability warning for %s: %s (growth=%d KB, tail_span=%d KB)",
+                scenario.id,
+                rss_stability.reason,
+                rss_stability.total_growth_kb,
+                rss_stability.tail_span_kb,
+            )
 
         # Release result DataFrames from timed runs
         for m in timed:

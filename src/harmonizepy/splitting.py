@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 
 from .affiliation import reduce_to_unique_groups
@@ -31,6 +32,10 @@ def splitting(
     block_list: np.ndarray,
     algorithm: str = "ComBat",
     combat_mode: int = 1,
+    *,
+    output_col_order: npt.NDArray[np.intp] | None = None,
+    output_columns: pd.Index | None = None,
+    data_np: npt.NDArray[np.float64] | None = None,
 ) -> pd.DataFrame:
     """Split data by affiliation, adjust each sub-frame, return result.
 
@@ -49,6 +54,10 @@ def splitting(
         ``"ComBat"`` or ``"limma"``.
     combat_mode : int
         ComBat mode 1-4 (ignored when algorithm is limma).
+    data_np : ndarray or None, keyword-only
+        Optional precomputed float64 view or copy of *data* with shape
+        ``(n_features, n_samples)``. When provided, reused instead of
+        converting *data* again inside this function.
 
     Returns
     -------
@@ -78,7 +87,8 @@ def splitting(
     block_arr = np.asarray(block_list)
 
     # Convert to numpy once to avoid DataFrame overhead in the hot loop.
-    data_np = data.to_numpy(dtype=np.float64)
+    if data_np is None:
+        data_np = data.to_numpy(dtype=np.float64)
 
     # Group features by affiliation using the shared reducer
     affil_to_features = reduce_to_unique_groups(affiliation_list)
@@ -116,43 +126,50 @@ def splitting(
     n_single_feature = 0
 
     for affil, row_indices in affil_to_features.items():
-        row_idx = np.array(row_indices, dtype=np.intp)
-
         if len(affil) == 0:
             continue  # rows stay NaN
 
         # Select cached columns for the blocks in this affiliation.
         col_indices = affil_to_cols[affil]
+        target_col_indices = (
+            col_indices if output_col_order is None else output_col_order[col_indices]
+        )
 
-        # Extract sub-matrix and batch labels as numpy arrays
+        # Fast path: single feature (common case with high NaN).
+        # Avoids np.array + np.ix_ overhead for the trivial 1-row case.
+        if len(row_indices) == 1:
+            ri = row_indices[0]
+            sub_data = data_np[ri, col_indices]
+            sub_batch = batch_arr[col_indices]
+            if len(np.unique(sub_batch)) < 2:
+                n_single_batch += 1
+                output[ri, target_col_indices] = sub_data
+            else:
+                corrected = (
+                    remove_batch_effect(sub_data.reshape(1, -1), sub_batch)
+                    if algorithm == "limma"
+                    else combat(sub_data.reshape(1, -1), sub_batch, **_MODE_MAP[combat_mode])
+                )
+                output[ri, target_col_indices] = corrected.ravel()
+            continue
+
+        # General path: multiple features.
+        row_idx = np.array(row_indices, dtype=np.intp)
         sub_data = data_np[np.ix_(row_idx, col_indices)]
         sub_batch = batch_arr[col_indices]
 
-        # Only adjust if >=2 batches and >=2 features
         unique_batches = np.unique(sub_batch)
         if len(unique_batches) < 2:
             n_single_batch += len(row_idx)
-            output[np.ix_(row_idx, col_indices)] = sub_data
+            output[np.ix_(row_idx, target_col_indices)] = sub_data
             continue
 
-        if len(row_idx) < 2:
-            n_single_feature += len(row_idx)
-            output[np.ix_(row_idx, col_indices)] = sub_data
-            continue
-
-        # Per-cell NaN within a qualifying block is handled inside the
-        # engines on a per-feature basis. They omit only the NaN
-        # observations from each feature's computation and preserve NaN
-        # positions in the output, matching the Beta.NA-style behavior
-        # used by current R sva::ComBat.
-
-        # Apply adjustment
         if algorithm == "limma":
             corrected = remove_batch_effect(sub_data, sub_batch)
         else:
             corrected = combat(sub_data, sub_batch, **_MODE_MAP[combat_mode])
 
-        output[np.ix_(row_idx, col_indices)] = corrected
+        output[np.ix_(row_idx, target_col_indices)] = corrected
 
     n_uncorrected = n_single_batch + n_single_feature
     if n_uncorrected > 0:
@@ -164,4 +181,9 @@ def splitting(
             n_single_feature,
         )
 
-    return pd.DataFrame(output, index=data.index, columns=data.columns)
+    return pd.DataFrame(
+        output,
+        index=data.index,
+        columns=data.columns if output_columns is None else output_columns,
+        copy=False,
+    )

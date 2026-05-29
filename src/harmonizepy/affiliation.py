@@ -21,11 +21,66 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 
+def _assemble_affiliations(
+    unique_blocks: npt.NDArray[np.integer],
+    block_oks: list[npt.NDArray[np.bool_]],
+    n_features: int,
+) -> list[tuple[int, ...]]:
+    """Assemble per-feature affiliation tuples from per-block masks.
+
+    Repeated block-membership patterns are common on fragmented datasets, so
+    cache the tuple reconstruction by mask pattern instead of rebuilding the
+    same Python tuple for every matching feature.
+    """
+    if not block_oks:
+        return [()] * n_features
+
+    n_blocks = len(unique_blocks)
+
+    if n_blocks <= 64:
+        codes = np.zeros(n_features, dtype=np.uint64)
+        for bit_index, mask in enumerate(block_oks):
+            codes |= mask.astype(np.uint64) << np.uint64(bit_index)
+
+        cache: dict[int, tuple[int, ...]] = {0: ()}
+        affiliation_list: list[tuple[int, ...]] = []
+        for code in codes.tolist():
+            affil = cache.get(code)
+            if affil is None:
+                bits = int(code)
+                affil = tuple(
+                    int(unique_blocks[block_index])
+                    for block_index in range(n_blocks)
+                    if bits & (1 << block_index)
+                )
+                cache[code] = affil
+            affiliation_list.append(affil)
+        return affiliation_list
+
+    packed = np.packbits(np.column_stack(block_oks), axis=1)
+    cache_bytes: dict[bytes, tuple[int, ...]] = {}
+    affiliation_list = []
+    for row_index, packed_row in enumerate(packed):
+        key = packed_row.tobytes()
+        affil = cache_bytes.get(key)
+        if affil is None:
+            affil = tuple(
+                int(unique_blocks[block_index])
+                for block_index, mask in enumerate(block_oks)
+                if mask[row_index]
+            )
+            cache_bytes[key] = affil
+        affiliation_list.append(affil)
+    return affiliation_list
+
+
 def build_affiliation_list(
     data: pd.DataFrame,
     batch_list: npt.NDArray[np.integer],
     block_list: npt.NDArray[np.integer],
     needed_values: int,
+    *,
+    data_np: npt.NDArray[np.float64] | None = None,
 ) -> list[tuple[int, ...]]:
     """Determine per-feature batch/block affiliation.
 
@@ -44,6 +99,10 @@ def build_affiliation_list(
         blocking is applied).
     needed_values : int
         Minimum non-NA values per batch within a block.
+    data_np : ndarray or None, keyword-only
+        Optional precomputed float64 view or copy of *data* with shape
+        ``(n_features, n_samples)``. When provided, reused instead of
+        converting *data* again inside this function.
 
     Returns
     -------
@@ -80,7 +139,10 @@ def build_affiliation_list(
         batch_indices = [np.where((batch_arr == b) & blk_mask)[0] for b in batches_in_block]
         block_info.append(batch_indices)
 
-    notna = ~np.isnan(data.values)
+    if data_np is None:
+        data_np = data.to_numpy(dtype=np.float64)
+
+    notna = ~np.isnan(data_np)
 
     # Vectorised per-block check across all features at once.
     # For each block, compute a boolean array indicating whether each
@@ -90,14 +152,8 @@ def build_affiliation_list(
         batch_oks = [notna[:, idx].sum(axis=1) >= needed_values for idx in batch_indices]
         block_oks.append(np.all(batch_oks, axis=0))
 
-    # Assemble per-feature affiliation tuples from the pre-computed masks.
-    # This still uses a Python loop but the expensive per-batch sums are
-    # vectorized above.
     n_features = data.shape[0]
-    affiliation_list: list[tuple[int, ...]] = []
-    for i in range(n_features):
-        blocks_present = [int(blk) for blk, mask in zip(unique_blocks, block_oks, strict=True) if mask[i]]
-        affiliation_list.append(tuple(blocks_present))
+    affiliation_list = _assemble_affiliations(unique_blocks, block_oks, n_features)
 
     n_empty = sum(1 for a in affiliation_list if len(a) == 0)
     logger.debug(

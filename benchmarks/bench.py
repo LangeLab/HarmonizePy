@@ -90,6 +90,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         registry,
         datasets=args.datasets,
         algorithms=args.algorithms,
+        combat_modes=args.combat_modes,
         tags=args.tags,
     )
 
@@ -240,6 +241,7 @@ def _cmd_cache_r(args: argparse.Namespace) -> int:
         registry,
         datasets=args.datasets,
         algorithms=args.algorithms,
+        combat_modes=args.combat_modes,
         tags=args.tags,
     )
 
@@ -280,6 +282,7 @@ def _add_validity_parser(subparsers: Any) -> None:
     p = subparsers.add_parser("validity", help="Run validity checks only (no timing).")
     p.add_argument("--datasets", nargs="*", default=None, help="Datasets to check.")
     p.add_argument("--algorithms", nargs="*", default=None, choices=["ComBat", "limma"], help="Filter by algorithm.")
+    p.add_argument("--combat-modes", nargs="*", type=int, default=None, choices=[1, 2, 3, 4], help="Filter by ComBat mode.")
     p.add_argument("--tags", nargs="*", default=None, help="Filter by scenario tags.")
     p.add_argument("--with-r", action="store_true", help="Include R concordance checks (requires cache).")
     p.add_argument("--config", default=None, help="Config file path.")
@@ -291,7 +294,13 @@ def _cmd_validity(args: argparse.Namespace) -> int:
     cfg = load_config(cfg_path)
 
     registry = build_registry(cfg)
-    scenarios = filter_registry(registry, datasets=args.datasets, algorithms=args.algorithms, tags=args.tags)
+    scenarios = filter_registry(
+        registry,
+        datasets=args.datasets,
+        algorithms=args.algorithms,
+        combat_modes=args.combat_modes,
+        tags=args.tags,
+    )
 
     if not scenarios:
         print("No scenarios match filters.", file=sys.stderr)
@@ -306,16 +315,14 @@ def _cmd_validity(args: argparse.Namespace) -> int:
         except Exception as exc:
             print(f"Warning: R resolution failed: {exc}", file=sys.stderr)
 
+    from .datasets import load_dataset, resolve_dataset_paths
     from .runners.python_runner import run_once
     from .validity import compute_concordance, validate_result
 
     all_pass = True
     for scenario in scenarios:
-        from .datasets import resolve_dataset_paths
         paths = resolve_dataset_paths(cfg, scenario.dataset)
-        import pandas as pd
-        data_df = pd.read_csv(paths.input_path, sep="\t" if paths.input_format == "tsv" else ",", index_col=0)
-        desc_df = pd.read_csv(paths.desc_path)
+        data_df, desc_df = load_dataset(paths)
         result = run_once(data_df, desc_df, scenario)
         result_dict = result.result
         if result_dict is not None and isinstance(result_dict, dict) and "result_df" in result_dict:
@@ -368,7 +375,7 @@ def _cmd_profile(args: argparse.Namespace) -> int:
     import cProfile
     import pstats
 
-    from .datasets import resolve_dataset_paths
+    from .datasets import load_dataset, resolve_dataset_paths
     from .runners.python_runner import run_once
     from .scenarios import Scenario
 
@@ -381,9 +388,7 @@ def _cmd_profile(args: argparse.Namespace) -> int:
     )
 
     paths = resolve_dataset_paths(cfg, args.dataset)
-    import pandas as pd
-    data_df = pd.read_csv(paths.input_path, sep="\t" if paths.input_format == "tsv" else ",", index_col=0)
-    desc_df = pd.read_csv(paths.desc_path)
+    data_df, desc_df = load_dataset(paths)
 
     profiler = cProfile.Profile()
     profiler.enable()

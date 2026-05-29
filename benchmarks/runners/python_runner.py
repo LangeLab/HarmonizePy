@@ -15,6 +15,7 @@ Usage::
 
 from __future__ import annotations
 
+import gc
 import logging
 import resource
 import time
@@ -58,12 +59,23 @@ def run_once(
     *,
     unique_removal: bool = True,
     needed_values: int | None = None,
+    keep_result_df: bool = True,
 ) -> SingleRunMetrics:
     """Run a single benchmark iteration and return measurements.
 
     Calls the public ``harmonize()`` API directly (no subprocess, no
     disk I/O).  Feature counts are computed from the result DataFrame:
     all-NaN rows are passthrough features, others are corrected.
+
+        RSS is measured three ways:
+
+        - ``rss_before_kb``: post-GC baseline before the run
+        - ``rss_after_kb``: RSS immediately after the call returns
+        - ``rss_post_gc_kb``: retained RSS after dropping transient objects and
+            forcing GC
+
+        The post-GC value is the most stable repeated-run signal because it is less
+        sensitive to short-lived benchmark harness objects.
 
     Parameters
     ----------
@@ -78,12 +90,18 @@ def run_once(
         Passed through to ``harmonize()``.
     needed_values : int or None
         Passed through to ``harmonize()``.
+    keep_result_df : bool
+        When ``True`` (default), retain the corrected DataFrame in the
+        returned metrics for validity or concordance checks. Timed benchmark
+        repetitions should set this to ``False`` so prior runs do not keep
+        full result frames alive.
 
     Returns
     -------
     SingleRunMetrics
-        Elapsed time, CPU, memory, RSS, and the result DataFrame
-        in ``.result``.
+        Elapsed time, CPU, memory, RSS, and scalar feature counts.
+        The corrected DataFrame is included in ``.result`` only when
+        ``keep_result_df=True``.
     """
     from harmonizepy import harmonize
 
@@ -92,8 +110,10 @@ def run_once(
     _prev_level = hz_logger.level
     hz_logger.setLevel(logging.WARNING)
 
-    tracemalloc.start()
+    gc.collect()
     rss_before_kb = _read_proc_rss_kb()
+
+    tracemalloc.start()
 
     ru_before = resource.getrusage(resource.RUSAGE_SELF)
     t0 = time.perf_counter()
@@ -121,26 +141,44 @@ def run_once(
     cpu_sys = ru_after.ru_stime - ru_before.ru_stime
     cpu_pct = 100.0 * (cpu_user + cpu_sys) / elapsed if elapsed > 0 else 0.0
 
-    # Compute feature counts from the result DataFrame.
-    # Empty-affiliation features are all-NaN in the output;
-    # features that entered at least one adjustment group have
-    # at least one non-NaN value.
+    # Compute feature counts and total memory.
+    # tracemalloc only tracks Python objects. NumPy allocates array data
+    # natively (C malloc / mmap), invisible to tracemalloc. We add the
+    # result array's nbytes to capture the dominant NumPy cost.
     n_total = len(result_df)
     n_passthrough = int(result_df.isna().all(axis=1).sum())
     n_corrected = n_total - n_passthrough
 
+    # Peak memory: tracemalloc (Python objects) + result ndarray (NumPy data)
+    peak_bytes = peak_alloc
+    try:
+        peak_bytes += result_df.to_numpy().nbytes
+    except Exception:
+        pass
+
+    result_payload: dict[str, object] = {
+        "n_corrected": n_corrected,
+        "n_passthrough": n_passthrough,
+        "n_total": n_total,
+    }
+    if keep_result_df:
+        result_payload["result_df"] = result_df
+    else:
+        del result_df
+
+    gc.collect()
+    rss_post_gc_kb = _read_proc_rss_kb()
+
     return SingleRunMetrics(
         elapsed_s=elapsed,
         cpu_pct=cpu_pct,
-        tracemalloc_peak_mb=peak_alloc / (1024 * 1024),
+        tracemalloc_peak_mb=peak_bytes / (1024 * 1024),
+        rss_before_kb=rss_before_kb,
+        rss_after_kb=rss_after_kb,
+        rss_post_gc_kb=rss_post_gc_kb,
         rss_delta_kb=rss_after_kb - rss_before_kb,
-        phase_times=None,
-        result={
-            "result_df": result_df,
-            "n_corrected": n_corrected,
-            "n_passthrough": n_passthrough,
-            "n_total": n_total,
-        },
+        rss_delta_post_gc_kb=rss_post_gc_kb - rss_before_kb,
+        result=result_payload,
     )
 
 
@@ -197,6 +235,7 @@ def run_scenario(
         data_df, desc_df, scenario,
         unique_removal=unique_removal,
         needed_values=needed_values,
+        keep_result_df=False,
     )
     runs.append(m1)
     accumulated = m1.elapsed_s
@@ -214,6 +253,7 @@ def run_scenario(
                     data_df, desc_df, scenario,
                     unique_removal=unique_removal,
                     needed_values=needed_values,
+                    keep_result_df=False,
                 )
             )
     else:
@@ -222,6 +262,7 @@ def run_scenario(
                 data_df, desc_df, scenario,
                 unique_removal=unique_removal,
                 needed_values=needed_values,
+                keep_result_df=False,
             )
             runs.append(m)
             accumulated += m.elapsed_s

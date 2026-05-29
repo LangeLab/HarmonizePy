@@ -32,6 +32,36 @@ def make_test_data(n_proteins=50, n_samples_per_batch=5, n_batches=3, seed=42):
     return data, batch_labels
 
 
+def _remove_batch_effect_nan_reference(data: np.ndarray, batch: np.ndarray) -> np.ndarray:
+    """Per-feature NaN-safe limma reference used to fence grouped solves."""
+    unique_batches = np.unique(batch)
+    n_batch = len(unique_batches)
+    if n_batch < 2:
+        return data.copy()
+
+    label_map = {b: i for i, b in enumerate(unique_batches)}
+    batch_idx = np.array([label_map[b] for b in batch], dtype=np.intp)
+
+    x_batch = np.zeros((data.shape[1], n_batch - 1), dtype=np.float64)
+    for j in range(n_batch - 1):
+        x_batch[batch_idx == j, j] = 1.0
+    x_batch[batch_idx == n_batch - 1, :] = -1.0
+
+    design = np.hstack([np.ones((data.shape[1], 1), dtype=np.float64), x_batch])
+    corrected = data.copy()
+    for row_index in range(data.shape[0]):
+        y = data[row_index, :]
+        valid = ~np.isnan(y)
+        if valid.sum() < n_batch:
+            continue
+        des = design[valid, :]
+        y1 = y[valid]
+        beta = np.linalg.lstsq(des, y1, rcond=None)[0]
+        beta_batch = np.nan_to_num(beta[1:], nan=0.0)
+        corrected[row_index, valid] = y1 - x_batch[valid, :] @ beta_batch
+    return corrected
+
+
 class TestLimmaBasic:
     def test_shape_and_no_nan(self):
         """Output shape must match input and must not contain NaN.
@@ -166,6 +196,29 @@ class TestLimmaEdgeCases:
         result = remove_batch_effect(data, batches)
         assert result.shape == data.shape
         assert not np.isnan(result).any()
+
+    def test_grouped_nan_path_matches_reference(self):
+        """Grouped NaN solves must match the original per-feature limma math.
+
+        Failure condition: batching rows that share the same valid mask changes
+        coefficients or corrected values relative to the per-feature reference.
+        """
+        batch = np.array([0, 0, 1, 1, 2, 2])
+        data = np.array(
+            [
+                [10.0, 11.0, 20.0, 21.0, 30.0, 31.0],
+                [12.0, 13.0, 22.0, 23.0, 32.0, 33.0],
+                [8.0, np.nan, 18.0, 19.0, 28.0, 29.0],
+                [9.0, np.nan, 17.0, 18.0, 27.0, 28.0],
+                [7.0, 8.0, np.nan, np.nan, 24.0, 25.0],
+            ],
+            dtype=np.float64,
+        )
+
+        expected = _remove_batch_effect_nan_reference(data, batch)
+        result = remove_batch_effect(data, batch)
+
+        np.testing.assert_allclose(result, expected, rtol=1e-12, atol=1e-12, equal_nan=True)
 
 
 @pytest.mark.skipif(not _has_r_fixtures, reason="R fixtures not generated")

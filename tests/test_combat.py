@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from harmonizepy.combat import _beta_na, _beta_na_grouped, _int_eprior, _it_sol, _row_var_nan, _row_var_nan_grouped, combat
+from harmonizepy.combat import _beta_na_grouped_batch_design, _group_valid_rows, _int_eprior, _it_sol, _row_var_nan_grouped, combat
 from harmonizepy.combat_wrapper import adjust_combat
 
 # ---------------------------------------------------------------------------
@@ -100,13 +100,99 @@ def _int_eprior_reference(
 
 
 def _beta_na_grouped_reference(data: np.ndarray, design: np.ndarray) -> np.ndarray:
-    """Reference grouped Beta.NA using the existing per-row implementation."""
-    return np.column_stack([_beta_na(data[i, :], design) for i in range(data.shape[0])])
+    """Reference grouped Beta.NA using explicit grouped `lstsq` solves."""
+    valid_masks = ~np.isnan(data)
+    packed_masks = np.packbits(valid_masks, axis=1)
+    grouped_rows: dict[bytes, list[int]] = {}
+    for row_index in range(data.shape[0]):
+        grouped_rows.setdefault(packed_masks[row_index].tobytes(), []).append(row_index)
+
+    betas = np.empty((design.shape[0], data.shape[0]), dtype=np.float64)
+    for row_indices in grouped_rows.values():
+        row_indexer = np.asarray(row_indices, dtype=np.intp)
+        valid = valid_masks[row_indexer[0]]
+        if not valid.any():
+            betas[:, row_indexer] = np.nan
+            continue
+
+        reduced_design = design[:, valid].T
+        reduced_data = data[row_indexer][:, valid].T
+        betas[:, row_indexer] = np.linalg.lstsq(reduced_design, reduced_data, rcond=None)[0]
+
+    return betas
 
 
 def _row_var_nan_grouped_reference(data: np.ndarray) -> np.ndarray:
-    """Reference grouped row variance using the existing per-row helper."""
-    return np.array([_row_var_nan(data[i, :]) for i in range(data.shape[0])], dtype=np.float64)
+    """Reference grouped row variance using explicit rowwise sample variance."""
+    variances = np.empty(data.shape[0], dtype=np.float64)
+    for row_index in range(data.shape[0]):
+        valid = ~np.isnan(data[row_index])
+        n_valid = int(valid.sum())
+        if n_valid <= 1:
+            variances[row_index] = 1.0
+            continue
+        variances[row_index] = np.var(data[row_index, valid], ddof=1)
+    return variances
+
+
+def _it_sol_reference(
+    s_data: np.ndarray,
+    g_hat: np.ndarray,
+    d_hat: np.ndarray,
+    g_bar: float,
+    t2: float,
+    a: float,
+    b: float,
+    conv: float = 1e-4,
+    max_iter: int = 1_000_000,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Reference `_it_sol` using the pre-optimization iteration structure."""
+    nan_mask = np.isnan(s_data)
+    all_nan = nan_mask.all(axis=1)
+    active = ~all_nan
+
+    if not np.any(active):
+        return g_hat.copy(), d_hat.copy()
+
+    n_per_gene = np.float64((~nan_mask).sum(axis=1))
+    n_per_gene = np.maximum(n_per_gene, 1.0)
+    sum_x = np.nansum(s_data, axis=1)
+    sum_x2 = np.nansum(s_data * s_data, axis=1)
+
+    t2_n = t2 * n_per_gene
+    t2_n_g_hat = t2_n * g_hat
+
+    g_old = g_hat[active].copy()
+    d_old = d_hat[active].copy()
+    t2_n_active = t2_n[active]
+    t2_n_g_hat_active = t2_n_g_hat[active]
+    sum_x_active = sum_x[active]
+    sum_x2_active = sum_x2[active]
+    n_per_gene_active = n_per_gene[active]
+
+    for _ in range(max_iter):
+        g_new = (t2_n_g_hat_active + d_old * g_bar) / (t2_n_active + d_old)
+        sum2 = sum_x2_active - 2.0 * g_new * sum_x_active + n_per_gene_active * g_new * g_new
+        d_new = (0.5 * sum2 + b) / (0.5 * n_per_gene_active + a - 1.0)
+
+        delta_g = np.abs(g_new - g_old)
+        delta_d = np.abs(d_new - d_old)
+        denom_g = np.maximum(np.abs(g_old), 1e-12)
+        denom_d = np.maximum(np.abs(d_old), 1e-12)
+        change = max(np.max(delta_g / denom_g), np.max(delta_d / denom_d))
+
+        g_old = g_new
+        d_old = d_new
+
+        if change < conv:
+            break
+
+    gamma_star = g_hat.copy()
+    delta_star = d_hat.copy()
+    gamma_star[active] = g_new
+    delta_star[active] = d_new
+
+    return gamma_star, delta_star
 
 
 # ---------------------------------------------------------------------------
@@ -185,6 +271,46 @@ class TestEdgeCases:
         np.testing.assert_array_equal(result_d, d_hat)
         assert "did not converge" not in caplog.text
 
+    def test_it_sol_matches_reference_on_finite_nan_mixture(self):
+        """Optimized `_it_sol` must match the pre-optimization iteration math.
+
+        Failure condition: buffer reuse or in-place updates change the fixed
+        point reached by the parametric EB solver on mixed-observation data.
+        """
+        s_data = np.array(
+            [
+                [0.5, np.nan, 1.5, 0.0],
+                [1.0, 1.5, np.nan, 0.5],
+                [np.nan, np.nan, np.nan, np.nan],
+                [0.2, -0.3, 0.1, np.nan],
+            ],
+            dtype=np.float64,
+        )
+        g_hat = np.array([0.4, -0.2, 0.1, 0.8], dtype=np.float64)
+        d_hat = np.array([1.2, 0.9, 0.7, 1.5], dtype=np.float64)
+
+        expected_g, expected_d = _it_sol_reference(
+            s_data,
+            g_hat,
+            d_hat,
+            g_bar=0.3,
+            t2=1.4,
+            a=2.3,
+            b=1.7,
+        )
+        result_g, result_d = _it_sol(
+            s_data,
+            g_hat,
+            d_hat,
+            g_bar=0.3,
+            t2=1.4,
+            a=2.3,
+            b=1.7,
+        )
+
+        np.testing.assert_allclose(result_g, expected_g, rtol=1e-12, atol=1e-12, equal_nan=True)
+        np.testing.assert_allclose(result_d, expected_d, rtol=1e-12, atol=1e-12, equal_nan=True)
+
     def test_int_eprior_matches_reference_formula(self):
         """Optimized `_int_eprior` must match the broadcast reference math.
 
@@ -213,38 +339,6 @@ class TestEdgeCases:
         np.testing.assert_allclose(result_g, expected_g, rtol=1e-12, atol=1e-12)
         np.testing.assert_allclose(result_d, expected_d, rtol=1e-12, atol=1e-12)
 
-    def test_beta_na_grouped_matches_rowwise_reference(self):
-        """Grouped Beta.NA must match the existing per-feature OLS exactly.
-
-        Failure condition: batching rows with identical NaN masks changes
-        coefficients, all-NaN handling, or row ordering.
-
-        Tolerances: rtol=1e-12/atol=1e-12 because both paths call the same
-        float64 least-squares solver on the same reduced designs.
-        """
-        design = np.array(
-            [
-                [1.0, 1.0, 0.0, 0.0, 0.0],
-                [0.0, 0.0, 1.0, 1.0, 1.0],
-            ],
-            dtype=np.float64,
-        )
-        data = np.array(
-            [
-                [10.0, 11.0, 20.0, 21.0, 22.0],
-                [8.0, 9.0, np.nan, 19.0, 18.0],
-                [7.0, 8.0, np.nan, 17.0, 16.0],
-                [np.nan, np.nan, 5.0, 6.0, 7.0],
-                [np.nan, np.nan, np.nan, np.nan, np.nan],
-            ],
-            dtype=np.float64,
-        )
-
-        expected = _beta_na_grouped_reference(data, design)
-        result = _beta_na_grouped(data, design)
-
-        np.testing.assert_allclose(result, expected, rtol=1e-12, atol=1e-12, equal_nan=True)
-
     def test_row_var_nan_grouped_matches_rowwise_reference(self):
         """Grouped row variance must match the current per-feature helper.
 
@@ -270,6 +364,62 @@ class TestEdgeCases:
         result = _row_var_nan_grouped(data)
 
         np.testing.assert_allclose(result, expected, rtol=1e-12, atol=1e-12)
+
+    def test_row_var_nan_grouped_reuses_shared_valid_row_groups(self):
+        """Grouped variance should accept shared mask metadata.
+
+        Failure condition: `_combat_nan()` has to repack and regroup the same
+        full-width NaN mask layout before switching from grouped OLS to grouped
+        variance on arrays that preserve the same NaN positions.
+        """
+        data = np.array(
+            [
+                [10.0, 11.0, 20.0, 21.0, 22.0],
+                [8.0, 9.0, np.nan, 19.0, 18.0],
+                [7.0, 8.0, np.nan, 17.0, 16.0],
+                [np.nan, np.nan, 5.0, 6.0, 7.0],
+                [np.nan, np.nan, np.nan, np.nan, np.nan],
+            ],
+            dtype=np.float64,
+        )
+
+        valid_row_groups = _group_valid_rows(data)
+        expected_var = _row_var_nan_grouped_reference(data)
+        result_var = _row_var_nan_grouped(data, valid_row_groups)
+
+        np.testing.assert_allclose(result_var, expected_var, rtol=1e-12, atol=1e-12)
+
+    def test_beta_na_grouped_batch_design_matches_lstsq_reference(self):
+        """The one-hot batch-design fast path must match grouped lstsq output.
+
+        Failure condition: replacing grouped `lstsq` dispatch in `_combat_nan()`
+        changes coefficients for observed batches or the zero-fill behavior for
+        batches with no observed values.
+        """
+        design = np.array(
+            [
+                [1.0, 1.0, 0.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 1.0, 1.0],
+            ],
+            dtype=np.float64,
+        )
+        data = np.array(
+            [
+                [10.0, 11.0, 20.0, 21.0, 22.0],
+                [8.0, 9.0, np.nan, 19.0, 18.0],
+                [7.0, 8.0, np.nan, 17.0, 16.0],
+                [np.nan, np.nan, 5.0, 6.0, 7.0],
+                [np.nan, np.nan, np.nan, np.nan, np.nan],
+            ],
+            dtype=np.float64,
+        )
+
+        valid_row_groups = _group_valid_rows(data)
+
+        expected = _beta_na_grouped_reference(data, design)
+        result = _beta_na_grouped_batch_design(data, design, valid_row_groups)
+
+        np.testing.assert_allclose(result, expected, rtol=1e-12, atol=1e-12, equal_nan=True)
 
     def test_nan_rows_stay_nan(self):
         """Per-cell NaN positions stay NaN in output; quantified cells adjusted.
@@ -299,6 +449,33 @@ class TestEdgeCases:
         assert not np.isnan(result[:-2, :]).any()
         # Clean rows were actually adjusted (different from input)
         assert not np.allclose(result[:-2, :], data[:-2, :])
+
+    def test_nan_ref_batch_preserves_reference_and_nan_mask(self):
+        """NaN-safe ref_batch path must preserve the reference slice exactly.
+
+        Failure condition: the NaN-aware ref_batch branch adjusts reference
+        samples, changes NaN locations, or leaves the non-reference slice
+        untouched despite a batch effect.
+        """
+        rng = np.random.default_rng(7)
+        data = rng.normal(10, 1.5, size=(12, 6))
+        data[:, 3:] += 4.0
+        data[0, 0] = np.nan
+        data[1, 4] = np.nan
+        data[2, 1] = np.nan
+        data[3, 5] = np.nan
+        batch = np.array([0, 0, 0, 1, 1, 1])
+
+        result = combat(data, batch, par_prior=True, mean_only=False, ref_batch=0)
+        ref_cols = batch == 0
+
+        np.testing.assert_array_equal(result[:, ref_cols], data[:, ref_cols])
+        np.testing.assert_array_equal(np.isnan(result), np.isnan(data))
+
+        non_ref_before = data[:, ~ref_cols]
+        non_ref_after = result[:, ~ref_cols]
+        observed = ~np.isnan(non_ref_before)
+        assert not np.allclose(non_ref_after[observed], non_ref_before[observed])
 
     def test_all_nan_rows_returns_all_nan(self):
         """All rows have NaN -> output is all-NaN (nothing to adjust).

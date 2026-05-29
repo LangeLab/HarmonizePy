@@ -205,6 +205,30 @@ def _write_cache_entry(
 
 
 # ---------------------------------------------------------------------------
+# CSV to TSV conversion (HarmonizR only reads TSV)
+# ---------------------------------------------------------------------------
+
+
+def _ensure_tsv(path: str | Path, tmp_dir: str | Path, dataset_name: str) -> str:
+    """If *path* is a CSV, convert to TSV in *tmp_dir* and return the TSV path.
+
+    HarmonizR's ``read.table(sep="\\t")`` cannot parse CSV files, so
+    datasets with ``input_format: csv`` (like DIA) must be converted
+    before passing to R.  The conversion happens before the R process
+    starts, so no I/O is included in timing.
+    """
+    p = Path(path)
+    if p.suffix.lower() == ".csv":
+        tsv_path = Path(tmp_dir) / f"{dataset_name}_input.tsv"
+        if not tsv_path.is_file():
+            import pandas as pd
+            df = pd.read_csv(path, index_col=0)
+            df.to_csv(tsv_path, sep="\t")
+        return str(tsv_path)
+    return str(path)
+
+
+# ---------------------------------------------------------------------------
 # Build scenario JSON for R handoff
 # ---------------------------------------------------------------------------
 
@@ -216,16 +240,23 @@ def build_scenario_entry(
     output_tsv: str | Path,
     cores: int,
     timeout_s: int,
+    *,
+    tmp_dir: str | Path | None = None,
+    dataset_name: str | None = None,
 ) -> dict[str, Any]:
     """Build a scenario dict for the R handoff JSON.
 
     This is one element of the scenarios array that gets written to
     the ``--scenarios`` file consumed by ``benchmark_r.R``.
     """
+    # Only convert data file (HarmonizR reads data with read.table(sep="\t"))
+    data_path = _ensure_tsv(input_path, tmp_dir or Path(input_path).parent, dataset_name or str(input_path))
+    # Description is always read with read.csv(sep=",") by HarmonizR, so keep original
+    desc_path_str = str(desc_path)
     return {
         "id": scenario.id,
-        "data": str(input_path),
-        "desc": str(desc_path),
+        "data": data_path,
+        "desc": desc_path_str,
         "output_tsv": str(output_tsv),
         "algorithm": scenario.algorithm,
         "combat_mode": scenario.combat_mode,
@@ -419,6 +450,7 @@ def cache_r_scenarios(
         entry = build_scenario_entry(
             s, paths.input_path, paths.desc_path,
             output_tsv, cores, config.r_cache_timeout_s,
+            tmp_dir=tmp_dir, dataset_name=s.dataset,
         )
         scenario_entries.append(entry)
 

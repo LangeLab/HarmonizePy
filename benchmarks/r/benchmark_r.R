@@ -64,6 +64,29 @@ read_vmrss <- function() {
     }, error = function(e) NA_integer_)
 }
 
+# Clean features that would cause singular design matrices (all non-NA
+# values in a single batch). These crash sva::ComBat because solve()
+# cannot invert a rank-deficient crossprod matrix, whereas Python's
+# lstsq handles them gracefully.
+clean_singular_features <- function(data_path, desc_path) {
+    raw <- read.table(data_path, sep = "\t", header = TRUE, row.names = 1)
+    desc <- read.csv(desc_path)
+    batch <- desc[, 3]
+    design <- model.matrix(~0 + as.factor(batch))
+    keep <- rep(TRUE, nrow(raw))
+    for (i in seq_len(nrow(raw))) {
+        des <- design[!is.na(as.numeric(raw[i, ])), ]
+        if (qr(des)$rank < ncol(des)) {
+            keep[i] <- FALSE
+        }
+    }
+    n_dropped <- sum(!keep)
+    if (n_dropped > 0) {
+        message(sprintf("  Dropped %d feature(s) with singular design matrix", n_dropped))
+    }
+    raw[keep, ]
+}
+
 harmonizr_call <- function(scenario) {
     # Convert JSON nulls to R-appropriate values
     algo <- scenario$algorithm
@@ -115,7 +138,52 @@ harmonizr_call <- function(scenario) {
                 cores                = cores
             )
         }
-    }, error = function(e) list(error = conditionMessage(e)))
+    }, error = function(e) {
+        msg <- conditionMessage(e)
+        # Check if this is a singular matrix error from sva::ComBat
+        if (grepl("singular", msg)) {
+            message("  sva::ComBat crashed on singular matrix. Retrying with problematic features removed...")
+            cleaned <- clean_singular_features(scenario$data, scenario$desc)
+            # If we dropped no features but it still crashed, return the error
+            if (nrow(cleaned) == 0) {
+                return(list(error = msg))
+            }
+            desc <- read.csv(scenario$desc)
+            if (HAS_TIMEOUT) {
+                R.utils::withTimeout(
+                    harmonizR(
+                        data_as_input        = cleaned,
+                        description_as_input = desc,
+                        algorithm            = algo,
+                        ComBat_mode          = cm,
+                        block                = blk,
+                        sort                 = srt,
+                        ur                   = TRUE,
+                        output_file          = FALSE,
+                        verbosity            = 0,
+                        cores                = cores
+                    ),
+                    timeout = timeout_s,
+                    onTimeout = "error"
+                )
+            } else {
+                harmonizR(
+                    data_as_input        = cleaned,
+                    description_as_input = desc,
+                    algorithm            = algo,
+                    ComBat_mode          = cm,
+                    block                = blk,
+                    sort                 = srt,
+                    ur                   = TRUE,
+                    output_file          = FALSE,
+                    verbosity            = 0,
+                    cores                = cores
+                )
+            }
+        } else {
+            list(error = msg)
+        }
+    })
 
     result
 }

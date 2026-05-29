@@ -161,8 +161,20 @@ def _build_scenario_entry(
         "p95_s": s_metrics.p95_s,
         "cpu_pct": statistics.median(s_metrics.cpu_pcts) if s_metrics.cpu_pcts else None,
         "tracemalloc_peak_mb": statistics.median(s_metrics.tracemalloc_peak_mbs) if s_metrics.tracemalloc_peak_mbs else None,
+        "rss_post_gc_kbs": s_metrics.rss_post_gc_kbs,
+        "rss_before_kb": statistics.median(s_metrics.rss_before_kbs) if s_metrics.rss_before_kbs else None,
+        "rss_after_kb": statistics.median(s_metrics.rss_after_kbs) if s_metrics.rss_after_kbs else None,
+        "rss_post_gc_kb": statistics.median(s_metrics.rss_post_gc_kbs) if s_metrics.rss_post_gc_kbs else None,
         "rss_delta_kb": statistics.median(s_metrics.rss_delta_kbs) if s_metrics.rss_delta_kbs else None,
-        "phase_times_s": s_metrics.phase_times,
+        "rss_delta_post_gc_kb": statistics.median(s_metrics.rss_delta_post_gc_kbs) if s_metrics.rss_delta_post_gc_kbs else None,
+        "rss_stability": {
+            "status": s_metrics.rss_stability.status,
+            "reason": s_metrics.rss_stability.reason,
+            "tolerance_kb": s_metrics.rss_stability.tolerance_kb,
+            "total_growth_kb": s_metrics.rss_stability.total_growth_kb,
+            "tail_span_kb": s_metrics.rss_stability.tail_span_kb,
+            "monotonic_non_decreasing": s_metrics.rss_stability.monotonic_non_decreasing,
+        },
         "features_out": s_metrics.features_out,
         "features_corrected": s_metrics.features_corrected,
         "features_passthrough": s_metrics.features_passthrough,
@@ -405,23 +417,23 @@ def _add_speed_section(lines: list[str], results: list[dict[str, Any]], r_cores:
 
 
 def _add_memory_section(lines: list[str], results: list[dict[str, Any]], r_cores: str) -> None:
-    """Python vs R RSS delta and heap delta side by side."""
+    """Python vs R memory signals side by side."""
     mem_rows = [r for r in results if r.get("python", {}).get("median_s") is not None]
     if not mem_rows:
         return
 
     lines.append("## Memory")
     lines.append("")
-    lines.append("RSS delta is the change in OS-level resident set size during the call (from /proc/self/status). Heap is the language runtime's internal memory after the call (Python tracemalloc peak / R gc() absolute). Both are comparable across languages. R runs all scenarios in one process, so later scenarios may reuse previously allocated memory.")
+    lines.append("Python RSS retained delta is measured from a post-GC baseline before the call to a post-GC RSS after transient benchmark objects are released. This is more stable across repeated in-process runs than a raw before/after delta. RSS stability summarizes the repeated timed runs: plateau means the last up to 3 post-GC samples stayed within 1024 KB, and growing means monotonic growth without a stable tail. Raw end-of-call RSS is still stored in the JSON output. Heap is Python tracemalloc peak and R gc() absolute heap. R runs all scenarios in one process, so later scenarios may reuse previously allocated memory.")
     lines.append("")
 
     has_r = _has_r_data(results)
 
-    header = "| Dataset | Algorithm | Mode | Py RSS Δ (KB) | R RSS Δ (KB) | Py Heap (MB) | R Heap (MB) |"
-    sep    = "| --- | --- | --- | --- | --- | --- | --- |"
+    header = "| Dataset | Algorithm | Mode | Py RSS stability | Py RSS retained Δ (KB) | R RSS Δ (KB) | Py RSS post-GC (KB) | Py Heap (MB) | R Heap (MB) |"
+    sep    = "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"
     if not has_r:
-        header = "| Dataset | Algorithm | Mode | Py RSS Δ (KB) | Py Heap (MB) |"
-        sep    = "| --- | --- | --- | --- | --- |"
+        header = "| Dataset | Algorithm | Mode | Py RSS stability | Py RSS retained Δ (KB) | Py RSS post-GC (KB) | Py Heap (MB) |"
+        sep    = "| --- | --- | --- | --- | --- | --- | --- |"
 
     lines.append(header)
     lines.append(sep)
@@ -432,9 +444,16 @@ def _add_memory_section(lines: list[str], results: list[dict[str, Any]], r_cores
         ds = sc["dataset"]
         algo = sc["algorithm"]
         mode = str(sc["combat_mode"]) if sc["combat_mode"] is not None else "--"
-        py_rss = f"{py.get('rss_delta_kb', 0):.0f}" if py.get("rss_delta_kb") is not None else "--"
+        py_rss_stability = py.get("rss_stability", {})
+        py_rss_stability_status = str(py_rss_stability.get("status", "--")).upper()
+        py_rss = (
+            f"{py.get('rss_delta_post_gc_kb', 0):.0f}"
+            if py.get("rss_delta_post_gc_kb") is not None
+            else "--"
+        )
+        py_rss_post_gc = f"{py.get('rss_post_gc_kb', 0):.0f}" if py.get("rss_post_gc_kb") is not None else "--"
         py_heap = f"{py.get('tracemalloc_peak_mb', 0):.2f}" if py.get("tracemalloc_peak_mb") is not None else "--"
-        row = f"| {ds} | {algo} | {mode} | {py_rss} |"
+        row = f"| {ds} | {algo} | {mode} | {py_rss_stability_status} | {py_rss} |"
 
         if has_r:
             r_data = r.get("r")
@@ -444,9 +463,9 @@ def _add_memory_section(lines: list[str], results: list[dict[str, Any]], r_cores
             else:
                 r_rss = "--"
                 r_heap = "--"
-            row += f" {r_rss} | {py_heap} | {r_heap} |"
+            row += f" {r_rss} | {py_rss_post_gc} | {py_heap} | {r_heap} |"
         else:
-            row += f" {py_heap} |"
+            row += f" {py_rss_post_gc} | {py_heap} |"
 
         lines.append(row)
 

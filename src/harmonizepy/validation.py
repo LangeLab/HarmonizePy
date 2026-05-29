@@ -43,7 +43,7 @@ def validate_data_matrix(df: pd.DataFrame) -> None:
             f"{dups[:5]}). Each row must have a unique identifier."
         )
 
-    bad = [c for c in df.columns if not pd.api.types.is_numeric_dtype(df[c])]
+    bad = df.dtypes[~df.dtypes.map(pd.api.types.is_numeric_dtype)].index.tolist()
     if bad:
         raise ValueError(
             f"data contains non-numeric columns: {bad[:5]}. "

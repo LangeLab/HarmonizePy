@@ -30,6 +30,7 @@ Algorithm logic cross-referenced against:
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -43,6 +44,22 @@ logger = logging.getLogger(__name__)
 # Type aliases
 # ---------------------------------------------------------------------------
 _Array = npt.NDArray[np.floating[Any]]
+
+
+@dataclass(frozen=True)
+class _ValidRowGroups:
+    """Grouped row indices for a shared valid-observation mask layout."""
+
+    valid_masks: npt.NDArray[np.bool_]
+    row_groups: tuple[npt.NDArray[np.intp], ...]
+
+
+@dataclass(frozen=True)
+class _GroupedBatchDesignLayouts:
+    """Precomputed reduced one-hot layouts for grouped Beta.NA."""
+
+    reduced_designs: tuple[_Array | None, ...]
+    counts: tuple[_Array | None, ...]
 
 # ---------------------------------------------------------------------------
 # Hyper-prior helpers
@@ -75,11 +92,6 @@ def _bprior(gamma_hat: _Array) -> float:
 def _postmean(g_bar: Any, d_star: Any, t2_n: Any, t2_n_g_hat: Any) -> _Array:
     """Posterior mean of the additive batch effect (gamma)."""
     return (t2_n_g_hat + d_star * g_bar) / (t2_n + d_star)  # type: ignore[no-any-return]
-
-
-def _postvar(sum2: _Array, n: Any, a: float, b: float) -> _Array:
-    """Posterior mean of the multiplicative batch effect (delta)."""
-    return (0.5 * sum2 + b) / (0.5 * n + a - 1.0)  # type: ignore[no-any-return]
 
 
 # ---------------------------------------------------------------------------
@@ -136,31 +148,62 @@ def _it_sol(
     t2_n = t2 * n_per_gene
     t2_n_g_hat = t2_n * g_hat  # uses ORIGINAL g_hat, not updated g_new
 
-    g_old = g_hat[active].copy()
-    d_old = d_hat[active].copy()
+    g_prev = g_hat[active].copy()
+    d_prev = d_hat[active].copy()
     t2_n_active = t2_n[active]
     t2_n_g_hat_active = t2_n_g_hat[active]
     sum_x_active = sum_x[active]
     sum_x2_active = sum_x2[active]
     n_per_gene_active = n_per_gene[active]
+    d_denom = 0.5 * n_per_gene_active + a - 1.0
 
-    for _ in range(max_iter):
-        g_new = _postmean(g_bar, d_old, t2_n_active, t2_n_g_hat_active)
-        sum2 = sum_x2_active - 2.0 * g_new * sum_x_active + n_per_gene_active * g_new * g_new
-        d_new = _postvar(sum2, n_per_gene_active, a, b)
+    g_curr = np.empty_like(g_prev)
+    d_curr = np.empty_like(d_prev)
+    sum2 = np.empty_like(g_prev)
+    delta_g = np.empty_like(g_prev)
+    delta_d = np.empty_like(d_prev)
+    denom_g = np.empty_like(g_prev)
+    denom_d = np.empty_like(d_prev)
+    latest_g = g_prev
+    latest_d = d_prev
 
-        delta_g = np.abs(g_new - g_old)
-        delta_d = np.abs(d_new - d_old)
-        denom_g = np.maximum(np.abs(g_old), 1e-12)
-        denom_d = np.maximum(np.abs(d_old), 1e-12)
-        change = max(np.max(delta_g / denom_g), np.max(delta_d / denom_d))
+    for iteration in range(max_iter):
+        np.multiply(d_prev, g_bar, out=g_curr)
+        g_curr += t2_n_g_hat_active
+        np.divide(g_curr, t2_n_active + d_prev, out=g_curr)
 
-        g_old = g_new
-        d_old = d_new
+        np.multiply(g_curr, g_curr, out=sum2)
+        sum2 *= n_per_gene_active
+        sum2 -= 2.0 * g_curr * sum_x_active
+        sum2 += sum_x2_active
+
+        d_curr[:] = 0.5 * sum2 + b
+        np.divide(d_curr, d_denom, out=d_curr)
+
+        np.subtract(g_curr, g_prev, out=delta_g)
+        np.abs(delta_g, out=delta_g)
+        np.copyto(denom_g, g_prev)
+        np.abs(denom_g, out=denom_g)
+        np.maximum(denom_g, 1e-12, out=denom_g)
+        np.divide(delta_g, denom_g, out=delta_g)
+
+        np.subtract(d_curr, d_prev, out=delta_d)
+        np.abs(delta_d, out=delta_d)
+        np.copyto(denom_d, d_prev)
+        np.abs(denom_d, out=denom_d)
+        np.maximum(denom_d, 1e-12, out=denom_d)
+        np.divide(delta_d, denom_d, out=delta_d)
+
+        change = max(float(delta_g.max()), float(delta_d.max()))
+        latest_g = g_curr
+        latest_d = d_curr
 
         if change < conv:
-            logger.debug("Converged in %d iterations (change=%.2e)", _ + 1, change)
+            logger.debug("Converged in %d iterations (change=%.2e)", iteration + 1, change)
             break
+
+        g_prev, g_curr = g_curr, g_prev
+        d_prev, d_curr = d_curr, d_prev
     else:
         logger.warning(
             "Batch did not converge after %d iterations (final change=%.2e)",
@@ -170,8 +213,8 @@ def _it_sol(
 
     gamma_star = g_hat.copy()
     delta_star = d_hat.copy()
-    gamma_star[active] = g_new
-    delta_star[active] = d_new
+    gamma_star[active] = latest_g
+    delta_star[active] = latest_d
 
     return gamma_star, delta_star
 
@@ -204,45 +247,60 @@ def _int_eprior(
     gamma_star, delta_star : (n_genes,)
     """
     n_genes, _ = s_data.shape
-    g_star = np.empty(n_genes)
-    d_star = np.empty(n_genes)
+    g_star = g_hat.copy()
+    d_star = d_hat.copy()
+
+    if n_genes <= 1:
+        return g_star, d_star
 
     d = np.maximum(d_hat, 1e-12)
     not_nan = ~np.isnan(s_data)
     n_per_gene = np.float64(not_nan.sum(axis=1))
     sum_x = np.nansum(s_data, axis=1)
     sum_x2 = np.nansum(s_data * s_data, axis=1)
+    g_hat_sq = g_hat * g_hat
     log_two_pi_d = np.log(2.0 * np.pi * d)
+    neg_half_log_two_pi_d = -0.5 * log_two_pi_d
 
-    mask = np.ones(n_genes, dtype=bool)
-    for i in range(n_genes):
-        mask[i] = False
-        g = g_hat[mask]
-        d_i = d[mask]
-        n_i = n_per_gene[i]  # type: ignore[index]
-        if n_i < 1:
-            g_star[i] = g_hat[i]
-            d_star[i] = d_hat[i]
-            mask[i] = True
+    block_size = 64
+    for start in range(0, n_genes, block_size):
+        stop = min(start + block_size, n_genes)
+        block_indices = np.arange(start, stop, dtype=np.intp)
+        n_block = n_per_gene[start:stop]
+        valid_rows = n_block >= 1.0
+        if not np.any(valid_rows):
             continue
 
-        # For gene i and candidate prior mean g_j:
-        # sum((x_i - g_j)^2) = sum_x2_i - 2*g_j*sum_x_i + n_i*g_j^2
-        sum2 = sum_x2[i] - 2.0 * g * sum_x[i] + n_i * (g * g)
+        target_indices = block_indices[valid_rows]
+        n_valid = n_block[valid_rows]
+        sum_x_valid = sum_x[start:stop][valid_rows]
+        sum_x2_valid = sum_x2[start:stop][valid_rows]
 
-        log_lh = -0.5 * n_i * log_two_pi_d[mask] - sum2 / (2.0 * d_i)
-        log_lh -= log_lh.max()
-        lh = np.exp(log_lh)
+        log_lh = (
+            sum_x2_valid[:, np.newaxis]
+            - 2.0 * sum_x_valid[:, np.newaxis] * g_hat[np.newaxis, :]
+            + n_valid[:, np.newaxis] * g_hat_sq[np.newaxis, :]
+        )
+        np.divide(log_lh, 2.0 * d[np.newaxis, :], out=log_lh)
+        np.negative(log_lh, out=log_lh)
+        log_lh += n_valid[:, np.newaxis] * neg_half_log_two_pi_d[np.newaxis, :]
 
-        total = lh.sum()
-        if total == 0.0 or not np.isfinite(total):
-            total = 1.0
-            lh = np.ones_like(lh) / len(lh)
+        row_ids = np.arange(target_indices.size, dtype=np.intp)
+        log_lh[row_ids, target_indices] = -np.inf
 
-        g_star[i] = (g * lh).sum() / total
-        d_star[i] = (d_i * lh).sum() / total
+        row_max = np.max(log_lh, axis=1, keepdims=True)
+        log_lh -= row_max
+        np.exp(log_lh, out=log_lh)
+        totals = log_lh.sum(axis=1)
 
-        mask[i] = True
+        bad_totals = (totals == 0.0) | ~np.isfinite(totals)
+        if np.any(bad_totals):
+            log_lh[bad_totals] = 1.0
+            log_lh[bad_totals, target_indices[bad_totals]] = 0.0
+            totals = log_lh.sum(axis=1)
+
+        g_star[target_indices] = (log_lh * g_hat[np.newaxis, :]).sum(axis=1) / totals
+        d_star[target_indices] = (log_lh * d[np.newaxis, :]).sum(axis=1) / totals
 
     return g_star, d_star
 
@@ -250,6 +308,8 @@ def _int_eprior(
 # ---------------------------------------------------------------------------
 # Design matrix
 # ---------------------------------------------------------------------------
+
+_design_cache: dict[tuple[int, ...], tuple[_Array, _Array, list[npt.NDArray[np.intp]], int]] = {}
 
 
 def _make_design(batch: npt.NDArray[np.intp], n_batch: int) -> _Array:
@@ -259,6 +319,31 @@ def _make_design(batch: npt.NDArray[np.intp], n_batch: int) -> _Array:
     for i in range(n_batch):
         design[i, batch == i] = 1.0
     return design  # np.float64 array satisfies _Array (NDArray[floating[Any]])
+
+
+def _get_cached_design(batch_int: npt.NDArray[np.intp], n_batch: int) -> tuple[_Array, _Array, list[npt.NDArray[np.intp]], int]:
+    """Return cached design matrix and XXT, or compute and cache.
+
+    When consecutive affiliation groups share the same batch layout,
+    this avoids recomputing the one-hot design matrix and its XXT
+    decomposition for every group.
+    """
+    key = tuple(batch_int.tolist())
+    if key in _design_cache:
+        design, xx_t, batches_ind, cached_n_batch = _design_cache[key]
+        if cached_n_batch == n_batch:
+            return design, xx_t, batches_ind, n_batch
+
+    design = _make_design(batch_int, n_batch)
+    xx_t = design @ design.T
+    batches_ind = [np.where(batch_int == i)[0] for i in range(n_batch)]
+
+    # Keep cache bounded to avoid unbounded memory growth
+    if len(_design_cache) > 64:
+        _design_cache.clear()
+    _design_cache[key] = (design, xx_t, batches_ind, n_batch)
+
+    return design, xx_t, batches_ind, n_batch
 
 
 # ---------------------------------------------------------------------------
@@ -349,111 +434,131 @@ def combat(
 
 
 # ---------------------------------------------------------------------------
-# Nan-safe helpers: Beta.NA-style per-feature OLS
+# NaN-mask grouping helpers
 # ---------------------------------------------------------------------------
 
 
-def _beta_na(y: _Array, design: _Array) -> _Array:
-    """Per-feature OLS on non-NA observations (R sva Beta.NA equivalent).
-
-    Parameters
-    ----------
-    y : (n_samples,) feature row, may contain NaN
-    design : (n_batch, n_samples) design matrix
-
-    Returns
-    -------
-    (n_batch,) coefficient vector
-    """
-    valid = ~np.isnan(y)
-    if not valid.any():
-        return np.full(design.shape[0], np.nan)
-    des = design[:, valid].T
-    y1 = y[valid]
-    return np.linalg.lstsq(des, y1, rcond=None)[0]
-
-
-def _group_valid_rows(data: _Array) -> tuple[npt.NDArray[np.bool_], dict[bytes, list[int]]]:
+def _group_valid_rows(data: _Array) -> _ValidRowGroups:
     """Group row indices by identical non-NaN masks."""
     valid_masks = ~np.isnan(data)
     packed_masks = np.packbits(valid_masks, axis=1)
     grouped_rows: dict[bytes, list[int]] = {}
     for row_index in range(data.shape[0]):
         grouped_rows.setdefault(packed_masks[row_index].tobytes(), []).append(row_index)
-    return valid_masks, grouped_rows
+    return _ValidRowGroups(
+        valid_masks=valid_masks,
+        row_groups=tuple(
+            np.asarray(row_indices, dtype=np.intp) for row_indices in grouped_rows.values()
+        ),
+    )
 
 
-def _beta_na_grouped(data: _Array, design: _Array) -> _Array:
-    """Per-feature OLS grouped by identical valid-observation masks.
+def _prepare_grouped_batch_design_layouts(
+    design: _Array,
+    valid_row_groups: _ValidRowGroups,
+) -> _GroupedBatchDesignLayouts:
+    """Precompute reduced one-hot designs and counts for each valid-mask group."""
+    if valid_row_groups.valid_masks.shape[1] != design.shape[1]:
+        raise ValueError("valid_row_groups width does not match design")
 
-    For a fixed validity mask, Beta.NA solves the same reduced design
-    matrix against different feature vectors. Solve that system once with
-    batched right-hand sides to preserve the rowwise result while reducing
-    repeated `lstsq` calls.
+    reduced_designs: list[_Array | None] = []
+    counts: list[_Array | None] = []
+    for row_indexer in valid_row_groups.row_groups:
+        valid = valid_row_groups.valid_masks[row_indexer[0]]
+        if not valid.any():
+            reduced_designs.append(None)
+            counts.append(None)
+            continue
 
-    Parameters
-    ----------
-    data : (n_features, n_samples) matrix, may contain NaN
-    design : (n_batch, n_samples) design matrix
+        reduced_design = design[:, valid]
+        reduced_designs.append(reduced_design)
+        counts.append(reduced_design.sum(axis=1))
 
-    Returns
-    -------
-    (n_batch, n_features) coefficient matrix
+    return _GroupedBatchDesignLayouts(
+        reduced_designs=tuple(reduced_designs),
+        counts=tuple(counts),
+    )
+
+
+def _beta_na_grouped_batch_design(
+    data: _Array,
+    design: _Array,
+    valid_row_groups: _ValidRowGroups,
+    grouped_design_layouts: _GroupedBatchDesignLayouts | None = None,
+) -> _Array:
+    """Grouped Beta.NA specialized for the one-hot batch design.
+
+    `_combat_nan()` always uses the cached one-hot batch design from
+    `_make_design()`. For that design, the least-squares coefficient for each
+    batch is just the mean over the observed samples in that batch, with the
+    minimum-norm solution `0` for batches with no observed values.
     """
     n_features, _ = data.shape
     betas = np.empty((design.shape[0], n_features), dtype=np.float64)
 
-    valid_masks, grouped_rows = _group_valid_rows(data)
+    if valid_row_groups.valid_masks.shape != data.shape:
+        raise ValueError("valid_row_groups shape does not match data")
 
-    for row_indices in grouped_rows.values():
-        row_indexer = np.asarray(row_indices, dtype=np.intp)
-        valid = valid_masks[row_indexer[0]]
-        if not valid.any():
+    layouts = grouped_design_layouts or _prepare_grouped_batch_design_layouts(
+        design,
+        valid_row_groups,
+    )
+
+    for row_indexer, reduced_design, counts in zip(
+        valid_row_groups.row_groups,
+        layouts.reduced_designs,
+        layouts.counts,
+        strict=True,
+    ):
+        valid = valid_row_groups.valid_masks[row_indexer[0]]
+        if reduced_design is None or counts is None:
             betas[:, row_indexer] = np.nan
             continue
 
-        reduced_design = design[:, valid].T
-        reduced_data = data[row_indexer][:, valid].T
-        betas[:, row_indexer] = np.linalg.lstsq(reduced_design, reduced_data, rcond=None)[0]
+        reduced_data = data[row_indexer][:, valid]
+        batch_sums = reduced_data @ reduced_design.T
+        batch_means = np.divide(
+            batch_sums,
+            counts[np.newaxis, :],
+            out=np.zeros_like(batch_sums),
+            where=counts[np.newaxis, :] > 0,
+        )
+        betas[:, row_indexer] = batch_means.T
 
     return betas
 
 
-def _row_var_nan_grouped(data: _Array) -> _Array:
+def _row_var_nan_grouped(
+    data: _Array,
+    valid_row_groups: _ValidRowGroups | None = None,
+) -> _Array:
     """Row-wise sample variance grouped by identical valid-observation masks.
 
     For a fixed validity mask, rows share the same reduced submatrix.
     Compute `ddof=1` variances on that reduced view in one batched pass
-    while preserving the rowwise `_row_var_nan` behavior for 0/1 valid
-    observations.
+    while preserving the existing 0/1-valid-entry handling.
     """
     n_features, _ = data.shape
     variances = np.empty(n_features, dtype=np.float64)
 
-    valid_masks, grouped_rows = _group_valid_rows(data)
-    for row_indices in grouped_rows.values():
-        row_indexer = np.asarray(row_indices, dtype=np.intp)
-        valid = valid_masks[row_indexer[0]]
+    groups = valid_row_groups or _group_valid_rows(data)
+    if groups.valid_masks.shape != data.shape:
+        raise ValueError("valid_row_groups shape does not match data")
+
+    for row_indexer in groups.row_groups:
+        valid = groups.valid_masks[row_indexer[0]]
         n_valid = int(valid.sum())
 
         if n_valid <= 1:
             variances[row_indexer] = 1.0
             continue
 
-        reduced_data = data[row_indexer][:, valid]
-        variances[row_indexer] = np.var(reduced_data, axis=1, ddof=1)
+        group_data = data[row_indexer]
+        sum_x = np.nansum(group_data, axis=1)
+        sum_x2 = np.nansum(group_data * group_data, axis=1)
+        variances[row_indexer] = (sum_x2 - (sum_x * sum_x) / n_valid) / (n_valid - 1)
 
     return variances
-
-
-
-def _row_var_nan(x: _Array) -> float:
-    """Sample variance, excluding NaN (``var(x, na.rm=TRUE)``)."""
-    valid = ~np.isnan(x)
-    n = valid.sum()
-    if n <= 1:
-        return 1.0
-    return float(np.var(x[valid], ddof=1))
 
 
 # ---------------------------------------------------------------------------
@@ -502,17 +607,23 @@ def _combat_nan(
     else:
         ref_idx = None
 
-    batches_ind = [np.where(batch_int == i)[0] for i in range(n_batch)]
+    design, _, batches_ind, _ = _get_cached_design(batch_int, n_batch)
     batch_sizes = np.array([len(b) for b in batches_ind], dtype=np.float64)
 
     if not mean_only and np.any(batch_sizes < 2):
         logger.debug("Forcing mean_only=True: batch with < 2 samples detected")
         mean_only = True
 
-    design = _make_design(batch_int, n_batch)
+    valid_row_groups = _group_valid_rows(data)
+    grouped_design_layouts = _prepare_grouped_batch_design_layouts(design, valid_row_groups)
 
     # ---- Per-feature B.hat (Beta.NA) ---------------------------------------
-    B_hat = _beta_na_grouped(data, design)  # noqa: N806
+    B_hat = _beta_na_grouped_batch_design(
+        data,
+        design,
+        valid_row_groups,
+        grouped_design_layouts,
+    )  # noqa: N806
 
     # ---- Grand mean and pooled variance (per-feature, NaN-safe) ------------
     # NOTE: R sva::ComBat uses DIFFERENT formulas:
@@ -526,20 +637,23 @@ def _combat_nan(
     else:
         grand_mean = (batch_sizes / n_samples) @ B_hat
         fitted = (design.T @ B_hat).T
-        var_n = _row_var_nan_grouped(data - fitted)
+        var_n = _row_var_nan_grouped(data - fitted, valid_row_groups)
 
     var_pooled = np.maximum(var_n, 1e-12)
     std_pooled = np.sqrt(var_pooled)
+    stand_mean = grand_mean[:, np.newaxis]
+    std_pooled_2d = std_pooled[:, np.newaxis]
 
     # ---- Standardise (per-feature, NaN-safe) -------------------------------
-    s_data = np.empty_like(data)
-    for i in range(n_features):
-        valid = ~np.isnan(data[i, :])
-        s_data[i, valid] = (data[i, valid] - grand_mean[i]) / std_pooled[i]
-        s_data[i, ~valid] = np.nan
+    s_data = (data - stand_mean) / std_pooled_2d
 
     # ---- Per-feature gamma.hat (Beta.NA) -----------------------------------
-    gamma_hat = _beta_na_grouped(s_data, design)
+    gamma_hat = _beta_na_grouped_batch_design(
+        s_data,
+        design,
+        valid_row_groups,
+        grouped_design_layouts,
+    )
 
     # ---- delta.hat (per-batch, per-feature, NaN-safe) ----------------------
     if mean_only:
@@ -590,19 +704,12 @@ def _combat_nan(
         delta_star[ref_idx] = 1.0
 
     # ---- Adjust data (only non-NaN entries) -------------------------------
-    corrected = np.empty_like(s_data)
-    for i in range(n_features):
-        corrected[i, :] = s_data[i, :].copy()
-        for b, idx in enumerate(batches_ind):
-            valid = ~np.isnan(corrected[i, idx])
-            if valid.any():
-                sqrt_delta = np.sqrt(np.maximum(delta_star[b, i], 1e-12))
-                corrected[i, idx[valid]] = (
-                    corrected[i, idx[valid]] - gamma_star[b, i]
-                ) / sqrt_delta
-        # De-standardise (only non-NaN entries)
-        valid = ~np.isnan(corrected[i, :])
-        corrected[i, valid] = corrected[i, valid] * std_pooled[i] + grand_mean[i]
+    corrected = s_data.copy()
+    for i, idx in enumerate(batches_ind):
+        sqrt_delta = np.sqrt(np.maximum(delta_star[i], 1e-12))[:, np.newaxis]
+        corrected[:, idx] = (corrected[:, idx] - gamma_star[i][:, np.newaxis]) / sqrt_delta
+
+    corrected = corrected * std_pooled_2d + stand_mean
 
     if ref_idx is not None:
         corrected[:, batches_ind[ref_idx]] = data[:, batches_ind[ref_idx]]
@@ -652,18 +759,15 @@ def _combat_dense(
     else:
         ref_idx = None
 
-    batches_ind = [np.where(batch_int == i)[0] for i in range(n_batch)]
+    design, xx_t, batches_ind, _ = _get_cached_design(batch_int, n_batch)
     batch_sizes = np.array([len(b) for b in batches_ind], dtype=np.float64)
 
     if not mean_only and np.any(batch_sizes < 2):
         logger.debug("Forcing mean_only=True: batch with < 2 samples detected")
         mean_only = True
 
-    design = _make_design(batch_int, n_batch)
-
     # ---- Standardise -------------------------------------------------------
-    XXT = design @ design.T  # noqa: N806
-    B_hat = np.linalg.solve(XXT, design @ data.T)  # noqa: N806
+    B_hat = np.linalg.solve(xx_t, design @ data.T)  # noqa: N806
 
     if ref_idx is not None:
         grand_mean = B_hat[ref_idx]
@@ -686,9 +790,7 @@ def _combat_dense(
     s_data = (data - stand_mean) / std_pooled[:, np.newaxis]
 
     # ---- Estimate batch effects --------------------------------------------
-    gamma_hat = np.linalg.solve(
-        design @ design.T, design @ s_data.T,
-    )
+    gamma_hat = np.linalg.solve(xx_t, design @ s_data.T)
 
     if mean_only:
         delta_hat = np.ones_like(gamma_hat)

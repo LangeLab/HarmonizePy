@@ -257,6 +257,29 @@ class TestSpotting:
         result = build_affiliation_list(data, batch_list, batch_list, needed_values=1)
         assert result[0] == ()
 
+    def test_repeated_block_patterns_preserve_affiliations(self):
+        """Repeated block-membership patterns must keep identical affiliations.
+
+        Failure condition: cached reconstruction changes tuple contents or block
+        ordering when multiple features share the same blocking pattern.
+        """
+        data = pd.DataFrame(
+            [
+                [1, 2, 3, 4, 5, 6, 7, 8],
+                [2, 3, 4, 5, 6, 7, 8, 9],
+                [1, 2, 3, 4, np.nan, np.nan, np.nan, np.nan],
+                [2, 3, 4, 5, np.nan, np.nan, np.nan, np.nan],
+            ],
+            index=[f"f{i}" for i in range(4)],
+            columns=[f"s{j}" for j in range(8)],
+        )
+        batch_list = np.array([1, 1, 2, 2, 3, 3, 4, 4])
+        block_list = np.array([1, 1, 1, 1, 2, 2, 2, 2])
+
+        result = build_affiliation_list(data, batch_list, block_list, needed_values=2)
+
+        assert result == [(1, 2), (1, 2), (1,), (1,)]
+
 
 # ---------------------------------------------------------------------------
 # Edge cases
@@ -370,6 +393,23 @@ class TestPipelineInvariants:
             kwargs["block"] = block
         result = harmonize(df, desc, **kwargs)
         assert result.shape == df.shape
+
+    @pytest.mark.parametrize("block", [None, 2])
+    @pytest.mark.parametrize("algorithm", ["ComBat", "limma"])
+    def test_sorted_runs_restore_original_column_order(self, algorithm, block):
+        """Sorted runs must still return columns in the original input order.
+
+        Failure condition: the output stays in sorted order or columns are
+        permuted after the split-adjust-rebuild phase.
+        """
+        df, desc = self._make_data(n_batches=4, n_per_batch=4)
+        kwargs = {"algorithm": algorithm, "sort": "sparsity"}
+        if algorithm == "ComBat":
+            kwargs["combat_mode"] = 1
+        if block is not None:
+            kwargs["block"] = block
+        result = harmonize(df, desc, **kwargs)
+        assert result.columns.tolist() == df.columns.tolist()
 
     # ------------------------------------------------------------------
     # Batch mean spread reduction

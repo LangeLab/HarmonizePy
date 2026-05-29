@@ -139,13 +139,14 @@ def _build_presence_matrix(
     ``presence[i, j] = True`` iff batch ``unique_batches[j]`` has at least
     *needed_values* non-NaN observations for feature *i*.
     """
-    values = data.to_numpy(dtype=float, na_value=np.nan)
+    values = data.to_numpy(dtype=np.float64)
+    notna = ~np.isnan(values)
     n_features = values.shape[0]
     n_batches = len(unique_batches)
     presence = np.empty((n_features, n_batches), dtype=np.bool_)
     for j, bid in enumerate(unique_batches):
         mask = batch_list == bid
-        valid_counts = np.sum(~np.isnan(values[:, mask]), axis=1)
+        valid_counts = notna[:, mask].sum(axis=1)
         presence[:, j] = valid_counts >= needed_values
     return presence
 

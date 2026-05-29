@@ -30,6 +30,23 @@ logger = logging.getLogger(__name__)
 _Array = npt.NDArray[np.floating[Any]]
 
 
+def _group_valid_rows(data: _Array) -> list[tuple[npt.NDArray[np.bool_], npt.NDArray[np.intp]]]:
+    """Group row indices by identical non-NaN masks."""
+    grouped: dict[bytes, tuple[npt.NDArray[np.bool_], list[int]]] = {}
+    valid_masks = ~np.isnan(data)
+    for row_index, valid in enumerate(valid_masks):
+        key = valid.tobytes()
+        existing = grouped.get(key)
+        if existing is None:
+            grouped[key] = (valid.copy(), [row_index])
+        else:
+            existing[1].append(row_index)
+    return [
+        (valid, np.asarray(row_indices, dtype=np.intp))
+        for valid, row_indices in grouped.values()
+    ]
+
+
 def remove_batch_effect(
     data: _Array,
     batch: _Array,
@@ -85,7 +102,7 @@ def remove_batch_effect(
 
 def _remove_batch_effect_nan(data: _Array, batch: _Array) -> _Array:
     """limma batch correction with per-feature NaN handling."""
-    n_features, n_samples = data.shape
+    _, n_samples = data.shape
 
     unique_batches = np.unique(batch)
     n_batch = len(unique_batches)
@@ -105,19 +122,17 @@ def _remove_batch_effect_nan(data: _Array, batch: _Array) -> _Array:
     intercept = np.ones((n_samples, 1), dtype=np.float64)
     design = np.hstack([intercept, X_batch])
 
-    # Per-feature OLS: drop NaN observations per feature
     corrected = data.copy()
-    for i in range(n_features):
-        y = data[i, :]
-        valid = ~np.isnan(y)
+    for valid, row_indices in _group_valid_rows(data):
         if valid.sum() < n_batch:
             continue  # not enough observations, keep NaN
+
+        valid_idx = np.flatnonzero(valid)
         des = design[valid, :]
-        y1 = y[valid]
-        beta = np.linalg.lstsq(des, y1, rcond=None)[0]
-        beta_batch = np.nan_to_num(beta[1:], nan=0.0)
-        # Subtract batch effect from non-NaN entries only
-        corrected[i, valid] = y1 - X_batch[valid, :] @ beta_batch
+        group_data = data[np.ix_(row_indices, valid_idx)]
+        beta = np.linalg.lstsq(des, group_data.T, rcond=None)[0].T
+        beta_batch = np.nan_to_num(beta[:, 1:], nan=0.0)
+        corrected[np.ix_(row_indices, valid_idx)] = group_data - beta_batch @ X_batch[valid, :].T
 
     return corrected
 

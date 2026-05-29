@@ -34,13 +34,28 @@ class SingleRunMetrics:
     elapsed_s: float
     cpu_pct: float
     tracemalloc_peak_mb: float
-    rss_delta_kb: int
-    phase_times: dict[str, float] | None = None
+    rss_before_kb: int = 0
+    rss_after_kb: int = 0
+    rss_post_gc_kb: int = 0
+    rss_delta_kb: int = 0
+    rss_delta_post_gc_kb: int = 0
     result: Any = None  # dict with result_df and feature counts from run_once
 
     def release_result(self) -> None:
         """Drop the result reference to free memory."""
         self.result = None
+
+
+@dataclass(frozen=True)
+class RssStability:
+    """Interpretation of repeated post-GC RSS samples for one scenario."""
+
+    status: str
+    reason: str
+    tolerance_kb: int
+    total_growth_kb: int
+    tail_span_kb: int
+    monotonic_non_decreasing: bool
 
 
 # ---------------------------------------------------------------------------
@@ -62,9 +77,12 @@ class ScenarioMetrics:
     n_reps_actual: int
     times_s: list[float] = field(default_factory=list)
     cpu_pcts: list[float] = field(default_factory=list)
+    rss_before_kbs: list[int] = field(default_factory=list)
+    rss_after_kbs: list[int] = field(default_factory=list)
+    rss_post_gc_kbs: list[int] = field(default_factory=list)
     rss_delta_kbs: list[int] = field(default_factory=list)
+    rss_delta_post_gc_kbs: list[int] = field(default_factory=list)
     tracemalloc_peak_mbs: list[float] = field(default_factory=list)
-    phase_times: dict[str, list[float]] | None = None
     features_out: int = 0
     features_corrected: int = 0
     features_passthrough: int = 0
@@ -97,6 +115,10 @@ class ScenarioMetrics:
         idx = min(len(sorted_t) - 1, math.ceil(0.95 * len(sorted_t)) - 1)
         return sorted_t[idx]
 
+    @property
+    def rss_stability(self) -> RssStability:
+        return assess_rss_stability(self.rss_post_gc_kbs)
+
 
 # ---------------------------------------------------------------------------
 # Aggregation helpers
@@ -118,24 +140,99 @@ def aggregate_metrics(runs: list[SingleRunMetrics]) -> ScenarioMetrics:
     """
     times = [r.elapsed_s for r in runs]
     cpus = [r.cpu_pct for r in runs]
+    rss_before = [r.rss_before_kb for r in runs]
+    rss_after = [r.rss_after_kb for r in runs]
+    rss_post_gc = [r.rss_post_gc_kb for r in runs]
     rss = [r.rss_delta_kb for r in runs]
+    rss_post_gc_delta = [r.rss_delta_post_gc_kb for r in runs]
     mems = [r.tracemalloc_peak_mb for r in runs]
-
-    # Collect phase times across runs into dict-of-lists
-    phase_agg: dict[str, list[float]] | None = None
-    for r in runs:
-        if r.phase_times is not None:
-            if phase_agg is None:
-                phase_agg = {k: [] for k in r.phase_times}
-            for k, v in r.phase_times.items():
-                if k in phase_agg:
-                    phase_agg[k].append(v)
 
     return ScenarioMetrics(
         n_reps_actual=len(runs),
         times_s=times,
         cpu_pcts=cpus,
+        rss_before_kbs=rss_before,
+        rss_after_kbs=rss_after,
+        rss_post_gc_kbs=rss_post_gc,
         rss_delta_kbs=rss,
+        rss_delta_post_gc_kbs=rss_post_gc_delta,
         tracemalloc_peak_mbs=mems,
-        phase_times=phase_agg if phase_agg else None,
+    )
+
+
+def assess_rss_stability(
+    rss_post_gc_kbs: list[int],
+    *,
+    tolerance_kb: int = 1024,
+) -> RssStability:
+    """Classify repeated-run RSS behavior.
+
+    Rules:
+    - ``plateau``: the last up to 3 post-GC samples are within tolerance.
+      This includes one-time warm-up growth followed by stabilization.
+    - ``growing``: samples are monotonically non-decreasing and total growth
+      exceeds tolerance with no stable tail.
+    - ``mixed``: behavior is neither plateau nor monotonic growth.
+    - ``insufficient-data``: fewer than 2 timed repetitions.
+    - ``n/a``: no samples available.
+    """
+    if not rss_post_gc_kbs:
+        return RssStability(
+            status="n/a",
+            reason="No post-GC RSS samples recorded.",
+            tolerance_kb=tolerance_kb,
+            total_growth_kb=0,
+            tail_span_kb=0,
+            monotonic_non_decreasing=True,
+        )
+
+    if len(rss_post_gc_kbs) < 2:
+        return RssStability(
+            status="insufficient-data",
+            reason="Need at least two timed repetitions to assess RSS stability.",
+            tolerance_kb=tolerance_kb,
+            total_growth_kb=0,
+            tail_span_kb=0,
+            monotonic_non_decreasing=True,
+        )
+
+    total_growth_kb = rss_post_gc_kbs[-1] - rss_post_gc_kbs[0]
+    tail = rss_post_gc_kbs[-min(3, len(rss_post_gc_kbs)):]
+    tail_span_kb = max(tail) - min(tail)
+    monotonic_non_decreasing = all(
+        curr >= prev for prev, curr in zip(rss_post_gc_kbs, rss_post_gc_kbs[1:])
+    )
+
+    if tail_span_kb <= tolerance_kb:
+        reason = (
+            "RSS rose during warm-up and then plateaued."
+            if total_growth_kb > tolerance_kb
+            else "RSS stayed within plateau tolerance across timed runs."
+        )
+        return RssStability(
+            status="plateau",
+            reason=reason,
+            tolerance_kb=tolerance_kb,
+            total_growth_kb=total_growth_kb,
+            tail_span_kb=tail_span_kb,
+            monotonic_non_decreasing=monotonic_non_decreasing,
+        )
+
+    if monotonic_non_decreasing and total_growth_kb > tolerance_kb:
+        return RssStability(
+            status="growing",
+            reason="RSS increased monotonically across timed runs without a stable tail.",
+            tolerance_kb=tolerance_kb,
+            total_growth_kb=total_growth_kb,
+            tail_span_kb=tail_span_kb,
+            monotonic_non_decreasing=monotonic_non_decreasing,
+        )
+
+    return RssStability(
+        status="mixed",
+        reason="RSS fluctuated beyond plateau tolerance without monotonic growth.",
+        tolerance_kb=tolerance_kb,
+        total_growth_kb=total_growth_kb,
+        tail_span_kb=tail_span_kb,
+        monotonic_non_decreasing=monotonic_non_decreasing,
     )

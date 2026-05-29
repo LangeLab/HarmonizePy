@@ -4,23 +4,43 @@
 
 All notable changes to this project are documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.1] - 2026-05-28
+
+### Added
+
+- New benchmark system: in-process runner, YAML-driven scenario registry, stable R cache keys, 6-command CLI (`run`/`cache-r`/`validity`/`profile`/`report`/`generate-data`), and JSON/Markdown report generation.
+- Per-scenario validity checks, R concordance in the harness, and scenario tags (`parametric`, `nonparametric`, `blocking`, `sorted`, `py_only`) for filtering.
+- Comparable memory metrics: R heap and RSS delta alongside Python tracemalloc including output array `nbytes`.
+- R wrapper recovers from `sva::ComBat` singular matrix crashes by removing problematic features and retrying.
 
 ### Changed
 
-- `splitting.py`: collapse split-and-rebuild into one final assembled matrix and cache per-affiliation column indices, removing repeated `np.isin` scans in fragmented workflows.
-- Internal optimization and benchmark-status documents now distinguish completed solver and pipeline refactors from the remaining memory-focused work.
+- `splitting.py` and `core.py`: keep split-and-rebuild on one final assembled matrix, cache per-affiliation column indices, and for sorted runs scatter corrected submatrices directly back to original column positions instead of reordering the full result afterwards.
+- Internal optimization and benchmark-status documents reorganized to separate completed work from remaining memory-focused items.
+- Benchmarking now uses public `harmonize()` directly, defaults R baselines to 1 core, suppresses timed-run logging, and auto-converts DIA CSV input to TSV for R.
 
 ### Fixed
 
-- Benchmark R wrapper: `block` is now passed to HarmonizR as numeric, so blocked R scenarios no longer silently fall back to unblocked execution.
-- Blocked benchmark interpretation: historical `Block = 2` markdown and JSON summary rows are now treated as invalid until regenerated with the fixed wrapper.
+- Orphaned `doParallel` workers killed via process group on R timeout.
+- R version strings cleaned of renv status messages.
+- `generate_from_config` uses per-dataset `missing_frac` instead of hardcoded 0.0.
+- `block` passed to HarmonizR as numeric (was silently falling back to unblocked). Historical `Block = 2` results invalidated.
+- Memory/reporting fixes: tracemalloc MB divisor corrected from 1e6 to 1024^2, and R `gc()` now reads the MB column instead of raw cell counts.
+- CLI/config fixes: config paths now resolve relative to the config file, and `--combat-modes` now reaches `filter_registry` in `run`, `cache-r`, and `validity`.
+- Harness batch column lookup uses column name with positional fallback matching `core.py`.
+- Dead code removed: `Scenario.cache_key`, `phase_times` field and aggregation.
 
 ### Performance
 
-- Non-parametric ComBat: `_int_eprior` now uses the binomial residual formula with precomputed terms, reducing large mode 3 runtime from 9.76s to 5.87s.
-- NaN-heavy paths: grouped valid-mask solving now batches `_beta_na` and `_row_var_nan`, and `_it_sol` short-circuits all-NaN genes instead of iterating to the cap.
-- Pipeline hot loop: representative reruns after the direct-assembly and column-cache refactors improved medium and SCP timings, including medium limma 0.15s -> 0.09s, medium ComBat mode 1 0.69s -> 0.63s, scp_small limma 0.16s -> 0.13s, and scp_small ComBat mode 1 0.36s -> 0.32s.
+- `_combat_nan`: consolidated NaN-heavy ComBat work including vectorized standardization/final adjustment, grouped valid-mask reuse, one-hot grouped Beta.NA with reused reduced layouts, grouped row variance by sums/squared sums, and reusable `_it_sol` buffers. These changes reduced engine overhead while preserving concordance.
+- Non-parametric ComBat: binomial residual precompute plus block-vectorized `_int_eprior` cut large mode 3 from 9.76s to 5.87s.
+- limma NaN path now groups identical valid-observation masks and solves each reduced design once, improving representative full-pipeline timings from 0.48s to 0.27s on murine and from 1.13s to 0.36s on DIA while preserving concordance.
+- Affiliation and sorting helpers now reuse repeated affiliation patterns and precomputed non-NaN presence masks, reducing representative sorted/block timings from 0.15s to 0.13s on medium ComBat mode 1 and from 2.80s to 2.65s on `scp_large` limma.
+- Data-matrix validation now inspects `df.dtypes` directly instead of indexing every column, reducing `validate_data_matrix()` on `scp_large` from 0.90s to 0.05s and improving representative `scp_large` limma sort+block timing from 2.72s to 2.35s without changing concordance.
+- `splitting()` now returns its assembled output with `DataFrame(..., copy=False)`, removing the final full-width materialization copy and improving representative `scp_large` limma sort+block timing from 2.38s to 2.07s.
+- The split path now reuses one float64 ndarray across affiliation spotting and extraction, removing a duplicate whole-frame conversion and improving representative `scp_large` limma sort+block timing from 2.24s to 1.96s.
+- Direct-assembly and column-cache refactors improved pipeline timings: medium limma 0.15s->0.09s, medium m1 0.69s->0.63s, scp_small limma 0.16s->0.13s, scp_small m1 0.36s->0.32s.
+- Sorted block runs now avoid a full final unsort copy, improving representative `scp_large` timings from 5.87s to 5.57s for ComBat mode 1 and from 3.87s to 3.66s for limma.
 
 ## [0.3.0] - 2026-05-27
 
