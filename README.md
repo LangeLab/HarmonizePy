@@ -62,12 +62,14 @@ uv sync --dev --python 3.12.13
 # Optional extras
 pip install harmonizepy[config]      # YAML/TOML support for --config flag
 pip install harmonizepy[completion]  # Shell tab-completion via argcomplete
+pip install harmonizepy[io]          # Parquet IO and pyarrow-accelerated CSV/TSV paths
 ```
 
 ### Dependencies
 
 - Python >= 3.12
 - numpy >= 1.24, pandas >= 2.0
+- pyarrow >= 14.0 optional for parquet IO and faster CSV/TSV reading via `harmonizepy[io]`
 - pytest >= 8.0 (dev)
 
 ## Quick start

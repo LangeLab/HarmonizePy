@@ -55,7 +55,7 @@ class TestResolveOutputPath:
         Failure condition: the default path uses a different directory or suffix.
         """
         result = _resolve_output_path("/data/my_file.tsv", None)
-        assert result == "/data/my_file_corrected.parquet"
+        assert result == "/data/my_file_corrected.tsv"
 
     def test_default_stem_preservation(self) -> None:
         """Input filename stem is preserved in the default output path.
@@ -63,18 +63,15 @@ class TestResolveOutputPath:
         Failure condition: the stem is modified or dropped.
         """
         result = _resolve_output_path("proteins.tsv", None)
-        assert result == "proteins_corrected.parquet"
+        assert result == "proteins_corrected.tsv"
 
-    def test_default_tsv_when_no_pyarrow(self) -> None:
-        """Default path falls back to .tsv when pyarrow is not installed.
+    def test_default_parquet_when_output_format_requests_it(self) -> None:
+        """Default path switches to .parquet when parquet output is requested.
 
-        Failure condition: the default path uses .parquet despite missing pyarrow.
+        Failure condition: the default path ignores explicit parquet output.
         """
-        from harmonizepy.io import _HAVE_PYARROW
-
-        if not _HAVE_PYARROW:
-            result = _resolve_output_path("/data/my_file.tsv", None)
-            assert result == "/data/my_file_corrected.tsv"
+        result = _resolve_output_path("/data/my_file.tsv", None, "parquet")
+        assert result == "/data/my_file_corrected.parquet"
 
 
 class TestInferFormat:
@@ -186,7 +183,7 @@ class TestCLIMinimal:
         shutil.copy(BATCH, local_batch)
 
         main([local_data, local_batch])
-        expected = tmp_path / "small_input_corrected.parquet"
+        expected = tmp_path / "small_input_corrected.tsv"
         assert expected.exists()
 
     def test_python_m_invocation(self, tmp_path: Path) -> None:
@@ -370,6 +367,20 @@ class TestCLIOutputFormats:
         out = str(tmp_path / "result.out")
         main([DATA, BATCH, "-o", out, "--output-format", "parquet"])
         df = pd.read_parquet(out)
+        assert not df.empty
+
+    def test_parquet_default_path_when_format_explicit(self, tmp_path: Path) -> None:
+        pytest.importorskip("pyarrow")
+
+        import shutil
+
+        local_data = str(tmp_path / "small_input.tsv")
+        local_batch = str(tmp_path / "small_batch.csv")
+        shutil.copy(DATA, local_data)
+        shutil.copy(BATCH, local_batch)
+
+        main([local_data, local_batch, "--output-format", "parquet"])
+        df = pd.read_parquet(tmp_path / "small_input_corrected.parquet")
         assert not df.empty
 
     def test_csv_content_matches_api(self, tmp_path: Path) -> None:

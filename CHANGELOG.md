@@ -14,10 +14,12 @@ All notable changes to this project are documented in this file. The format is b
 
 - R-generated TSV and CSV fixtures are now tracked in git so CI can run concordance coverage without regenerating them.
 - Package metadata, smoke checks, and parity docs are aligned on version 0.3.1.
+- CLI default output now writes `<data_stem>_corrected.tsv` unless parquet is explicitly requested.
 
 ### Fixed
 
 - Repo-wide Ruff and mypy failures cleared on the current CI target.
+- Install docs and dependency notes now document `harmonizepy[io]` for parquet support and pyarrow-accelerated IO.
 
 ## [0.3.1] - 2026-05-28
 

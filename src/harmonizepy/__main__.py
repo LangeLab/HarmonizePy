@@ -109,9 +109,10 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="PATH",
         help=(
-            "Output file path. Default: <data_stem>_corrected.parquet placed next to the "
-            "input data file (or .tsv when pyarrow is not installed). Format is inferred "
-            "from the extension (.tsv, .csv, .parquet/.pq) unless --output-format is given."
+            "Output file path. Default: <data_stem>_corrected.tsv placed next to the "
+            "input data file. If --output-format parquet is given without -o, the default "
+            "becomes <data_stem>_corrected.parquet. Format is inferred from the extension "
+            "(.tsv, .csv, .parquet/.pq) unless --output-format is given."
         ),
     )
     parser.add_argument(
@@ -297,15 +298,19 @@ def _build_parser() -> argparse.ArgumentParser:
 # ---------------------------------------------------------------------------
 
 
-def _resolve_output_path(data_path: str, output: str | None) -> str:
-    """Return an output path: explicit *output* arg or ``<stem>_corrected.parquet`` next to
-    data (falls back to ``.tsv`` when pyarrow is not installed)."""
+def _resolve_output_path(
+    data_path: str, output: str | None, output_format: str | None = None
+) -> str:
+    """Return an output path based on explicit args or CLI defaults.
+
+    Without ``-o``, the default path is ``<stem>_corrected.tsv`` next to the
+    input data file. When ``--output-format parquet`` is given without ``-o``,
+    the default path becomes ``<stem>_corrected.parquet``.
+    """
     if output is not None:
         return output
     p = Path(data_path)
-    from .io import _HAVE_PYARROW
-
-    ext = ".parquet" if _HAVE_PYARROW else ".tsv"
+    ext = ".parquet" if output_format == "parquet" else ".tsv"
     return str(p.parent / f"{p.stem}_corrected{ext}")
 
 
@@ -539,7 +544,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     # -- Resolve output path and format -------------------------------------
-    output_path = _resolve_output_path(args.data, args.output)
+    output_path = _resolve_output_path(args.data, args.output, args.output_format)
     output_fmt = _infer_format(output_path, args.output_format)
 
     # -- Logging setup ------------------------------------------------------
