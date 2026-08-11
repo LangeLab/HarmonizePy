@@ -73,6 +73,14 @@ class TestResolveOutputPath:
         result = _resolve_output_path("/data/my_file.tsv", None, "parquet")
         assert result == "/data/my_file_corrected.parquet"
 
+    def test_windows_path_style_is_preserved(self) -> None:
+        """Windows drive and separator syntax remains native in the result.
+
+        Failure condition: a Windows input path is converted to POSIX syntax.
+        """
+        result = _resolve_output_path(r"C:\data\my_file.tsv", None)
+        assert result == r"C:\data\my_file_corrected.tsv"
+
 
 class TestInferFormat:
     def test_explicit_flag_wins(self) -> None:

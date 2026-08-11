@@ -18,7 +18,7 @@ import logging
 import sys
 from collections.abc import Sequence
 from importlib.metadata import version
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import numpy as np
 import pandas as pd
@@ -309,7 +309,15 @@ def _resolve_output_path(
     """
     if output is not None:
         return output
-    p = Path(data_path)
+    # Preserve the path style supplied by the caller. This keeps POSIX-style
+    # paths stable when the CLI is exercised on Windows, while retaining
+    # native drive/backslash formatting for regular Windows paths.
+    path_type = (
+        PureWindowsPath
+        if "\\" in data_path or (len(data_path) > 1 and data_path[1] == ":")
+        else PurePosixPath
+    )
+    p = path_type(data_path)
     ext = ".parquet" if output_format == "parquet" else ".tsv"
     return str(p.parent / f"{p.stem}_corrected{ext}")
 
