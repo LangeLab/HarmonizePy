@@ -17,10 +17,15 @@ from __future__ import annotations
 
 import gc
 import logging
-import resource
 import time
 import tracemalloc
 from pathlib import Path
+from typing import Any
+
+try:
+    import resource as _resource
+except ImportError:  # pragma: no cover - exercised on Windows CI
+    _resource: Any = None
 
 import pandas as pd
 
@@ -45,6 +50,16 @@ def _read_proc_rss_kb() -> int:
     except (OSError, ValueError, IndexError):
         pass
     return 0
+
+
+def _process_cpu_times() -> tuple[float, float]:
+    """Return user and system CPU seconds on Unix, total CPU time on Windows."""
+
+    if _resource is None:
+        return time.process_time(), 0.0
+
+    usage = _resource.getrusage(_resource.RUSAGE_SELF)
+    return float(usage.ru_utime), float(usage.ru_stime)
 
 
 # ---------------------------------------------------------------------------
@@ -115,7 +130,7 @@ def run_once(
 
     tracemalloc.start()
 
-    ru_before = resource.getrusage(resource.RUSAGE_SELF)
+    cpu_before = _process_cpu_times()
     t0 = time.perf_counter()
 
     result_df = harmonize(
@@ -129,7 +144,7 @@ def run_once(
         output_file=None,
     )
     elapsed = time.perf_counter() - t0
-    ru_after = resource.getrusage(resource.RUSAGE_SELF)
+    cpu_after = _process_cpu_times()
 
     hz_logger.setLevel(_prev_level)
 
@@ -137,8 +152,8 @@ def run_once(
     tracemalloc.stop()
     rss_after_kb = _read_proc_rss_kb()
 
-    cpu_user = ru_after.ru_utime - ru_before.ru_utime
-    cpu_sys = ru_after.ru_stime - ru_before.ru_stime
+    cpu_user = cpu_after[0] - cpu_before[0]
+    cpu_sys = cpu_after[1] - cpu_before[1]
     cpu_pct = 100.0 * (cpu_user + cpu_sys) / elapsed if elapsed > 0 else 0.0
 
     # Compute feature counts and total memory.

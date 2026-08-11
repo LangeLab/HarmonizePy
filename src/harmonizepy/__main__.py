@@ -516,7 +516,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     # Shell completion: silently skip when argcomplete is not installed.
     # This is the standard optional-dependency pattern, not a bug swallow.
     try:
-        import argcomplete  # type: ignore[import-not-found]
+        import argcomplete
 
         argcomplete.autocomplete(parser)
     except ImportError:

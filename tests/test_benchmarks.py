@@ -59,6 +59,16 @@ def _make_config() -> Config:
 
 
 class TestPythonRunner:
+    def test_process_cpu_times_falls_back_without_resource(self, monkeypatch) -> None:
+        """CPU metrics remain available on platforms without Unix ``resource``."""
+
+        monkeypatch.setattr(python_runner, "_resource", None)
+
+        user, system = python_runner._process_cpu_times()
+
+        assert user >= 0.0
+        assert system == 0.0
+
     def test_run_once_records_post_gc_rss(self, monkeypatch) -> None:
         """RSS metrics should distinguish raw end-of-call and retained post-GC RSS.
 
