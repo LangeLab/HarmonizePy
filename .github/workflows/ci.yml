@@ -14,21 +14,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  lint-and-test:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+  quality:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v6
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
 
-      - name: Install uv and Python
-        uses: astral-sh/setup-uv@v8.1.0
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
         with:
-          python-version: "3.12"
           enable-cache: true
+          cache-suffix: quality-3.12
+
+      - name: Set up Python 3.12
+        run: uv python pin 3.12
 
       - name: Install dependencies
-        run: uv sync --dev
+        run: uv sync --frozen --dev
 
       - name: Ruff
         run: uv run ruff check src/ tests/
@@ -36,20 +40,116 @@ jobs:
       - name: Mypy
         run: uv run mypy src/
 
-      - name: Pytest representative subset
-        run: |
-          uv run pytest -q \
-            tests/test_smoke.py \
-            tests/test_api.py \
-            tests/test_io.py \
-            tests/test_validation.py \
-            tests/test_sorting.py \
-            tests/test_blocking.py \
-            tests/test_unique_removal.py \
-            tests/test_splitting.py \
-            tests/test_combat.py \
-            tests/test_limma.py \
-            tests/test_pipeline.py \
-            tests/test_cli.py \
-            tests/test_benchmarks.py \
-            tests/test_wiki_check.py
+  test:
+    name: Test ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include:
+          - name: linux-x64-py312
+            os: ubuntu-24.04
+            architecture: x64
+            python-version: "3.12"
+            extras: true
+            coverage: true
+
+          - name: linux-arm64-py312
+            os: ubuntu-24.04-arm
+            architecture: arm64
+            python-version: "3.12"
+            extras: true
+            coverage: true
+
+          - name: macos-x64-py312
+            os: macos-15-intel
+            architecture: x64
+            python-version: "3.12"
+            extras: true
+            coverage: true
+
+          - name: macos-arm64-py312
+            os: macos-15
+            architecture: arm64
+            python-version: "3.12"
+            extras: true
+            coverage: true
+
+          - name: windows-x64-py312
+            os: windows-2025
+            architecture: x64
+            python-version: "3.12"
+            extras: true
+            coverage: true
+
+          # The current pyarrow lock entry has no Windows ARM64 wheel. Run the
+          # core suite natively and cover optional I/O on the other platforms.
+          - name: windows-arm64-py312
+            os: windows-11-arm
+            architecture: arm64
+            python-version: "3.12"
+            extras: false
+            coverage: true
+
+          - name: linux-x64-py313
+            os: ubuntu-24.04
+            architecture: x64
+            python-version: "3.13"
+            extras: true
+            coverage: false
+
+          - name: linux-x64-py314
+            os: ubuntu-24.04
+            architecture: x64
+            python-version: "3.14"
+            extras: true
+            coverage: false
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+          cache-suffix: test-${{ matrix.name }}
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python pin ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: >-
+          uv sync --frozen --dev
+          ${{ matrix.extras && '--all-extras' || '' }}
+
+      - name: Report runtime
+        run: >-
+          uv run python -c
+          "import platform, sys; print(sys.version); print(platform.system(), platform.machine())"
+
+      - name: Run full offline suite
+        run: >-
+          uv run pytest -q
+          ${{ matrix.coverage && '--cov=src/harmonizepy --cov-report=term-missing --cov-report=xml --cov-fail-under=90' || '' }}
+
+      - name: Upload coverage report
+        if: matrix.coverage == true
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: coverage-${{ matrix.name }}-${{ github.run_id }}
+          path: coverage.xml
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload coverage to Codecov
+        if: matrix.coverage == true && github.event_name == 'push'
+        uses: codecov/codecov-action@v7.0.0
+        with:
+          files: ./coverage.xml
+          disable_search: true
+          fail_ci_if_error: true
+          flags: ${{ matrix.name }}
+          token: ${{ secrets.CODECOV_TOKEN }}
