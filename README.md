@@ -11,9 +11,8 @@
   <img src="https://img.shields.io/badge/python-3.12--3.14-2D7D46?style=flat-square&logo=python&logoColor=white" alt="Python 3.12-3.14">
   <img src="https://img.shields.io/badge/version-0.3.2-8B5CF6?style=flat-square" alt="v0.3.2">
   <img src="https://img.shields.io/badge/status-alpha-C17D10?style=flat-square" alt="Alpha">
-  <img src="https://github.com/LangeLab/HarmonizePy/actions/workflows/ci.yml/badge.svg" alt="CI">
-  <img src="https://img.shields.io/badge/628%20tests-collected-22C55E?style=flat-square" alt="628 tests collected">
-  <img src="https://codecov.io/gh/LangeLab/HarmonizePy/branch/main/graph/badge.svg" alt="Coverage">
+  <a href="https://github.com/LangeLab/HarmonizePy/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/LangeLab/HarmonizePy/ci.yml?branch=main&style=flat-square&logo=github&label=CI" alt="CI"></a>
+  <a href="https://codecov.io/gh/LangeLab/HarmonizePy"><img src="https://img.shields.io/codecov/c/github/LangeLab/HarmonizePy?branch=main&style=flat-square&logo=codecov&logoColor=white" alt="Coverage"></a>
   <img src="https://img.shields.io/badge/license-GPL--3.0-4B9D6E?style=flat-square" alt="GPL-3.0">
 </p>
 
@@ -112,13 +111,13 @@ The low-level engines handle missing observations per feature and preserve NaN p
 
 ### Parameter reference
 
-| Parameter | Type | Default | Description |
-| --- | --- | --- | --- |
-| `algorithm` | `"ComBat"` or `"limma"` | `"ComBat"` | Batch correction algorithm |
-| `combat_mode` | 1, 2, 3, 4 | 1 | ComBat variant (ignored for limma) |
-| `sort` | `"sparsity"`, `"jaccard"`, `"seriation"`, or `None` | `None` | Batch sorting strategy before blocking |
-| `block` | int >= 2 or `None` | `None` | Group N consecutive batches into one sub-matrix block |
-| `unique_removal` | bool | `True` | Rescue singleton features by cropping to nearest shared pattern |
+| Parameter        | Type                                                | Default    | Description                                                     |
+| ---------------- | --------------------------------------------------- | ---------- | --------------------------------------------------------------- |
+| `algorithm`      | `"ComBat"` or `"limma"`                             | `"ComBat"` | Batch correction algorithm                                      |
+| `combat_mode`    | 1, 2, 3, 4                                          | 1          | ComBat variant (ignored for limma)                              |
+| `sort`           | `"sparsity"`, `"jaccard"`, `"seriation"`, or `None` | `None`     | Batch sorting strategy before blocking                          |
+| `block`          | int >= 2 or `None`                                  | `None`     | Group N consecutive batches into one sub-matrix block           |
+| `unique_removal` | bool                                                | `True`     | Rescue singleton features by cropping to nearest shared pattern |
 
 Full signature with all parameters is in the [API Reference](https://github.com/LangeLab/HarmonizePy/wiki/API-Reference).
 
@@ -158,7 +157,7 @@ The suite covers R concordance, edge cases, failure modes, numerical stability, 
 
 ```text
 src/harmonizepy/    # Package source: pipeline, engines, CLI, I/O
-tests/              # 628 tests: unit, integration, R concordance, CLI
+tests/              # Unit, integration, R concordance, and CLI tests
 benchmarks/         # Benchmark CLI, dataset catalog, results
 data/               # Small showcase datasets
 ```
@@ -171,10 +170,10 @@ HarmonizePy is licensed under [GPL-3.0](LICENSE).
 
 ### Manuscripts
 
-- Johnson WE, Li C, Rabinovic A. "Adjusting batch effects in microarray expression data using empirical Bayes methods." *Biostatistics* 8(1):118-127, 2007.
-- Ritchie ME et al. "limma powers differential expression analyses for RNA-sequencing and microarray studies." *Nucleic Acids Research* 43(7):e47, 2015.
-- Voß H et al. "HarmonizR enables data harmonization across independent proteomic datasets with appropriate handling of missing values." *Nature Communications* 13:3523, 2022. <https://doi.org/10.1038/s41467-022-31007-x>
-- Schlumbohm S, Neumann JE, Neumann P. "HarmonizR: blocking and singular feature data adjustment improve runtime efficiency and data preservation." *BMC Bioinformatics*, 2025. <https://doi.org/10.1186/s12859-025-06073-9>
+- Johnson WE, Li C, Rabinovic A. "Adjusting batch effects in microarray expression data using empirical Bayes methods." _Biostatistics_ 8(1):118-127, 2007.
+- Ritchie ME et al. "limma powers differential expression analyses for RNA-sequencing and microarray studies." _Nucleic Acids Research_ 43(7):e47, 2015.
+- Voß H et al. "HarmonizR enables data harmonization across independent proteomic datasets with appropriate handling of missing values." _Nature Communications_ 13:3523, 2022. <https://doi.org/10.1038/s41467-022-31007-x>
+- Schlumbohm S, Neumann JE, Neumann P. "HarmonizR: blocking and singular feature data adjustment improve runtime efficiency and data preservation." _BMC Bioinformatics_, 2025. <https://doi.org/10.1186/s12859-025-06073-9>
 
 ### Code and packages
 
