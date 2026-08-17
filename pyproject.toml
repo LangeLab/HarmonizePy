@@ -19,8 +19,8 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Bio-Informatics",
 ]
 dependencies = [
-    "numpy>=1.24",
-    "pandas>=2.0",
+    "numpy>=2.5.2",
+    "pandas>=3.0.5",
 ]
 
 [project.optional-dependencies]
@@ -29,10 +29,10 @@ config = [
     "pyyaml>=6.0",
 ]
 # pip install harmonizepy[completion] → enables shell tab-completion via argcomplete
-completion = ["argcomplete>=3.0"]
+completion = ["argcomplete>=3.7.2"]
 # pip install harmonizepy[io] → pyarrow for faster IO and parquet output
 io = [
-    "pyarrow>=14.0",
+    "pyarrow>=25.0.1",
 ]
 # pip install harmonizepy[all] → everything
 all = [
@@ -48,15 +48,15 @@ Issues = "https://github.com/LangeLab/HarmonizePy/issues"
 
 [dependency-groups]
 dev = [
-    "pytest>=8.0",
+    "pytest>=9.1.1",
     "pytest-cov>=5.0",
-    "mypy>=1.9",
-    "ruff>=0.4",
-    "pandas-stubs>=2.0",
+    "mypy>=2.3.0",
+    "ruff>=0.16.3",
+    "pandas-stubs>=3.0.5.260730",
 ]
 
 [build-system]
-requires = ["hatchling>=1.25"]
+requires = ["hatchling>=1.32.0"]
 build-backend = "hatchling.build"
 
 [tool.pytest.ini_options]
