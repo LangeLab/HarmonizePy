@@ -61,6 +61,7 @@ class _GroupedBatchDesignLayouts:
     reduced_designs: tuple[_Array | None, ...]
     counts: tuple[_Array | None, ...]
 
+
 # ---------------------------------------------------------------------------
 # Hyper-prior helpers
 # ---------------------------------------------------------------------------
@@ -321,7 +322,9 @@ def _make_design(batch: npt.NDArray[np.intp], n_batch: int) -> _Array:
     return design  # np.float64 array satisfies _Array (NDArray[floating[Any]])
 
 
-def _get_cached_design(batch_int: npt.NDArray[np.intp], n_batch: int) -> tuple[_Array, _Array, list[npt.NDArray[np.intp]], int]:
+def _get_cached_design(
+    batch_int: npt.NDArray[np.intp], n_batch: int
+) -> tuple[_Array, _Array, list[npt.NDArray[np.intp]], int]:
     """Return cached design matrix and XXT, or compute and cache.
 
     When consecutive affiliation groups share the same batch layout,
@@ -416,8 +419,11 @@ def combat(
             logger.debug("Single feature input, returning copy")
             return data.copy()
         return _combat_dense(
-            data, batch_int,
-            par_prior=par_prior, mean_only=mean_only, ref_batch=ref_batch,
+            data,
+            batch_int,
+            par_prior=par_prior,
+            mean_only=mean_only,
+            ref_batch=ref_batch,
         )
 
     # All-NaN data: return copy immediately (nothing to adjust)
@@ -428,8 +434,11 @@ def combat(
     # Per-cell NaN present: use per-feature NaN-safe path (matches R
     # sva::ComBat v3.60.0 Beta.NA approach).
     return _combat_nan(
-        data, batch_int,
-        par_prior=par_prior, mean_only=mean_only, ref_batch=ref_batch,
+        data,
+        batch_int,
+        par_prior=par_prior,
+        mean_only=mean_only,
+        ref_batch=ref_batch,
     )
 
 
@@ -592,7 +601,9 @@ def _combat_nan(
         "ComBat (NaN-safe) %s, %s: %d features x %d samples across %d batches",
         "parametric" if par_prior else "non-parametric",
         "location+scale" if not mean_only else "location only",
-        n_features, n_samples, n_batch,
+        n_features,
+        n_samples,
+        n_batch,
     )
 
     # Remap batch labels to 0..n_batch-1
@@ -690,8 +701,13 @@ def _combat_nan(
                 delta_star[i] = 1.0
             else:
                 gamma_star[i], delta_star[i] = _it_sol(
-                    batch_s_data, gamma_hat[i], delta_hat[i],
-                    gamma_bar[i], t2[i], a_prior[i], b_prior[i],
+                    batch_s_data,
+                    gamma_hat[i],
+                    delta_hat[i],
+                    gamma_bar[i],
+                    t2[i],
+                    a_prior[i],
+                    b_prior[i],
                 )
         else:
             d_hat_i = np.ones_like(delta_hat[i]) if mean_only else delta_hat[i]
@@ -822,8 +838,13 @@ def _combat_dense(
                 delta_star[i] = 1.0
             else:
                 gamma_star[i], delta_star[i] = _it_sol(
-                    batch_s_data, gamma_hat[i], delta_hat[i],
-                    gamma_bar[i], t2[i], a_prior[i], b_prior[i],
+                    batch_s_data,
+                    gamma_hat[i],
+                    delta_hat[i],
+                    gamma_bar[i],
+                    t2[i],
+                    a_prior[i],
+                    b_prior[i],
                 )
         else:
             d_hat_i = np.ones_like(delta_hat[i]) if mean_only else delta_hat[i]

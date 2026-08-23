@@ -125,8 +125,8 @@ class TestSplittingNanAudit:
         monkeypatch.setattr(split_mod, "combat", tracking)
 
         data = _make_data(6, 6)
-        data.iloc[0, 0] = np.nan    # per-cell NaN, still qualifies for batch 1
-        data.iloc[0, 3] = np.nan    # per-cell NaN, still qualifies for batch 2
+        data.iloc[0, 0] = np.nan  # per-cell NaN, still qualifies for batch 1
+        data.iloc[0, 3] = np.nan  # per-cell NaN, still qualifies for batch 2
         batch = np.array([1, 1, 1, 2, 2, 2])
         block = batch.copy()
         affil = build_affiliation_list(data, batch, block, needed_values=2)

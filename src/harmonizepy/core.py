@@ -109,7 +109,7 @@ def harmonize(
     """
     # --- Apply config (overrides individual kwargs when provided) ----------
     if config is not None:
-        algorithm = config.algorithm  # type: ignore[assignment]
+        algorithm = config.algorithm
         combat_mode = config.combat_mode
         needed_values = config.needed_values
         sort = config.sort_strategy

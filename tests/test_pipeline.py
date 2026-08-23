@@ -365,11 +365,13 @@ class TestPipelineInvariants:
             columns=[f"s{j}" for j in range(n_samples)],
         )
 
-        desc = pd.DataFrame({
-            "ID": df.columns.tolist(),
-            "sample": list(range(1, n_samples + 1)),
-            "batch": batch_labels,
-        })
+        desc = pd.DataFrame(
+            {
+                "ID": df.columns.tolist(),
+                "sample": list(range(1, n_samples + 1)),
+                "batch": batch_labels,
+            }
+        )
 
         return df, desc
 
@@ -496,9 +498,7 @@ class TestPipelineInvariants:
         df.iloc[0, batch_arr == 3] = np.nan
         result = harmonize(df, desc, algorithm="ComBat", combat_mode=1, block=block)
         # The missing batch (3) must be NaN
-        assert result.iloc[0, batch_arr == 3].isna().all(), (
-            "Missing batch should be NaN"
-        )
+        assert result.iloc[0, batch_arr == 3].isna().all(), "Missing batch should be NaN"
         # Batches that are in valid blocks should have data
         # Without blocking: batches 1, 2, 4 are independent, all valid
         # With block=2: blocks {1,2} and {3,4}. Block 3 is excluded (batch 3 NaN),
@@ -507,7 +507,7 @@ class TestPipelineInvariants:
             # Block 2 = batches {3,4}. Block 1 = batches {1,2}.
             valid_mask = batch_arr <= 2  # batches 1, 2
         else:
-            valid_mask = (batch_arr != 3)  # all except batch 3
+            valid_mask = batch_arr != 3  # all except batch 3
         assert not result.iloc[0, valid_mask].isna().any(), (
             "Batches in valid blocks should not be NaN"
         )
@@ -560,9 +560,7 @@ class TestPipelineInvariants:
             err_msg="Single-batch block features changed",
         )
         # Feature 0 should remain NaN elsewhere
-        assert result.iloc[0, ~pt_mask].isna().all(), (
-            "Feature should remain NaN outside its block"
-        )
+        assert result.iloc[0, ~pt_mask].isna().all(), "Feature should remain NaN outside its block"
 
     # ------------------------------------------------------------------
     # Pass-through features: single-feature groups
@@ -585,7 +583,8 @@ class TestPipelineInvariants:
         # It should pass through unchanged
         pt_mask = batch_arr != 2  # columns where feature 0 has data
         np.testing.assert_array_equal(
-            result.iloc[0, pt_mask].values, df.iloc[0, pt_mask].values,
+            result.iloc[0, pt_mask].values,
+            df.iloc[0, pt_mask].values,
             err_msg="Single-feature group values changed",
         )
         # The single-batch columns (batch 2) should be NaN
@@ -615,8 +614,11 @@ class TestChainRescueRConcordance:
         """ur=True matches R ur=TRUE output."""
         expected = pd.read_csv(FIXTURE_DIR / "chain_rescue_ur_true.tsv", sep="\t", index_col=0)
         result = harmonize(
-            self.data, self.desc,
-            algorithm="ComBat", combat_mode=1, unique_removal=True,
+            self.data,
+            self.desc,
+            algorithm="ComBat",
+            combat_mode=1,
+            unique_removal=True,
         )
         shared_idx = result.index.intersection(expected.index)
         shared_cols = result.columns.intersection(expected.columns)
@@ -627,7 +629,10 @@ class TestChainRescueRConcordance:
         valid = ~nan_mask
         if valid.any():
             np.testing.assert_allclose(
-                r[valid], e[valid], rtol=1e-4, atol=1e-6,
+                r[valid],
+                e[valid],
+                rtol=1e-4,
+                atol=1e-6,
                 err_msg="ur=True mismatch vs R",
             )
 
@@ -635,8 +640,11 @@ class TestChainRescueRConcordance:
         """ur=False matches R ur=FALSE output."""
         expected = pd.read_csv(FIXTURE_DIR / "chain_rescue_ur_false.tsv", sep="\t", index_col=0)
         result = harmonize(
-            self.data, self.desc,
-            algorithm="ComBat", combat_mode=1, unique_removal=False,
+            self.data,
+            self.desc,
+            algorithm="ComBat",
+            combat_mode=1,
+            unique_removal=False,
         )
         shared_idx = result.index.intersection(expected.index)
         shared_cols = result.columns.intersection(expected.columns)
@@ -647,7 +655,10 @@ class TestChainRescueRConcordance:
         valid = ~nan_mask
         if valid.any():
             np.testing.assert_allclose(
-                r[valid], e[valid], rtol=1e-4, atol=1e-6,
+                r[valid],
+                e[valid],
+                rtol=1e-4,
+                atol=1e-6,
                 err_msg="ur=False mismatch vs R",
             )
 
@@ -679,9 +690,13 @@ class TestCombinedStressRConcordance:
         """
         expected = pd.read_csv(FIXTURE_DIR / "combined_stress_output.tsv", sep="\t", index_col=0)
         result = harmonize(
-            self.data, self.desc,
-            algorithm="ComBat", combat_mode=1,
-            sort="sparsity", block=2, unique_removal=True,
+            self.data,
+            self.desc,
+            algorithm="ComBat",
+            combat_mode=1,
+            sort="sparsity",
+            block=2,
+            unique_removal=True,
         )
         shared_idx = result.index.intersection(expected.index)
         shared_cols = result.columns.intersection(expected.columns)
@@ -699,7 +714,10 @@ class TestCombinedStressRConcordance:
             both = ~np.isnan(r[match_idx]) & ~np.isnan(e[match_idx])
             if both.any():
                 np.testing.assert_allclose(
-                    r[match_idx][both], e[match_idx][both], rtol=1e-4, atol=1e-6,
+                    r[match_idx][both],
+                    e[match_idx][both],
+                    rtol=1e-4,
+                    atol=1e-6,
                     err_msg=f"Combined stress mismatch on {len(match_idx)} NaN-matching features",
                 )
 

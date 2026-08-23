@@ -622,10 +622,12 @@ class TestCombatFailureModes:
         R sva::ComBat v3.60.0 uses Beta.NA: per-feature OLS on non-NA
         observations.  Only the NaN cells stay NaN.
         """
-        data = np.array([
-            [1.0, 2.0, 3.0, 4.0],
-            [np.nan, 6.0, 7.0, 8.0],
-        ])
+        data = np.array(
+            [
+                [1.0, 2.0, 3.0, 4.0],
+                [np.nan, 6.0, 7.0, 8.0],
+            ]
+        )
         batch = np.array([0, 0, 1, 1])
         result = combat(data, batch, par_prior=True, mean_only=True)
         # Row 0 (clean) is fully adjusted
@@ -826,6 +828,7 @@ class TestLimmaFailureModes:
     Failure condition: bad input is silently accepted or produces
     a misleading exception type/message.
     """
+
     def test_1d_rejected(self):
         with pytest.raises(ValueError, match="2-D"):
             remove_batch_effect(np.array([1, 2, 3]), np.array([0, 0, 1]))
@@ -862,6 +865,7 @@ class TestLimmaEdgeCaseBehavior:
     Failure condition: an unusual input shape or value causes
     a crash or NaN in the output.
     """
+
     def test_many_batches(self):
         """limma handles 5 batches."""
         rng = np.random.default_rng(30)
@@ -937,6 +941,7 @@ class TestPipelineFailureModes:
     Failure condition: bad input silently passes through or crashes
     with an uninformative exception.
     """
+
     def test_mismatched_samples(self):
         """Description has different number of samples than data."""
         data = pd.DataFrame(
@@ -1150,6 +1155,7 @@ class TestNumericalStability:
     Failure condition: output changes across identical runs, dtype
     promotion fails, or mutating the output affects the input.
     """
+
     def test_deterministic_combat(self):
         """Same input always gives same output."""
         rng = np.random.default_rng(50)
@@ -1247,6 +1253,7 @@ class TestSpottingEdgeCases:
     Failure condition: an all-NaN feature, partial batch absence, or
     needed_values threshold produces an incorrect affiliation tuple.
     """
+
     def test_no_missing(self):
         """All data present → every feature sees all batches."""
         data = pd.DataFrame(np.ones((5, 6)))
@@ -1316,6 +1323,7 @@ class TestSplittingRebuild:
     Failure condition: NaN placement is wrong, groups are split
     incorrectly, or the output does not match direct adjustment.
     """
+
     def test_no_missing_single_group(self):
         """Complete data → one sub-df, result matches direct combat."""
         rng = np.random.default_rng(60)
@@ -1677,7 +1685,7 @@ class TestNaNPropagation:
         data.iloc[:, 6:] += 4.0
         data.iloc[0, 6:] = np.nan  # structural: feature 0 absent in batch 3
         data.iloc[1, 3:] = np.nan  # structural: feature 1 absent in batches 2+3
-        data.iloc[2, 0] = np.nan   # per-cell: feature 2 has stochastic NaN in batch 1
+        data.iloc[2, 0] = np.nan  # per-cell: feature 2 has stochastic NaN in batch 1
         desc = pd.DataFrame(
             {
                 "ID": data.columns.tolist(),
@@ -1705,7 +1713,9 @@ class TestNaNPropagation:
         def spy(data, batch, *, par_prior=True, mean_only=False, ref_batch=None):
             has_nan = np.isnan(data).any()
             received_nan.append(has_nan)
-            return original(data, batch, par_prior=par_prior, mean_only=mean_only, ref_batch=ref_batch)
+            return original(
+                data, batch, par_prior=par_prior, mean_only=mean_only, ref_batch=ref_batch
+            )
 
         monkeypatch.setattr(split_mod, "combat", spy)
 
@@ -1718,9 +1728,7 @@ class TestNaNPropagation:
         # Feature 2 has per-cell NaN only in sample 0.
         # Only cell [2, 0] stays NaN; the rest are adjusted.
         assert np.isnan(result.iloc[2, 0]), "Per-cell NaN position stays NaN"
-        assert not np.isnan(result.iloc[2, 1:]).any(), (
-            "Quantified cells should be adjusted"
-        )
+        assert not np.isnan(result.iloc[2, 1:]).any(), "Quantified cells should be adjusted"
 
         # Features 3-9 (fully present) have no NaN
         assert not np.isnan(result.iloc[3:].values).any(), (
@@ -1746,9 +1754,7 @@ class TestNaNPropagation:
 
         assert any(received_nan), "Engine should have received NaN data"
         assert np.isnan(result.iloc[2, 0]), "Per-cell NaN position stays NaN"
-        assert not np.isnan(result.iloc[2, 1:]).any(), (
-            "Quantified cells should be adjusted"
-        )
+        assert not np.isnan(result.iloc[2, 1:]).any(), "Quantified cells should be adjusted"
         assert not np.isnan(result.iloc[3:].values).any(), (
             "Fully-present features should have no NaN in output"
         )

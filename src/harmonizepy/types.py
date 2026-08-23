@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 from .validation import _validate_core_args
 
@@ -51,7 +52,7 @@ class HarmonizeConfig:
     'sparsity'
     """
 
-    algorithm: str = "ComBat"
+    algorithm: Literal["ComBat", "limma"] = "ComBat"
     combat_mode: int = 1
     needed_values: int | None = None
     sort_strategy: str | None = None
@@ -60,6 +61,10 @@ class HarmonizeConfig:
 
     def __post_init__(self) -> None:
         _validate_core_args(
-            self.algorithm, self.combat_mode, self.needed_values,
-            self.sort_strategy, self.block_size, self.unique_removal,
+            self.algorithm,
+            self.combat_mode,
+            self.needed_values,
+            self.sort_strategy,
+            self.block_size,
+            self.unique_removal,
         )

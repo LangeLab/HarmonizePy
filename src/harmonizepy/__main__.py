@@ -16,6 +16,7 @@ import argparse
 import json
 import logging
 import sys
+import tomllib
 from collections.abc import Sequence
 from importlib.metadata import version
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -349,7 +350,7 @@ def _load_config(path: str) -> dict[str, object]:
     Supported formats
     -----------------
     ``.json``         (stdlib, always available)
-    ``.toml``         (``tomllib`` on Python >= 3.11, or ``tomli`` package)
+    ``.toml``         (stdlib ``tomllib``)
     ``.yaml``/``.yml`` (requires ``pyyaml``: ``pip install pyyaml``)
     """
     p = Path(path)
@@ -361,16 +362,6 @@ def _load_config(path: str) -> dict[str, object]:
             raw = json.load(fh)
 
     elif ext == ".toml":
-        try:
-            import tomllib  # stdlib >= 3.11
-        except ImportError:
-            try:
-                import tomli as tomllib  # type: ignore[no-redef,import-not-found]
-            except ImportError:
-                raise ImportError(
-                    "TOML config requires 'tomllib' (Python ≥ 3.11) "
-                    "or 'tomli': pip install harmonizepy[config]"
-                ) from None
         with p.open("rb") as fh:
             raw = tomllib.load(fh)
 
@@ -405,9 +396,7 @@ def _write_result(df: pd.DataFrame, path: str, fmt: str) -> None:
         from .io import _HAVE_PYARROW
 
         if not _HAVE_PYARROW:
-            raise ImportError(
-                "Parquet output requires pyarrow: pip install harmonizepy[io]"
-            )
+            raise ImportError("Parquet output requires pyarrow: pip install harmonizepy[io]")
         df.to_parquet(path, index=True, engine="pyarrow")
     else:
         df.to_csv(path, sep="\t")

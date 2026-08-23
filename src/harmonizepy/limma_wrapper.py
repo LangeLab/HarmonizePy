@@ -42,8 +42,7 @@ def _group_valid_rows(data: _Array) -> list[tuple[npt.NDArray[np.bool_], npt.NDA
         else:
             existing[1].append(row_index)
     return [
-        (valid, np.asarray(row_indices, dtype=np.intp))
-        for valid, row_indices in grouped.values()
+        (valid, np.asarray(row_indices, dtype=np.intp)) for valid, row_indices in grouped.values()
     ]
 
 
@@ -166,7 +165,7 @@ def _remove_batch_effect_dense(data: _Array, batch: _Array) -> _Array:
 
     corrected = data - beta_batch @ X_batch.T
 
-    return corrected  # type: ignore[no-any-return]
+    return corrected
 
 
 def adjust_limma(

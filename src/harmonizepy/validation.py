@@ -269,7 +269,9 @@ def validate_harmonize_args(
     >>> validate_harmonize_args("ComBat", 1, 2, sort_strategy="sparsity",
     ...                         block_size=2, n_batches=4)  # no error
     """
-    _validate_core_args(algorithm, combat_mode, needed_values, sort_strategy, block_size, unique_removal)
+    _validate_core_args(
+        algorithm, combat_mode, needed_values, sort_strategy, block_size, unique_removal
+    )
     if n_batches is not None and block_size is not None and block_size >= n_batches:
         raise ValueError(
             f"block ({block_size}) must be less than the number of unique batches "

@@ -109,10 +109,8 @@ def read_main_data(path: str) -> pd.DataFrame:
 
     if ext in (".parquet", ".pq"):
         if not _HAVE_PYARROW:
-            raise ImportError(
-                "Parquet reading requires pyarrow: pip install harmonizepy[io]"
-            )
-        df = pd.read_parquet(path, engine="pyarrow")
+            raise ImportError("Parquet reading requires pyarrow: pip install harmonizepy[io]")
+        df = pd.read_parquet(path, engine="auto")
     elif ext == ".csv":
         if _HAVE_PYARROW and _count_columns(path, ",") <= _WIDE_COLUMN_THRESHOLD:
             df = pd.read_csv(path, sep=",", index_col=0, engine="pyarrow", dtype_backend="pyarrow")
@@ -222,9 +220,7 @@ def write_output(df: pd.DataFrame, path: str) -> None:
     ext = Path(path).suffix.lower()
     if ext in (".parquet", ".pq"):
         if not _HAVE_PYARROW:
-            raise ImportError(
-                "Parquet output requires pyarrow: pip install harmonizepy[io]"
-            )
+            raise ImportError("Parquet output requires pyarrow: pip install harmonizepy[io]")
         df.to_parquet(path, index=True, engine="pyarrow")
     elif ext == ".csv":
         df.to_csv(path)
