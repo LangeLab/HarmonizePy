@@ -45,6 +45,11 @@ logger = logging.getLogger(__name__)
 # is not estimated from its data, so it is left raw instead (see combat()).
 _VARIANCE_FLOOR = 1e-12
 
+# Target features per block of the non-parametric prior. A block holds one row
+# per target and one column per feature, so a block of 64 rows at 32000
+# features (16 MiB) falls out of the CPU cache; 16 rows keep it in cache.
+_EPRIOR_BLOCK_ROWS = 16
+
 # ---------------------------------------------------------------------------
 # Type aliases
 # ---------------------------------------------------------------------------
@@ -315,7 +320,12 @@ def _int_eprior(
     g_hat: FloatArray,
     d_hat: FloatArray,
 ) -> tuple[FloatArray, FloatArray]:
-    """Monte-Carlo integration for non-parametric EB estimation (one batch).
+    """Non-parametric empirical-Bayes location and scale for one batch.
+
+    Each feature's estimate is the average of the other features' estimates,
+    weighted by the likelihood of its observed cells under each of them
+    (R ``sva:::int.eprior``). The computation is deterministic: a weighted sum
+    over features, computed in blocks of ``_EPRIOR_BLOCK_ROWS`` target rows.
 
     NaN-safe: each gene uses only its non-NaN entries for the likelihood,
     matching R sva::ComBat's per-gene handling where ``x <- sdat[i, !is.na(sdat[i, ])]``
@@ -348,7 +358,7 @@ def _int_eprior(
     log_two_pi_d = np.log(2.0 * np.pi * d)
     neg_half_log_two_pi_d = -0.5 * log_two_pi_d
 
-    block_size = 64
+    block_size = _EPRIOR_BLOCK_ROWS
     for start in range(0, n_genes, block_size):
         stop = min(start + block_size, n_genes)
         block_indices = np.arange(start, stop, dtype=np.intp)
