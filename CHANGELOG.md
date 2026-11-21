@@ -6,6 +6,10 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Added
+
+- `harmonize()` and the dry run warn with `InputScaleWarning` when the data look untransformed (non-negative with a 95th percentile above 100) or look like proportions (every value between 0 and 1). The check is a heuristic, names the transform to apply, and can be silenced by category. The expected input scale is documented (#25).
+
 ### Changed
 
 - ComBat's parametric solver iterates all batches of a group together, each stopping at its own convergence; corrected values are unchanged. Per-group bookkeeping and peak memory are lower, and the design cache is bounded by size.

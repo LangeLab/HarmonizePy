@@ -32,6 +32,7 @@ from .sorting import sort_batches
 from .splitting import splitting
 from .types import HarmonizeConfig
 from .validation import (
+    check_input_scale,
     sample_batch_map,
     validate_data_matrix,
     validate_description,
@@ -117,6 +118,11 @@ def harmonize(
         If a path cannot be read or ``output_file`` cannot be written.
     ImportError
         If a Parquet file is read or written without ``pyarrow``.
+
+    Warns
+    -----
+    InputScaleWarning
+        When the values do not look log-transformed; see ``check_input_scale``.
 
     Notes
     -----
@@ -263,6 +269,7 @@ def prepare_inputs(
     data = clean_features(data)
     validate_data_matrix(data)
     validate_description(description, data)
+    check_input_scale(data.to_numpy(dtype=np.float64))
     logger.info("Input: %d features x %d samples", data.shape[0], data.shape[1])
 
     sample_to_batch = sample_batch_map(description)

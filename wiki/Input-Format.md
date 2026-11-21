@@ -28,6 +28,14 @@ P00004       15.1        14.9        15.3        15.0        14.8        15.2
 
 Here `P00001` is missing in Sample_4, and `P00003` is missing in Samples 1, 2, and 5. This is typical structural missingness. HarmonizePy handles this without imputation.
 
+### Scale
+
+ComBat and limma model batch effects as additive on the scale they receive, so the values should be log-transformed, usually log2. HarmonizePy does not transform the data. Transform it first, for example with `log2(x + 1)` for intensities that contain zeros. For proportions such as methylation beta values, correct M-values, `log2(beta / (1 - beta))`, and convert back afterwards.
+
+A heuristic check warns with `harmonizepy.InputScaleWarning` when every value is non-negative and the 95th percentile is above 100, as for raw intensities and counts, or when every value lies between 0 and 1 with more than two distinct values, as for proportions. Percentages from 0 to 100 are not detected.
+
+Silence it in Python with `warnings.filterwarnings("ignore", category=harmonizepy.InputScaleWarning)`. On the command line, Python's `-W` option cannot name the category; match the message instead: `python -W "ignore:the data look:UserWarning" -m harmonizepy data.tsv batch.csv`.
+
 ### Rules
 
 - A feature name may repeat only with identical values. The repeat is removed and logged; the same name with different values raises a `ValueError`. Different names with identical values are both kept

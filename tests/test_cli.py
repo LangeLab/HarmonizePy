@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import json
 import re
+import warnings
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -1234,3 +1236,27 @@ def test_main_restores_package_logger_settings(tmp_path: Path) -> None:
     data, desc = _small_inputs(tmp_path)
     main([data, desc, "--no-log", "-q"])
     assert (package_logger.level, package_logger.propagate) == before
+
+
+def test_dry_run_reports_untransformed_input(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The dry run shows the input-scale warning on stderr for raw intensities.
+
+    Failure condition: the dry run validates raw intensities without a word.
+    """
+    rng = np.random.default_rng(31)
+    samples = [f"s{i}" for i in range(1, 7)]
+    data = pd.DataFrame(
+        rng.lognormal(12, 1, (20, 6)), index=[f"p{i}" for i in range(20)], columns=samples
+    )
+    data_path = tmp_path / "raw.tsv"
+    data.to_csv(data_path, sep="\t")
+    desc_path = tmp_path / "desc.csv"
+    pd.DataFrame({"ID": samples, "sample": range(1, 7), "batch": [1, 1, 1, 2, 2, 2]}).to_csv(
+        desc_path, index=False
+    )
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        main([str(data_path), str(desc_path), "--dry-run"])
+    assert any("look untransformed" in str(w.message) for w in caught)

@@ -106,7 +106,7 @@ The low-level engines handle missing observations per feature and preserve NaN p
 
 ### Input format
 
-- **data**: features × samples matrix. For TSV/CSV files, the first column must contain feature names (read as the DataFrame index). When passing a DataFrame directly, feature names must be in `DataFrame.index` and sample names in `DataFrame.columns`.
+- **data**: features × samples matrix of log-transformed values, usually log2; HarmonizePy does not transform them, and warns with `InputScaleWarning` when the values look untransformed. For TSV/CSV files, the first column must contain feature names (read as the DataFrame index). When passing a DataFrame directly, feature names must be in `DataFrame.index` and sample names in `DataFrame.columns`.
 - **description**: CSV/DataFrame with columns `ID` (sample names matching data columns), `sample` (integer), `batch` (integer batch label).
 
 ### Parameter reference

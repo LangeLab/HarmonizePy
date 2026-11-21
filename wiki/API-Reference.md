@@ -52,6 +52,10 @@ harmonize(
 
 `ValueError` on invalid arguments, mismatched sample IDs, or duplicate feature names.
 
+### Warns
+
+`InputScaleWarning` when the values do not look log-transformed. The data matrix should hold log-transformed values, usually log2; HarmonizePy does not transform them (see [[Input Format]]). The check is a heuristic and can be silenced by category.
+
 ### Examples
 
 ```python

@@ -6,13 +6,17 @@ downstream callers.
 
 from __future__ import annotations
 
+import warnings
 from typing import ClassVar
 
 import numpy as np
 import pandas as pd
 import pytest
 
+from harmonizepy.core import harmonize
 from harmonizepy.validation import (
+    InputScaleWarning,
+    check_input_scale,
     sample_batch_map,
     validate_combat_mode,
     validate_data_matrix,
@@ -414,3 +418,100 @@ class TestSharedValidators:
             validate_ref_batch(batch, 9)
         with pytest.raises(ValueError, match="single sample"):
             validate_ref_batch(batch, 1)
+
+
+class TestInputScale:
+    """The heuristic warning for data that do not look log-transformed."""
+
+    def test_raw_intensities_warn(self) -> None:
+        """Non-negative values with a 95th percentile above 100 warn, naming the log transform.
+
+        Failure condition: raw intensities are corrected without any notice.
+        """
+        values = np.random.default_rng(25).lognormal(12, 2, (200, 12))
+        with pytest.warns(InputScaleWarning, match=r"untransformed.*log2.*heuristic"):
+            check_input_scale(values)
+
+    def test_raw_counts_warn(self) -> None:
+        """Negative-binomial counts with a median near 200 warn.
+
+        Failure condition: realistic raw counts stay below the threshold.
+        """
+        values = np.random.default_rng(29).negative_binomial(5, 5 / 205, (500, 20)).astype(float)
+        with pytest.warns(InputScaleWarning, match="untransformed"):
+            check_input_scale(values)
+
+    def test_raw_columns_found_whatever_their_positions(self) -> None:
+        """Raw values in every other column are found; the sample keeps every column.
+
+        Failure condition: a stride over the flattened matrix samples even columns
+        only and misses the raw ones.
+        """
+        rng = np.random.default_rng(30)
+        values = rng.normal(20, 3, (4000, 2000))
+        values[:, 1::2] = rng.lognormal(12, 1, (4000, 1000))
+        with pytest.warns(InputScaleWarning, match="untransformed"):
+            check_input_scale(values)
+
+    def test_proportions_warn(self) -> None:
+        """Values between 0 and 1 warn, naming the M-value transform.
+
+        Failure condition: methylation beta values are corrected as if unbounded.
+        """
+        values = np.random.default_rng(26).beta(2, 5, (200, 12))
+        with pytest.warns(InputScaleWarning, match=r"proportions.*M-values.*heuristic"):
+            check_input_scale(values)
+
+    @pytest.mark.parametrize(
+        "values",
+        [
+            np.random.default_rng(27).normal(20, 2, (200, 12)),
+            np.random.default_rng(27).normal(-2, 2, (200, 12)),
+            np.random.default_rng(27).normal(0, 2, (200, 12)),
+            np.random.default_rng(27).integers(0, 2, (200, 12)).astype(float),
+            np.zeros((20, 6)),
+        ],
+        ids=["log2-intensity", "negative", "zero-centred", "binary", "constant"],
+    )
+    def test_log_scale_binary_and_constant_values_are_quiet(self, values: np.ndarray) -> None:
+        """Log-scale values, binary data, and a constant matrix do not warn.
+
+        Failure condition: ordinary log2 intensities, log ratios, or 0/1 data trigger
+        the warning.
+        """
+        values = values.copy()
+        values[0, 0] = np.nan
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", InputScaleWarning)
+            check_input_scale(values)
+
+    def test_harmonize_warns_once_at_the_callers_line_and_can_be_silenced(self) -> None:
+        """``harmonize()`` warns once, pointing at the caller, and the category silences it.
+
+        Failure condition: the warning repeats per group, points into the package,
+        or is not silenced by its category.
+        """
+        rng = np.random.default_rng(28)
+        samples = [f"s{i}" for i in range(1, 7)]
+        data = pd.DataFrame(rng.lognormal(12, 1, (20, 6)), columns=samples)
+        desc = pd.DataFrame({"ID": samples, "sample": range(1, 7), "batch": [1, 1, 1, 2, 2, 2]})
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            harmonize(data, desc)
+        scale_warnings = [w for w in caught if issubclass(w.category, InputScaleWarning)]
+        assert len(scale_warnings) == 1
+        assert scale_warnings[0].filename == __file__
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            warnings.filterwarnings("ignore", category=InputScaleWarning)
+            harmonize(data, desc)
+
+    def test_warning_class_is_exported(self) -> None:
+        """``InputScaleWarning`` is part of the package's public names.
+
+        Failure condition: users cannot import the category to silence it.
+        """
+        import harmonizepy
+
+        assert harmonizepy.InputScaleWarning is InputScaleWarning
+        assert "InputScaleWarning" in harmonizepy.__all__

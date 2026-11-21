@@ -6,6 +6,7 @@ consistent and the logic is not duplicated across modules.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -466,4 +467,75 @@ def validate_harmonize_args(
         raise ValueError(
             f"block ({block_size}) must be less than the number of unique batches "
             f"({n_batches}). Each block needs at least two batches to be meaningful."
+        )
+
+
+class InputScaleWarning(UserWarning):
+    """The data matrix looks like it is not on the log scale ComBat and limma expect.
+
+    Silence it with ``warnings.filterwarnings("ignore", category=InputScaleWarning)``.
+    """
+
+
+_RAW_SCALE_P95 = 100.0
+_SCALE_SAMPLE = 100_000
+
+
+def check_input_scale(values: FloatArray) -> None:
+    """Warn when the observed values look untransformed.
+
+    ComBat and limma model batch effects as additive on the scale they receive,
+    so they expect log-transformed values, usually log2. This is a heuristic on
+    the observed cells only:
+
+    - every value is non-negative and the 95th percentile is above
+      ``_RAW_SCALE_P95`` (100), as for raw intensities or counts. Log2
+      intensities and log2 counts stay below about 35;
+    - every value lies in [0, 1] with more than two distinct values, as for
+      proportions such as methylation beta values. Binary and constant data are
+      left alone.
+
+    The percentile is taken on whole rows at a fixed step, about
+    ``_SCALE_SAMPLE`` values in total, so that every column is represented and
+    the check stays cheap on large matrices. Percentages from 0 to 100 and
+    data with a single negative value are not detected.
+
+    Parameters
+    ----------
+    values : ndarray, shape (n_features, n_samples)
+        The data matrix. Missing cells are ignored.
+
+    Warns
+    -----
+    InputScaleWarning
+        Once, naming the pattern found and the transform to apply.
+    """
+    if values.size == 0:
+        return
+    flat = values.ravel(order="K")
+    low = float(np.fmin.reduce(flat))
+    if np.isnan(low) or low < 0.0:
+        return
+    high = float(np.fmax.reduce(flat))
+    n_rows, n_cols = values.shape
+    step = max(1, n_rows // max(1, _SCALE_SAMPLE // max(n_cols, 1)))
+    sample = values[::step].ravel()
+    sample = sample[~np.isnan(sample)]
+    if sample.size and float(np.percentile(sample, 95)) > _RAW_SCALE_P95:
+        warnings.warn(
+            "the data look untransformed: every value is non-negative and the 95th "
+            f"percentile is above {_RAW_SCALE_P95:g}. ComBat and limma expect "
+            "log-transformed values: apply log2(x + 1) when the data contain zeros, "
+            "log2(x) otherwise. This check is a heuristic.",
+            InputScaleWarning,
+            stacklevel=4,
+        )
+    elif high <= 1.0 and np.unique(sample).size > 2:
+        warnings.warn(
+            "the data look like proportions: every value lies between 0 and 1. ComBat "
+            "and limma assume values that can vary freely; for methylation beta "
+            "values, run the correction on M-values, log2(beta / (1 - beta)), and "
+            "convert back to beta. This check is a heuristic.",
+            InputScaleWarning,
+            stacklevel=4,
         )

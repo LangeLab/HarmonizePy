@@ -10,6 +10,7 @@ from .combat_wrapper import adjust_combat
 from .core import harmonize
 from .limma_wrapper import adjust_limma, remove_batch_effect
 from .types import HarmonizeConfig
+from .validation import InputScaleWarning
 
 # __all__ intentionally grouped by semantic tier, not alphabetical.
 # ruff: noqa: RUF022
@@ -25,6 +26,8 @@ __all__ = [
     "adjust_limma",
     # Config
     "HarmonizeConfig",
+    # Warnings
+    "InputScaleWarning",
 ]
 
 # ---------------------------------------------------------------------------
