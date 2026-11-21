@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -45,17 +46,26 @@ def _use_pyarrow_csv(path: str, sep: str) -> bool:
 
 
 def _convert_pyarrow_dtypes(df: pd.DataFrame) -> pd.DataFrame:
-    """Convert pyarrow-backed columns and index to standard numpy dtypes in-place."""
+    """Convert pyarrow-backed and nullable columns and the index to NumPy dtypes in-place.
+
+    An integer column with a missing cell becomes float64 with NaN, since NumPy
+    integers cannot hold a missing value; an integer column without one stays
+    int64. A column of blanks becomes float64. Both readers and Parquet then
+    give the same dtypes for the same content.
+    """
     if not _HAVE_PYARROW:
         return df
     from pandas import ArrowDtype
 
     # Columns
-    pa_cols = [col for col in df.columns if isinstance(df[col].dtype, ArrowDtype)]
-    for col in pa_cols:
+    ext_cols = [col for col in df.columns if pd.api.types.is_extension_array_dtype(df[col].dtype)]
+    for col in ext_cols:
         dtype = df[col].dtype
-        if pd.api.types.is_integer_dtype(dtype):
-            df[col] = df[col].astype(int)
+        if df[col].isna().all():
+            # A column of blanks has no type of its own (pyarrow reads it as null).
+            df[col] = df[col].astype(float)
+        elif pd.api.types.is_integer_dtype(dtype):
+            df[col] = df[col].astype(float if df[col].isna().any() else int)
         elif pd.api.types.is_float_dtype(dtype):
             df[col] = df[col].astype(float)
         else:
@@ -66,6 +76,76 @@ def _convert_pyarrow_dtypes(df: pd.DataFrame) -> pd.DataFrame:
         df.index = df.index.astype(str)
 
     return df
+
+
+def _names_for_log(names: list[str]) -> str:
+    """Return up to ten names for a log line."""
+    shown = ", ".join(names[:10])
+    return shown + (", ..." if len(names) > 10 else "")
+
+
+def clean_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove repeated features.
+
+    A feature is a repeat when its name and all of its values match an earlier
+    row, with missing cells in the same places; the repeat is removed and logged
+    at INFO level. Features with different names are kept even when their values
+    are identical. A name that appears more than once with different values
+    raises ``ValueError``. The input frame is not changed.
+
+    Parameters
+    ----------
+    df : DataFrame
+        Features x samples matrix, with feature names as the index.
+
+    Returns
+    -------
+    DataFrame
+        The matrix without the removed rows, in the original order.
+
+    Raises
+    ------
+    ValueError
+        If a feature name appears more than once with different values.
+    """
+    has_repeated_name = df.index.duplicated(keep=False)
+    if not has_repeated_name.any():
+        return df
+
+    # One pass over the rows that share a name: compare each row with the first
+    # row of the same name, with missing cells equal to missing cells.
+    shared = df[has_repeated_name]
+    codes, _ = pd.factorize(shared.index, use_na_sentinel=False)
+    if all(pd.api.types.is_numeric_dtype(dtype) for dtype in shared.dtypes):
+        values = shared.to_numpy(dtype=np.float64)
+        _, first_row = np.unique(codes, return_index=True)
+        reference = values[first_row[codes]]
+        same = (values == reference) | (np.isnan(values) & np.isnan(reference))
+        differs = ~same.all(axis=1)
+    else:
+        # Mixed dtypes: drop exact repeats of (name code, values); a code left twice
+        # has two value sets. Columns are renamed to positions so that the code
+        # column, labelled -1, cannot collide with a sample name.
+        keyed = shared.set_axis(range(shared.shape[1]), axis=1)
+        keyed[-1] = codes
+        distinct = keyed.drop_duplicates()
+        conflict_codes = distinct[-1][distinct[-1].duplicated()]
+        differs = np.isin(codes, conflict_codes.to_numpy())
+    if differs.any():
+        name = shared.index[np.flatnonzero(differs)[0]]
+        raise ValueError(
+            f"duplicate feature names with different values: {str(name)!r} appears more "
+            "than once. Each feature name must have one set of values."
+        )
+
+    is_repeat = df.index.duplicated(keep="first")
+    removed_names = [str(n) for n in pd.unique(df.index[is_repeat])]
+    logger.info(
+        "Removed %d repeated feature(s) with identical values: %s",
+        int(is_repeat.sum()),
+        _names_for_log(removed_names),
+    )
+    return df.loc[~is_repeat]
 
 
 def read_main_data(path: str) -> pd.DataFrame:
@@ -97,6 +177,9 @@ def read_main_data(path: str) -> pd.DataFrame:
         If *path* does not exist.
     ImportError
         If *path* is parquet and ``pyarrow`` is not installed.
+    ValueError
+        If a feature name appears more than once with different values. A
+        feature repeated with identical values is removed and logged.
 
     Examples
     --------
@@ -124,17 +207,10 @@ def read_main_data(path: str) -> pd.DataFrame:
 
     df = _convert_pyarrow_dtypes(df)
 
+    # Repeats are checked before blank rows are dropped, so that a name repeated
+    # once with values and once blank is reported, not silently resolved.
+    df = clean_features(df)
     df = df.dropna(how="all", axis=0)
-
-    # Remove duplicate rows (matching R HarmonizR behavior)
-    n_before = df.shape[0]
-    df = df.drop_duplicates()
-    if df.shape[0] < n_before:
-        logger.debug(
-            "Removed %d duplicate feature(s) from input; %d remain",
-            n_before - df.shape[0],
-            df.shape[0],
-        )
 
     # Normalise index name: pyarrow engine may set it to empty string
     # where the default C parser leaves it as None.

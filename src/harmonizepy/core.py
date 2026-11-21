@@ -21,7 +21,7 @@ import pandas as pd
 
 from .affiliation import build_affiliation_list, remove_unique_combinations
 from .blocking import build_block_list
-from .io import read_description, read_main_data, write_output
+from .io import clean_features, read_description, read_main_data, write_output
 from .sorting import sort_batches
 from .splitting import splitting
 from .types import HarmonizeConfig
@@ -90,12 +90,14 @@ def harmonize(
     DataFrame
         Batch-corrected matrix (features x samples), in the original
         column order.  NaN values remain where the feature lacked
-        sufficient data in a batch.
+        sufficient data in a batch.  A feature repeated with the same
+        name and identical values appears once; the removal is logged.
 
     Raises
     ------
     ValueError
-        On invalid arguments, mismatched inputs, or duplicate features.
+        On invalid arguments, mismatched inputs, or a feature name that
+        appears more than once with different values.
 
     Examples
     --------
@@ -145,7 +147,8 @@ def harmonize(
         description = read_description(str(description))
     assert isinstance(description, pd.DataFrame)  # narrow: always DataFrame after load
 
-    # --- Validate inputs ---------------------------------------------------
+    # --- Clean and validate inputs -----------------------------------------
+    data = clean_features(data)
     validate_data_matrix(data)
     validate_description(description, data)
 

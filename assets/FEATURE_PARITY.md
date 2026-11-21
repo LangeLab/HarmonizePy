@@ -128,7 +128,7 @@ Python retains more features in all cases. The trade-off: retained features are 
 - **TSV reader**: R uses `read.table(sep="\t", row.names=1, check.names=FALSE, comment.char="", stringsAsFactors=FALSE)`. Python uses `pd.read_csv(sep="\t", index_col=0)`. Same format.
 - **Empty columns**: R uses `janitor::remove_empty(which=c("rows","cols"))` (removes both). Python uses `dropna(how="all", axis=0)` (rows only). R destroys empty columns; Python preserves.
 - **Numeric coercion**: R uses `vapply(as.numeric)` which silently creates NA for non-numeric. Python uses pandas type inference and raises ValueError on non-numeric columns. R silently corrupts; Python rejects.
-- **Duplicate rows**: R uses `unique(main_data)` on the full data frame (compares all columns). Python checks only the index. Different dedup scope.
+- **Duplicate rows**: R uses `unique(main_data)`, which compares values and ignores row names, so a feature whose values match another feature's is removed silently. Python removes a row only when its name and its values both repeat, logs the removal, and raises on a repeated name with different values.
 - **Default output**: R writes `cured_data.tsv`. Python writes `<stem>_corrected.parquet` (or .tsv without pyarrow).
 - **Visualization**: R applies `2^` before plotting (assumes log2). Not supported in Python.
 - **S4 SummarizedExperiment**: R supports. Not applicable to Python.
@@ -194,7 +194,7 @@ The catastrophic blocked benchmark rows previously reported in markdown and JSON
 2. **Batch count**: R uses `tail()` (fragile). Python uses `len(unique())` (robust).
 3. **Empty column removal**: R `janitor::remove_empty` removes both rows and cols. Python drops only all-NaN rows.
 4. **Numeric coercion**: R `vapply(as.numeric)` silently creates NA. Python raises ValueError on non-numeric.
-5. **Duplicate rows**: R `unique()` on full data frame. Python checks index only. Different dedup scope.
+5. **Duplicate rows**: R `unique()` compares values only. Python requires the name and the values to repeat.
 6. **Column name handling**: R `check.names=FALSE` preserves special chars. Python default may mangle them. Minor.
 7. **Comment character**: R `comment.char=""` disables comment handling. Python default. No impact.
 8. **String factors**: R `stringsAsFactors=FALSE`. Python no factor concept. R-only.

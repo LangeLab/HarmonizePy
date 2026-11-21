@@ -67,7 +67,7 @@ Features with no qualifying batch (below the `needed_values` threshold in every 
 
 ### Input validation strictness
 
-R silently coerces non-numeric cells to NA and silently deduplicates rows with identical identifiers. HarmonizePy raises a `ValueError` in both cases. This is intentional: silent coercion can mask data preparation errors.
+R silently coerces non-numeric cells to NA and silently removes rows whose values repeat another row. HarmonizePy raises a `ValueError` for non-numeric cells. A row is removed only when both its name and its values repeat another row, and the removal is logged; a repeated name with different values raises a `ValueError`. Rows with identical values under different names are both kept. This is intentional: silent coercion or removal can mask data preparation errors.
 
 ### Sorting algorithm differences
 

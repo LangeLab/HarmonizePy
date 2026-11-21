@@ -30,9 +30,9 @@ Here `P00001` is missing in Sample_4, and `P00003` is missing in Samples 1, 2, a
 
 ### Rules
 
-- Feature names must be unique (duplicate index values raise a `ValueError`)
+- A feature name may repeat only with identical values. The repeat is removed and logged; the same name with different values raises a `ValueError`. Different names with identical values are both kept
 - All non-index values must be numeric. Non-numeric text cells (other than NaN markers) raise a `ValueError`
-- An all-NaN row is allowed and passes through unchanged
+- An all-NaN row is dropped when the matrix is read from a file. In a DataFrame passed to `harmonize()`, it is kept and returned as missing
 - No minimum number of features is enforced, but at least 2 features are needed for ComBat's empirical Bayes prior estimation
 
 ### When passing a DataFrame
@@ -107,7 +107,7 @@ The parquet file must have feature names as the index (row labels). Batch descri
 
 HarmonizePy validates both inputs before running any computation. Common errors and their causes:
 
-- `"Duplicate feature names in data matrix"`: two or more rows share the same index value
+- `"duplicate feature names with different values"`: a feature name appears in two rows whose values differ
 - `"Non-numeric values in data matrix"`: a data cell contains text or a non-numeric value
 - `"Sample IDs in description not found in data columns"`: an `ID` value in the batch description does not match any column in the data matrix
 - `"Data columns not present in description"`: a data column has no corresponding row in the batch description

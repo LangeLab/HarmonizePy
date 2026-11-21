@@ -12,6 +12,8 @@ All notable changes to this project are documented in this file. The format is b
 - A feature alone in its batch pattern keeps its raw values with both engines. ComBat could hang on such a row with a missing cell and return missing values; limma corrected it on its own batch means (#19).
 - `combat()` rejects an unknown `ref_batch`, and a reference batch with a single sample, before any other step.
 - Infinite values, such as log2 of zero, are rejected with the feature named. They made every output value missing.
+- A whole-number column with a blank cell loads, with the blank as missing. An integer column becomes floating point only when it has a blank, with every reader (#20).
+- Repeated features are removed only when both the name and all values repeat, and the removal is logged. Features with identical values under different names are kept, and a name repeated with different values raises a `ValueError`. `harmonize()` applies the same rule to a DataFrame passed directly (#21).
 
 ## [0.3.2] - 2026-05-29
 
