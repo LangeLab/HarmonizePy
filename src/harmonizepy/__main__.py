@@ -23,7 +23,8 @@ from importlib.metadata import version
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from .core import harmonize, plan_affiliations, prepare_inputs, resolve_needed_values
-from .io import format_from_suffix, read_description, read_main_data, write_frame
+from .io import _read_data_matrix, format_from_suffix, read_description, write_frame
+from .types import HarmonizeResult
 from .validation import sample_batch_map
 
 # ---------------------------------------------------------------------------
@@ -51,6 +52,7 @@ _VALID_CONFIG_KEYS: frozenset[str] = frozenset(
         "output",
         "output_format",
         "summary",
+        "report",
     }
 )
 
@@ -206,6 +208,18 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--report",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Write a per-feature report to PATH: the status of each feature "
+            "(corrected, left raw and why, or missing), the batches its correction "
+            "used, its group size, whether unique removal cropped it, and how many "
+            "repeats of it were removed. The format follows the extension (.csv, "
+            ".parquet or .pq, otherwise TSV)."
+        ),
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help=(
@@ -213,7 +227,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "then exit without running correction. "
             "Exit code 0 if inputs are valid, 1 on a validation error, 2 on a usage error "
             "or a missing input file. Writes no files; cannot be combined with --log-file, "
-            "--summary, or --json."
+            "--summary, --json, or --report."
         ),
     )
     parser.add_argument(
@@ -223,7 +237,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Path to a TOML, JSON, or YAML (.yaml/.yml) config file. Keys are the "
             "option names with underscores: algorithm, combat_mode, needed_values, "
-            "sort, block, unique_removal, output, output_format, summary. Options on "
+            "sort, block, unique_removal, output, output_format, summary, report. Options on "
             "the command line override the file, and the file overrides the defaults. "
             "YAML needs pyyaml (pip install harmonizepy[config])."
         ),
@@ -491,12 +505,13 @@ def main(argv: Sequence[str] | None = None) -> None:
     A config file's values become parser defaults, read with a pre-parser
     before the full parse, so options given on the command line always win.
     Shell completion is set up when ``argcomplete`` is installed. A dry run
-    refuses ``--log-file``, ``--summary``, and ``--json``, since it writes
+    refuses ``--log-file``, ``--summary``, ``--json``, and ``--report``, since it writes
     nothing those options would shape.
 
     A correction run writes the corrected matrix, a log file next to it
     unless ``--no-log`` (or at ``--log-file``), and the summary when
-    ``--summary`` is given; ``--json`` prints the summary to stdout.
+    ``--summary`` is given, and the per-feature report when ``--report`` is
+    given; ``--json`` prints the summary to stdout.
 
     Exit codes: 0 on success; 1 on an input, correction, or output error,
     reported as one ERROR line; 2 on a usage error or a missing input file.
@@ -524,6 +539,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         if _unknown:
             parser.error(f"Unknown config key(s): {', '.join(sorted(_unknown))}")
         parser.set_defaults(**{k: v for k, v in _cfg.items() if k in _VALID_CONFIG_KEYS})
+    else:
+        _cfg = {}
 
     args = parser.parse_args(argv)
 
@@ -531,13 +548,26 @@ def main(argv: Sequence[str] | None = None) -> None:
     output_fmt = _infer_format(output_path, args.output_format)
 
     if args.dry_run:
-        for flag, value in (
-            ("--log-file", args.log_file),
-            ("--summary", args.summary),
-            ("--json", args.json_output),
+        for flag, key in (
+            ("--log-file", "log_file"),
+            ("--summary", "summary"),
+            ("--json", "json_output"),
+            ("--report", "report"),
         ):
-            if value:
+            value = getattr(args, key)
+            if value and not (key in _cfg and _cfg[key] == value):
                 parser.error(f"{flag} cannot be used with --dry-run")
+    elif args.report is not None:
+        if not args.report:
+            parser.error("--report needs a file path")
+        report_target = Path(args.report).resolve()
+        for name, other in (
+            ("the output", output_path),
+            ("the data file", args.data),
+            ("the description file", args.description),
+        ):
+            if report_target == Path(other).resolve():
+                parser.error(f"--report would overwrite {name}: '{args.report}'")
 
     if not Path(args.data).is_file():
         parser.error(f"data file not found: '{args.data}'")
@@ -670,11 +700,11 @@ def _run_correction(args: argparse.Namespace, output_path: str, output_fmt: str)
     WARNING line and does not change the exit code.
     """
     try:
-        data_df = read_main_data(args.data)
+        data_df = _read_data_matrix(args.data)
         description_df = read_description(args.description)
         n_features_input, n_samples = data_df.shape
         n_batches = len(set(sample_batch_map(description_df).values()))
-        result = harmonize(
+        outcome = harmonize(
             data_df,
             description_df,
             algorithm=args.algorithm,
@@ -683,7 +713,12 @@ def _run_correction(args: argparse.Namespace, output_path: str, output_fmt: str)
             sort=args.sort,
             block=args.block,
             unique_removal=args.unique_removal,
+            return_report=args.report is not None,
         )
+        if isinstance(outcome, HarmonizeResult):
+            result, report = outcome.data, outcome.report
+        else:
+            result, report = outcome, None
     except _RUN_ERRORS as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         sys.exit(1)
@@ -694,6 +729,14 @@ def _run_correction(args: argparse.Namespace, output_path: str, output_fmt: str)
         print(f"ERROR writing output to '{output_path}': {exc}", file=sys.stderr)
         sys.exit(1)
     logging.getLogger("harmonizepy").info("Output written to %s", output_path)
+
+    if report is not None:
+        try:
+            write_frame(report, args.report, format_from_suffix(args.report))
+        except _RUN_ERRORS as exc:
+            print(f"ERROR writing report to '{args.report}': {exc}", file=sys.stderr)
+            sys.exit(1)
+        logging.getLogger("harmonizepy").info("Report written to %s", args.report)
 
     if not (args.summary or args.json_output):
         return

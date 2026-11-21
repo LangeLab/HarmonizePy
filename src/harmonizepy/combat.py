@@ -607,8 +607,29 @@ def combat(
 
     validate_engine_input(data, batch_int)
     validate_ref_batch(batch_int, ref_batch)
-    return _combat_validated(
+    corrected, _ = _combat_validated(
         data, batch_int, par_prior=par_prior, mean_only=mean_only, ref_batch=ref_batch
+    )
+    return corrected
+
+
+def _combat_with_reasons(
+    data: FloatArray,
+    batch: npt.ArrayLike,
+    *,
+    par_prior: bool = True,
+    mean_only: bool = False,
+) -> tuple[FloatArray, npt.NDArray[np.str_]]:
+    """Validate and correct as ``combat()`` does, and return why each feature was left raw.
+
+    The reasons are those of ``_combat_validated``; an empty string means the
+    feature was corrected.
+    """
+    data = np.asarray(data, dtype=np.float64)
+    batch_int = batch_codes(batch)
+    validate_engine_input(data, batch_int)
+    return _combat_validated(
+        data, batch_int, par_prior=par_prior, mean_only=mean_only, ref_batch=None
     )
 
 
@@ -619,45 +640,73 @@ def _combat_validated(
     par_prior: bool,
     mean_only: bool,
     ref_batch: int | None,
-) -> FloatArray:
+) -> tuple[FloatArray, npt.NDArray[np.str_]]:
     """Set aside the features ComBat cannot fit, then run the dense or missing-value path.
 
     Features with no observed value stay missing. Features with values in a
     single batch, features with no value in the reference batch, and, in the
     parametric modes, features whose variance the engine would floor keep
     their raw values. The rest are corrected as if those features were
-    absent. A single remaining
-    feature, or a matrix with no observed value, is returned as given.
+    absent. When fewer than two features remain, they are returned as given,
+    since a prior needs at least two.
+
+    Returns the corrected matrix and, per feature, an empty string when it was
+    corrected or the reason it was not: ``"no_values"``, ``"single_batch"``,
+    ``"no_reference"``, ``"zero_variance"``, or ``"too_few_features"``.
     """
-    no_values = np.isnan(data).all(axis=1)
-    if no_values.any() and not no_values.all():
+    reasons = np.full(data.shape[0], "", dtype="<U16")
+
+    def set_aside(
+        mask: npt.NDArray[np.bool_], reason: str
+    ) -> tuple[FloatArray, npt.NDArray[np.str_]]:
         out = data.copy()
-        out[~no_values] = _combat_validated(
+        reasons[mask] = reason
+        keep = ~mask
+        if keep.sum() >= 2:
+            out[keep], reasons[keep] = _combat_validated(
+                data[keep], batch_int, par_prior=par_prior, mean_only=mean_only, ref_batch=ref_batch
+            )
+        else:
+            reasons[keep] = "too_few_features"
+        return out, reasons
+
+    no_values = np.isnan(data).all(axis=1)
+    if no_values.all():
+        reasons[:] = "no_values"
+        return data.copy(), reasons
+    if no_values.any():
+        out = data.copy()
+        reasons[no_values] = "no_values"
+        out[~no_values], reasons[~no_values] = _combat_validated(
             data[~no_values],
             batch_int,
             par_prior=par_prior,
             mean_only=mean_only,
             ref_batch=ref_batch,
         )
-        return out
+        return out, reasons
 
     observed_batches = np.stack(
         [(~np.isnan(data[:, batch_int == b])).any(axis=1) for b in np.unique(batch_int)]
     ).sum(axis=0)
     one_batch = observed_batches < 2
-    if one_batch.any() and not one_batch.all():
+    if one_batch.all():
+        reasons[:] = "single_batch"
+        return data.copy(), reasons
+    if one_batch.any():
         logger.info(
             "%d feature(s) with values in a single batch left uncorrected", int(one_batch.sum())
         )
         out = data.copy()
-        out[~one_batch] = _combat_validated(
+        reasons[one_batch] = "single_batch"
+        out[~one_batch], reasons[~one_batch] = _combat_validated(
             data[~one_batch],
             batch_int,
             par_prior=par_prior,
             mean_only=mean_only,
             ref_batch=ref_batch,
         )
-        return out
+        return out, reasons
 
     if ref_batch is not None:
         no_reference = np.isnan(data[:, batch_int == ref_batch]).all(axis=1)
@@ -666,16 +715,7 @@ def _combat_validated(
                 "%d feature(s) with no value in the reference batch left uncorrected",
                 int(no_reference.sum()),
             )
-            out = data.copy()
-            if (~no_reference).sum() >= 2:
-                out[~no_reference] = _combat_validated(
-                    data[~no_reference],
-                    batch_int,
-                    par_prior=par_prior,
-                    mean_only=mean_only,
-                    ref_batch=ref_batch,
-                )
-            return out
+            return set_aside(no_reference, "no_reference")
 
     if par_prior:
         unestimable = _unestimable_rows(data, batch_int, mean_only=mean_only, ref_batch=ref_batch)
@@ -684,33 +724,23 @@ def _combat_validated(
                 "%d feature(s) with within-batch variance below the floor left uncorrected",
                 int(unestimable.sum()),
             )
-            out = data.copy()
-            keep = ~unestimable
-            if keep.sum() >= 2:
-                out[keep] = _combat_validated(
-                    data[keep],
-                    batch_int,
-                    par_prior=par_prior,
-                    mean_only=mean_only,
-                    ref_batch=ref_batch,
-                )
-            return out
+            return set_aside(unestimable, "zero_variance")
 
     if data.shape[0] < 2:
         logger.debug("Single feature input, returning copy")
-        return data.copy()
+        reasons[:] = "too_few_features"
+        return data.copy(), reasons
 
     missing = np.isnan(data)
     if not missing.any():
-        return _combat_dense(
+        corrected = _combat_dense(
             data, batch_int, par_prior=par_prior, mean_only=mean_only, ref_batch=ref_batch
         )
-    if missing.all():
-        logger.debug("All-NaN input, returning copy")
-        return data.copy()
-    return _combat_nan(
-        data, batch_int, par_prior=par_prior, mean_only=mean_only, ref_batch=ref_batch
-    )
+    else:
+        corrected = _combat_nan(
+            data, batch_int, par_prior=par_prior, mean_only=mean_only, ref_batch=ref_batch
+        )
+    return corrected, reasons
 
 
 # ---------------------------------------------------------------------------

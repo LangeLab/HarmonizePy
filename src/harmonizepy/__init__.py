@@ -13,7 +13,7 @@ from .combat import combat
 from .combat_wrapper import adjust_combat
 from .core import harmonize
 from .limma_wrapper import adjust_limma, remove_batch_effect
-from .types import HarmonizeConfig
+from .types import HarmonizeConfig, HarmonizeResult
 from .validation import InputScaleWarning
 
 # ruff: noqa: RUF022  (__all__ is grouped by role, not sorted)
@@ -27,8 +27,9 @@ __all__ = [
     # Wrappers (advanced / custom-pipeline use)
     "adjust_combat",
     "adjust_limma",
-    # Config
+    # Config and results
     "HarmonizeConfig",
+    "HarmonizeResult",
     # Warnings
     "InputScaleWarning",
 ]

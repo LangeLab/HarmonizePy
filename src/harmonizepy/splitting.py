@@ -14,7 +14,7 @@ import numpy.typing as npt
 import pandas as pd
 
 from .affiliation import reduce_to_unique_groups
-from .combat import COMBAT_MODES, combat
+from .combat import COMBAT_MODES, _combat_with_reasons
 from .limma_wrapper import remove_batch_effect
 from .validation import validate_combat_mode
 
@@ -92,6 +92,39 @@ def splitting(
     without matrix indexing, and a group that spans the whole matrix is read
     without a copy.
     """
+    corrected, _, _ = _correct_groups(
+        affiliation_list,
+        data,
+        batch_list,
+        block_list,
+        algorithm,
+        combat_mode,
+        output_col_order=output_col_order,
+        output_columns=output_columns,
+        data_np=data_np,
+    )
+    return corrected
+
+
+def _correct_groups(
+    affiliation_list: list[tuple[int, ...]],
+    data: pd.DataFrame,
+    batch_list: np.ndarray,
+    block_list: np.ndarray,
+    algorithm: str = "ComBat",
+    combat_mode: int = 1,
+    *,
+    output_col_order: npt.NDArray[np.intp] | None = None,
+    output_columns: pd.Index | None = None,
+    data_np: npt.NDArray[np.float64] | None = None,
+) -> tuple[pd.DataFrame, npt.NDArray[np.str_], npt.NDArray[np.intp]]:
+    """Do the work of ``splitting()`` and also return each feature's outcome.
+
+    Returns the corrected matrix, a reason per feature (empty when corrected;
+    ``"no_usable_batch"``, ``"single_batch"``, ``"alone_in_pattern"``, or a
+    ComBat reason from ``_combat_validated``), and the size of each feature's
+    group (0 for an empty affiliation).
+    """
     if algorithm not in ("ComBat", "limma"):
         raise ValueError(f"algorithm must be 'ComBat' or 'limma', got {algorithm!r}.")
     if algorithm == "ComBat":
@@ -131,10 +164,14 @@ def splitting(
 
     n_single_batch = 0
     n_single_feature = 0
+    reasons = np.full(n_features, "", dtype="<U16")
+    group_sizes = np.zeros(n_features, dtype=np.intp)
 
     for affil, row_indices in affil_to_features.items():
         if len(affil) == 0:
+            reasons[row_indices] = "no_usable_batch"
             continue
+        group_sizes[row_indices] = len(row_indices)
 
         col_indices = affil_to_cols[affil]
         target_col_indices = (
@@ -147,8 +184,10 @@ def splitting(
             sub_batch = batch_arr[col_indices]
             if len(np.unique(sub_batch)) < 2:
                 n_single_batch += 1
+                reasons[ri] = "single_batch"
             else:
                 n_single_feature += 1
+                reasons[ri] = "alone_in_pattern"
             output[ri, target_col_indices] = sub_data
             continue
 
@@ -162,13 +201,16 @@ def splitting(
         unique_batches = np.unique(sub_batch)
         if len(unique_batches) < 2:
             n_single_batch += len(row_idx)
+            reasons[row_idx] = "single_batch"
             output[np.ix_(row_idx, target_col_indices)] = sub_data
             continue
 
         if algorithm == "limma":
             corrected = remove_batch_effect(sub_data, sub_batch)
         else:
-            corrected = combat(sub_data, sub_batch, **COMBAT_MODES[combat_mode])
+            corrected, reasons[row_idx] = _combat_with_reasons(
+                sub_data, sub_batch, **COMBAT_MODES[combat_mode]
+            )
 
         output[np.ix_(row_idx, target_col_indices)] = corrected
 
@@ -182,9 +224,10 @@ def splitting(
             n_single_feature,
         )
 
-    return pd.DataFrame(
+    corrected_frame = pd.DataFrame(
         output,
         index=data.index,
         columns=data.columns if output_columns is None else output_columns,
         copy=False,
     )
+    return corrected_frame, reasons, group_sizes

@@ -1696,69 +1696,34 @@ class TestNaNPropagation:
         )
         return data, desc
 
-    def test_per_cell_nan_reaches_combat_and_is_handled(self, monkeypatch):
-        """Engines receive NaN and correctly handle it (per-feature OLS).
+    def test_per_cell_nan_is_handled_by_combat(self):
+        """A missing cell inside a qualifying group stays missing; the feature's other cells are corrected.
 
-        Failure condition: NaN causes a crash, or clean cells are not
-        adjusted.
+        Failure condition: the missing cell causes a crash, spreads to other cells,
+        or the feature is left uncorrected.
 
-        R sva::ComBat v3.60.0 handles NaN per-feature via Beta.NA:
-        NaN observations are omitted from OLS per feature, not by
-        dropping entire rows.
+        R sva::ComBat 3.60.0 handles missing cells per feature through ``Beta.NA``:
+        they are omitted from each feature's fit, not dropped with the whole row.
         """
-        import harmonizepy.splitting as split_mod
-
-        original = split_mod.combat
-        received_nan = []
-
-        def spy(data, batch, *, par_prior=True, mean_only=False, ref_batch=None):
-            has_nan = np.isnan(data).any()
-            received_nan.append(has_nan)
-            return original(
-                data, batch, par_prior=par_prior, mean_only=mean_only, ref_batch=ref_batch
-            )
-
-        monkeypatch.setattr(split_mod, "combat", spy)
-
         data, desc = self._structural_nan_data()
         result = harmonize(data, desc, algorithm="ComBat", combat_mode=2)
+        assert np.isnan(result.iloc[2, 0])
+        assert not np.isnan(result.iloc[2, 1:]).any()
+        assert not np.allclose(result.iloc[2, 1:], data.iloc[2, 1:])
+        assert not np.isnan(result.iloc[3:].values).any()
 
-        # Engines received at least one call with NaN
-        assert any(received_nan), "Engine should have received NaN data"
+    def test_per_cell_nan_is_handled_by_limma(self):
+        """With limma, a missing cell stays missing and the feature's other cells are corrected.
 
-        # Feature 2 has per-cell NaN only in sample 0.
-        # Only cell [2, 0] stays NaN; the rest are adjusted.
-        assert np.isnan(result.iloc[2, 0]), "Per-cell NaN position stays NaN"
-        assert not np.isnan(result.iloc[2, 1:]).any(), "Quantified cells should be adjusted"
-
-        # Features 3-9 (fully present) have no NaN
-        assert not np.isnan(result.iloc[3:].values).any(), (
-            "Fully-present features should have no NaN in output"
-        )
-
-    def test_per_cell_nan_reaches_limma_and_is_handled(self, monkeypatch):
-        """limma engines receive NaN and correctly handle it (per-feature OLS)."""
-        import harmonizepy.splitting as split_mod
-
-        original = split_mod.remove_batch_effect
-        received_nan = []
-
-        def spy(data, batch):
-            has_nan = np.isnan(data).any()
-            received_nan.append(has_nan)
-            return original(data, batch)
-
-        monkeypatch.setattr(split_mod, "remove_batch_effect", spy)
-
+        Failure condition: the missing cell causes a crash, spreads to other cells,
+        or the feature is left uncorrected.
+        """
         data, desc = self._structural_nan_data()
         result = harmonize(data, desc, algorithm="limma")
-
-        assert any(received_nan), "Engine should have received NaN data"
-        assert np.isnan(result.iloc[2, 0]), "Per-cell NaN position stays NaN"
-        assert not np.isnan(result.iloc[2, 1:]).any(), "Quantified cells should be adjusted"
-        assert not np.isnan(result.iloc[3:].values).any(), (
-            "Fully-present features should have no NaN in output"
-        )
+        assert np.isnan(result.iloc[2, 0])
+        assert not np.isnan(result.iloc[2, 1:]).any()
+        assert not np.allclose(result.iloc[2, 1:], data.iloc[2, 1:])
+        assert not np.isnan(result.iloc[3:].values).any()
 
     def test_fully_present_features_no_nan_in_output(self):
         """Features fully present in all batches have no NaN in output.

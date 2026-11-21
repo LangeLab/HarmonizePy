@@ -19,7 +19,7 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, overload
 
 import numpy as np
 import numpy.typing as npt
@@ -27,10 +27,10 @@ import pandas as pd
 
 from .affiliation import build_affiliation_list, remove_unique_combinations
 from .blocking import build_block_list
-from .io import clean_features, read_description, read_main_data, write_output
+from .io import _read_data_matrix, clean_features, read_description, write_output
 from .sorting import sort_batches
-from .splitting import splitting
-from .types import HarmonizeConfig
+from .splitting import _correct_groups
+from .types import HarmonizeConfig, HarmonizeResult
 from .validation import (
     check_input_scale,
     sample_batch_map,
@@ -40,6 +40,57 @@ from .validation import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@overload
+def harmonize(
+    data: pd.DataFrame | str | Path,
+    description: pd.DataFrame | str | Path,
+    *,
+    config: HarmonizeConfig | None = None,
+    algorithm: Literal["ComBat", "limma"] = "ComBat",
+    combat_mode: int = 1,
+    needed_values: int | None = None,
+    sort: str | None = None,
+    block: int | None = None,
+    unique_removal: bool = True,
+    output_file: str | Path | None = None,
+    return_report: Literal[False] = False,
+) -> pd.DataFrame: ...
+
+
+@overload
+def harmonize(
+    data: pd.DataFrame | str | Path,
+    description: pd.DataFrame | str | Path,
+    *,
+    config: HarmonizeConfig | None = None,
+    algorithm: Literal["ComBat", "limma"] = "ComBat",
+    combat_mode: int = 1,
+    needed_values: int | None = None,
+    sort: str | None = None,
+    block: int | None = None,
+    unique_removal: bool = True,
+    output_file: str | Path | None = None,
+    return_report: Literal[True],
+) -> HarmonizeResult: ...
+
+
+@overload
+def harmonize(
+    data: pd.DataFrame | str | Path,
+    description: pd.DataFrame | str | Path,
+    *,
+    config: HarmonizeConfig | None = None,
+    algorithm: Literal["ComBat", "limma"] = "ComBat",
+    combat_mode: int = 1,
+    needed_values: int | None = None,
+    sort: str | None = None,
+    block: int | None = None,
+    unique_removal: bool = True,
+    output_file: str | Path | None = None,
+    return_report: bool = ...,
+) -> pd.DataFrame | HarmonizeResult: ...
 
 
 def harmonize(
@@ -54,15 +105,16 @@ def harmonize(
     block: int | None = None,
     unique_removal: bool = True,
     output_file: str | Path | None = None,
-) -> pd.DataFrame:
+    return_report: bool = False,
+) -> pd.DataFrame | HarmonizeResult:
     """Correct batch effects in a matrix with missing values.
 
     Parameters
     ----------
     data : DataFrame, str, or Path
         Features x samples matrix, feature names as the index. Missing cells
-        are allowed and stay missing. A path is read with ``read_main_data``:
-        ``.csv`` as comma-separated, ``.parquet`` or ``.pq`` as Parquet, and
+        are allowed and stay missing. A path is read as ``read_main_data``
+        reads it: ``.csv`` as comma-separated, ``.parquet`` or ``.pq`` as Parquet, and
         anything else as tab-separated.
     description : DataFrame, str, or Path
         Batch description, one row per sample. The columns named ``ID`` and
@@ -96,16 +148,23 @@ def harmonize(
     output_file : str, Path, or None
         If given, the corrected matrix is also written here, in the format of
         the suffix (``.csv``, ``.parquet`` or ``.pq``, otherwise TSV).
+    return_report : bool
+        When ``True``, return the corrected matrix together with a report of
+        what happened to each feature: its status, the batches of its group,
+        the group size, whether unique removal cropped it, and how many of its
+        repeats were removed.
 
     Returns
     -------
-    DataFrame
+    DataFrame or HarmonizeResult
         Corrected matrix with the input's features and columns, in the input
         order, except that a feature repeated with the same name and values
         appears once. A feature with no usable batch is all missing. A feature
         alone in its affiliation, one whose affiliation spans a single batch,
         and, in the parametric ComBat modes, one whose variance is too small
-        to estimate keep their raw values; the log counts each kind.
+        to estimate keep their raw values; the log counts each kind. With
+        ``return_report=True``, a ``HarmonizeResult`` of the matrix and the
+        report.
 
     Raises
     ------
@@ -166,7 +225,7 @@ def harmonize(
     )
 
     logger.info("Adjusting %d unique affiliation group(s)", plan.n_groups)
-    result = splitting(
+    result, reasons, group_sizes = _correct_groups(
         plan.affiliation_list,
         plan.data,
         plan.batch_list,
@@ -192,7 +251,9 @@ def harmonize(
         write_output(result, str(output_file))
 
     logger.info("Done (%.2fs).", time.monotonic() - start_time)
-    return result
+    if not return_report:
+        return result
+    return HarmonizeResult(result, correction_report(inputs, plan, reasons, group_sizes))
 
 
 def resolve_needed_values(algorithm: str, combat_mode: int, needed_values: int | None) -> int:
@@ -215,6 +276,7 @@ class PreparedInputs:
     batch_list: npt.NDArray[np.int64]
     needed_values: int
     n_batches: int
+    repeats_removed: pd.Series
 
 
 def prepare_inputs(
@@ -231,8 +293,9 @@ def prepare_inputs(
     """Read, clean, and validate the inputs of a run, and map samples to batches.
 
     Shared by ``harmonize()`` and the command line dry run, so that both apply
-    the same checks. Paths are read with ``read_main_data`` and
-    ``read_description``; repeated features are removed by ``clean_features``.
+    the same checks. Paths are read as ``read_main_data`` and
+    ``read_description`` read them; repeated features are counted, then removed
+    by ``clean_features``.
 
     Parameters
     ----------
@@ -261,11 +324,13 @@ def prepare_inputs(
     )
     if isinstance(data, (str, Path)):
         logger.debug("Reading data from %s", data)
-        data = read_main_data(str(data))
+        data = _read_data_matrix(str(data))
     if isinstance(description, (str, Path)):
         logger.debug("Reading description from %s", description)
         description = read_description(str(description))
 
+    repeated = data.index.duplicated(keep="first")
+    repeats_removed = pd.Series(data.index[repeated]).value_counts(dropna=False)
     data = clean_features(data)
     validate_data_matrix(data)
     validate_description(description, data)
@@ -283,7 +348,7 @@ def prepare_inputs(
         n_batches,
         resolved,
     )
-    return PreparedInputs(data, batch_list, resolved, n_batches)
+    return PreparedInputs(data, batch_list, resolved, n_batches, repeats_removed)
 
 
 @dataclass(frozen=True)
@@ -297,6 +362,7 @@ class AffiliationPlan:
     col_order: npt.NDArray[np.intp] | None
     affiliation_list: list[tuple[int, ...]]
     n_empty: int
+    cropped: npt.NDArray[np.bool_]
 
     @property
     def n_groups(self) -> int:
@@ -361,10 +427,15 @@ def plan_affiliations(
         n_empty,
     )
 
+    cropped = np.zeros(n_features, dtype=np.bool_)
     if unique_removal:
-        cropped = remove_unique_combinations(affiliation_list)
-        n_cropped = sum(1 for old, new in zip(affiliation_list, cropped, strict=True) if old != new)
-        affiliation_list = cropped
+        new_list = remove_unique_combinations(affiliation_list)
+        cropped = np.array(
+            [old != new for old, new in zip(affiliation_list, new_list, strict=True)],
+            dtype=np.bool_,
+        )
+        n_cropped = int(cropped.sum())
+        affiliation_list = new_list
         if n_cropped:
             logger.info(
                 "Unique removal moved %d feature(s) into a shared pattern (%.1f%%)",
@@ -375,5 +446,75 @@ def plan_affiliations(
             logger.debug("Unique removal: no feature had a pattern of its own")
 
     return AffiliationPlan(
-        data, data_np, sorted_batches, block_list, col_order, affiliation_list, n_empty
+        data, data_np, sorted_batches, block_list, col_order, affiliation_list, n_empty, cropped
     )
+
+
+# Report status for each reason ``_correct_groups`` gives for leaving a feature raw.
+# ComBat's ``no_values`` cannot occur in a group, whose features all have values;
+# it maps to the status of a feature with no usable batch, which is all missing too.
+_STATUS_BY_REASON = {
+    "": "corrected",
+    "no_usable_batch": "missing_no_usable_batch",
+    "no_values": "missing_no_usable_batch",
+    "single_batch": "raw_single_batch",
+    "alone_in_pattern": "raw_alone_in_pattern",
+    "zero_variance": "raw_zero_variance",
+    "too_few_features": "raw_too_few_features",
+}
+
+
+def correction_report(
+    inputs: PreparedInputs,
+    plan: AffiliationPlan,
+    reasons: npt.NDArray[np.str_],
+    group_sizes: npt.NDArray[np.intp],
+) -> pd.DataFrame:
+    """Build the per-feature report of a run.
+
+    One row per feature of the corrected matrix, in its order, indexed by
+    feature name, with the columns:
+
+    - ``status``: ``corrected``; ``raw_single_batch`` (its group spans one
+      batch); ``raw_alone_in_pattern`` (no other feature shares its
+      affiliation); ``raw_zero_variance`` (ComBat, parametric modes: variance
+      too small to estimate); ``raw_too_few_features`` (ComBat: fewer than two
+      features left in its group to form a prior); or
+      ``missing_no_usable_batch`` (no batch, or with ``block`` no block, with
+      enough values; the row is all missing).
+    - ``batches_used``: the batch labels of the feature's group,
+      comma-separated and sorted; empty when the feature was not corrected.
+    - ``group_size``: the number of features in its group, 0 for none.
+    - ``cropped``: whether unique removal moved it to a smaller affiliation,
+      so that the values in the dropped batches are missing in the output.
+    - ``repeats_removed``: how many repeated rows with its name and values
+      were removed before correction.
+    """
+    batches_of_block: dict[int, set[int]] = {}
+    for block_id, batch_id in zip(plan.block_list.tolist(), plan.batch_list.tolist(), strict=True):
+        batches_of_block.setdefault(int(block_id), set()).add(int(batch_id))
+    labels_of_affiliation: dict[tuple[int, ...], str] = {}
+    batches_used = []
+    for affiliation, reason in zip(plan.affiliation_list, reasons.tolist(), strict=True):
+        if reason:
+            batches_used.append("")
+            continue
+        label = labels_of_affiliation.get(affiliation)
+        if label is None:
+            batches = sorted(set().union(*(batches_of_block[b] for b in affiliation)))
+            label = ",".join(str(b) for b in batches)
+            labels_of_affiliation[affiliation] = label
+        batches_used.append(label)
+
+    index = inputs.data.index
+    report = pd.DataFrame(
+        {
+            "status": [_STATUS_BY_REASON[r] for r in reasons.tolist()],
+            "batches_used": batches_used,
+            "group_size": group_sizes,
+            "cropped": plan.cropped,
+            "repeats_removed": inputs.repeats_removed.reindex(index, fill_value=0).to_numpy(),
+        },
+        index=index,
+    )
+    return report

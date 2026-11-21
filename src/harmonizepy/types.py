@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 
 import numpy as np
 import numpy.typing as npt
+import pandas as pd
 
 from .validation import validate_core_args
 
@@ -74,3 +75,14 @@ class HarmonizeConfig:
             self.block_size,
             self.unique_removal,
         )
+
+
+class HarmonizeResult(NamedTuple):
+    """The corrected matrix and the per-feature correction report of one run.
+
+    Returned by ``harmonize(..., return_report=True)``; unpacks as
+    ``data, report``.
+    """
+
+    data: pd.DataFrame
+    report: pd.DataFrame

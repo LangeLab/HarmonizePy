@@ -70,8 +70,9 @@ When `-o` is omitted, the output is written next to the input data file as `<dat
 
 ## Workflow helpers
 
-- `--dry-run`: validate inputs, print run plan, exit without computing. Writes no files, and cannot be combined with `--log-file`, `--summary`, or `--json`. Exit code `0` if valid, `1` on a validation error, `2` on a usage error or a missing input file.
+- `--dry-run`: validate inputs, print run plan, exit without computing. Writes no files: it cannot be combined with `--log-file`, `--summary`, `--json`, or `--report` on the command line, and ignores those keys in a config file. Exit code `0` if valid, `1` on a validation error, `2` on a usage error or a missing input file.
 - `--summary PATH`: write a JSON run summary to PATH after completion. Contains the resolved parameters (including the `needed_values` the run used), input and output dimensions, and the package version.
+- `--report PATH`: write the per-feature correction report to PATH: each feature's status (corrected, or why it kept its values), the batches of its group, its group size, whether unique removal cropped it, and how many repeats of it were removed. Format from the extension: `.csv`, `.parquet` or `.pq`, otherwise TSV; `--output-format` does not apply. A path equal to the output or an input file is a usage error. The columns are described under `harmonize()` in the [[API Reference]].
 - `--json`: print the run summary as JSON to stdout. Suppresses INFO log messages.
 - `--config PATH`: load flags from a TOML, JSON, or YAML config file. CLI flags override config file values.
 
@@ -113,7 +114,7 @@ output = "corrected.tsv"
 }
 ```
 
-Config file keys map 1:1 to CLI flag names: `algorithm`, `combat_mode`, `needed_values`, `sort`, `block`, `unique_removal`, `output`, `output_format`, `summary`. CLI flags override config file values. Config file values override built-in defaults.
+Config file keys map 1:1 to CLI flag names: `algorithm`, `combat_mode`, `needed_values`, `sort`, `block`, `unique_removal`, `output`, `output_format`, `summary`, `report`. CLI flags override config file values. Config file values override built-in defaults.
 
 Config paths are resolved relative to the config file, not the current working directory.
 

@@ -3,7 +3,7 @@
 Complete reference for every public function and class in HarmonizePy.
 
 ```python
-from harmonizepy import harmonize, combat, remove_batch_effect, HarmonizeConfig
+from harmonizepy import harmonize, combat, remove_batch_effect, HarmonizeConfig, HarmonizeResult
 from harmonizepy import adjust_combat, adjust_limma
 ```
 
@@ -26,7 +26,8 @@ harmonize(
     block=None,
     unique_removal=True,
     output_file=None,
-) -> pd.DataFrame
+    return_report=False,
+) -> pd.DataFrame | HarmonizeResult
 ```
 
 ### Parameters
@@ -43,10 +44,24 @@ harmonize(
 | `block` | `int >= 2` or `None` | `None` | Group this many consecutive sorted batches into one block. |
 | `unique_removal` | `bool` | `True` | Rescue singleton-affiliation features by cropping to the nearest shared pattern. |
 | `output_file` | `str`, `Path`, or `None` | `None` | Write the corrected matrix to this path. Format inferred from extension: `.tsv`, `.csv`, `.parquet`, `.pq`. |
+| `return_report` | `bool` | `False` | Also return the per-feature correction report. |
 
 ### Returns
 
 `pd.DataFrame` with the same shape, index, and column order as the input. NaN positions are preserved where data was insufficient for correction.
+
+With `return_report=True`, a `HarmonizeResult` named tuple of `data` (the same matrix) and `report`, a DataFrame with one row per feature of `data`, in its order:
+
+- `status`: `corrected`, or why the feature kept its values:
+  - `raw_single_batch`: its group spans one batch.
+  - `raw_alone_in_pattern`: no other feature shares its affiliation.
+  - `raw_zero_variance`: ComBat, parametric modes; its variance is too small to estimate.
+  - `raw_too_few_features`: ComBat; fewer than two features were left in its group to form a prior.
+  - `missing_no_usable_batch`: no batch, or with `block` no block, has enough values, and the row is all missing in the output.
+- `batches_used`: the batch labels of its group, comma-separated and sorted; empty when not corrected.
+- `group_size`: the number of features in its group, 0 for none.
+- `cropped`: unique removal moved it to a smaller affiliation, so its values in the dropped batches are missing in the output.
+- `repeats_removed`: how many repeated rows with its name and values were removed before correction.
 
 ### Raises
 
@@ -75,7 +90,20 @@ result = harmonize(data_df, desc_df, combat_mode=3, needed_values=1)
 
 # Write output directly
 result = harmonize("data.tsv", "batch.csv", output_file="corrected.parquet")
+
+# What happened to each feature
+result, report = harmonize(data_df, desc_df, return_report=True)
+report["status"].value_counts()
 ```
+
+---
+
+## `HarmonizeResult`
+
+The named tuple `harmonize(..., return_report=True)` returns. It unpacks as `data, report`.
+
+- `data`: the corrected matrix, as `harmonize()` returns it without the report.
+- `report`: a DataFrame with one row per feature of `data`, with the columns described under `harmonize()` Returns.
 
 ---
 

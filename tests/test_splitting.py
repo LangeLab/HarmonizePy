@@ -6,7 +6,7 @@ extraction, adjustment dispatch, and NaN preservation.
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -106,35 +106,20 @@ class TestSplittingBasic:
 
 
 class TestPerCellMissingValues:
-    def test_per_cell_nan_passed_to_combat(self, monkeypatch: Any) -> None:
-        """Sub-DataFrames with per-cell NaN are passed to combat, which handles it.
+    def test_group_with_missing_cells_equals_combat_on_its_sub_matrix(self) -> None:
+        """A group with missing cells is corrected exactly as ``combat()`` corrects its sub-matrix.
 
-        Failure condition: splitting tries to drop columns or otherwise
-        prevent NaN from reaching the engine.
-
-        This matches R HarmonizR behavior: per-cell NaN within qualifying
-        blocks reaches sva::ComBat, which uses Beta.NA per-feature.
+        Failure condition: splitting drops columns or rows with missing cells
+        before the engine sees them, so the result differs from the engine's.
         """
-        import harmonizepy.splitting as split_mod
-
-        called_with_nan = [False]
-
-        def tracking(data: np.ndarray, batch: np.ndarray, **kwargs: Any) -> np.ndarray:
-            if np.isnan(data).any():
-                called_with_nan[0] = True
-            return _combat(data, batch, **kwargs)
-
-        monkeypatch.setattr(split_mod, "combat", tracking)
-
         data = _make_data(6, 6)
-        data.iloc[0, 0] = np.nan  # per-cell NaN, still qualifies for batch 1
-        data.iloc[0, 3] = np.nan  # per-cell NaN, still qualifies for batch 2
+        data.iloc[0, 0] = np.nan
+        data.iloc[0, 3] = np.nan
         batch = np.array([1, 1, 1, 2, 2, 2])
-        block = batch.copy()
-        affil = build_affiliation_list(data, batch, block, needed_values=2)
-        # Feature 0 still qualifies (2 non-NaN per batch)
-        splitting(affil, data, batch, block, algorithm="ComBat", combat_mode=2)
-        assert called_with_nan[0], "Engine should have received NaN data"
+        affil = build_affiliation_list(data, batch, batch, needed_values=2)
+        out = splitting(affil, data, batch, batch, algorithm="ComBat", combat_mode=2)
+        expected = _combat(data.to_numpy(), batch, mean_only=True)
+        np.testing.assert_array_equal(out.to_numpy(), expected)
 
     def test_per_cell_nan_handled_correctly(self) -> None:
         """Per-cell NaN is preserved in original positions; other cells adjusted.

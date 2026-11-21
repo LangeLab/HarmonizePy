@@ -8,6 +8,7 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Added
 
+- `harmonize(..., return_report=True)` returns a `HarmonizeResult` of the corrected matrix and a per-feature report: whether each feature was corrected or kept raw and why, the batches of its group, its group size, whether unique removal cropped it, and how many repeated rows of it were removed. The CLI writes the same table with `--report PATH`, and refuses a path that would overwrite the output or an input. The corrected matrix is the same with or without the report (#28).
 - `harmonize()` and the dry run warn with `InputScaleWarning` when the data look untransformed (non-negative with a 95th percentile above 100) or look like proportions (every value between 0 and 1). The check is a heuristic, names the transform to apply, and can be silenced by category. The expected input scale is documented (#25).
 
 ### Changed
@@ -30,7 +31,7 @@ All notable changes to this project are documented in this file. The format is b
 - `splitting()` rejects an unknown algorithm or ComBat mode with a `ValueError`, and `adjust_combat()` checks the batch length before any shortcut.
 - A whole-number column with a blank cell loads, with the blank as missing. An integer column becomes floating point only when it has a blank, with every reader (#20).
 - Repeated features are removed only when both the name and all values repeat, and the removal is logged. Features with identical values under different names are kept, and a name repeated with different values raises a `ValueError`. `harmonize()` applies the same rule to a DataFrame passed directly (#21).
-- CLI: `--output-format csv` without `-o` writes `<data_stem>_corrected.csv`. A dry run writes no files, and `--dry-run` with `--log-file`, `--summary`, or `--json` is a usage error (#22).
+- CLI: `--output-format csv` without `-o` writes `<data_stem>_corrected.csv`. A dry run writes no files: `--dry-run` with `--log-file`, `--summary`, `--json`, or `--report` on the command line is a usage error, and a dry run ignores the same keys in a config file (#22).
 - `harmonize()`, the dry run, and the run summary read the batch description by one rule: the columns named `ID` and `batch` when present, otherwise the first and third columns (#22).
 - A description that lists a sample twice, or has a batch label that is not a whole number, raises a `ValueError` that names the problem. Labels such as 1.5 were truncated to integers.
 - The dry run plans the groups exactly as the correction run does, including sorting and unique removal, so its sub-matrix count matches the run. It prints the `needed_values` the run will use instead of `auto`.

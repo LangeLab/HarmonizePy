@@ -177,6 +177,23 @@ def clean_features(df: pd.DataFrame) -> pd.DataFrame:
     return df.loc[~is_repeat]
 
 
+def _read_data_matrix(path: str) -> pd.DataFrame:
+    """Read a data matrix file as ``read_main_data`` does, without removing repeats."""
+    ext = Path(path).suffix.lower()
+    if ext in (".parquet", ".pq"):
+        if not _HAVE_PYARROW:
+            raise ImportError("Parquet reading requires pyarrow: pip install harmonizepy[io]")
+        df = pd.read_parquet(path, engine="pyarrow", use_threads=False)
+    else:
+        sep = "," if ext == ".csv" else "\t"
+        _reject_repeated_sample_names(path, sep)
+        df = _read_delimited(path, sep, index_col=0)
+    df = _to_numpy_dtypes(df)
+    if df.index.name == "":
+        df.index.name = None
+    return df
+
+
 def read_main_data(path: str) -> pd.DataFrame:
     """Read a features x samples data matrix.
 
@@ -222,24 +239,7 @@ def read_main_data(path: str) -> pd.DataFrame:
     >>> df = read_main_data("data.csv")  # doctest: +SKIP
     >>> df = read_main_data("data.parquet")  # doctest: +SKIP
     """
-    ext = Path(path).suffix.lower()
-
-    if ext in (".parquet", ".pq"):
-        if not _HAVE_PYARROW:
-            raise ImportError("Parquet reading requires pyarrow: pip install harmonizepy[io]")
-        df = pd.read_parquet(path, engine="pyarrow", use_threads=False)
-    else:
-        sep = "," if ext == ".csv" else "\t"
-        _reject_repeated_sample_names(path, sep)
-        df = _read_delimited(path, sep, index_col=0)
-
-    df = _to_numpy_dtypes(df)
-
-    df = clean_features(df)
-
-    if df.index.name == "":
-        df.index.name = None
-
+    df = clean_features(_read_data_matrix(path))
     logger.debug(
         "Read data matrix: %d features x %d samples from %s",
         df.shape[0],

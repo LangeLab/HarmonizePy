@@ -138,6 +138,9 @@ harmonizepy data.tsv batch.csv --combat-mode 3 --sort sparsity --block 2 -o corr
 # Validate inputs without running correction
 harmonizepy data.tsv batch.csv --dry-run
 
+# Also write what happened to each feature
+harmonizepy data.tsv batch.csv -o corrected.tsv --report report.tsv
+
 # Config file (TOML, JSON, or YAML with [config] extra)
 harmonizepy data.tsv batch.csv --config run.toml
 ```
