@@ -84,10 +84,12 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
 
-    # -- Positional inputs --------------------------------------------------
     parser.add_argument(
         "data",
-        help="Features x samples matrix (TSV, first column = feature identifiers).",
+        help=(
+            "Features x samples matrix of log-transformed values: TSV (default), CSV "
+            "(.csv), or Parquet (.parquet, .pq), with feature names in the first column."
+        ),
     )
     parser.add_argument(
         "description",
@@ -97,17 +99,17 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
 
-    # -- Output -------------------------------------------------------------
     parser.add_argument(
         "-o",
         "--output",
         default=None,
         metavar="PATH",
         help=(
-            "Output file path. Default: <data_stem>_corrected placed next to the input "
-            "data file, with the extension of --output-format (.tsv by default, .csv, or "
-            ".parquet). Format is inferred from the extension (.tsv, .csv, .parquet/.pq) "
-            "unless --output-format is given."
+            "Output file path. Default: <data_stem>_corrected next to the input data "
+            "file, with the extension of --output-format (.tsv by default, .csv, or "
+            ".parquet). The format follows the extension (.csv, .parquet or .pq; any "
+            "other extension, such as .tsv or .txt, writes TSV) unless --output-format "
+            "is given."
         ),
     )
     parser.add_argument(
@@ -122,15 +124,14 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
 
-    # -- Algorithm ----------------------------------------------------------
     parser.add_argument(
         "--algorithm",
         choices=("ComBat", "limma"),
         default="ComBat",
         help=(
-            "Batch correction algorithm. "
-            "ComBat (default): empirical Bayes shrinkage, robust to small batches. "
-            "limma: linear-model residuals, faster, less aggressive correction."
+            "Correction engine. ComBat (default): location and scale per batch with "
+            "empirical-Bayes shrinkage across features. limma: removes the batch "
+            "means of each feature with a linear model, without shrinkage."
         ),
     )
     parser.add_argument(
@@ -140,11 +141,10 @@ def _build_parser() -> argparse.ArgumentParser:
         default=1,
         metavar="{1,2,3,4}",
         help=(
-            "ComBat variant (ignored when --algorithm limma). "
-            "1 = parametric, location + scale (default, best for most datasets). "
-            "2 = parametric, location only (no variance correction). "
-            "3 = non-parametric, location + scale (use for very small batches, n < 10). "
-            "4 = non-parametric, location only."
+            "ComBat mode (ignored with --algorithm limma): 1 = parametric prior, "
+            "location and scale (default); 2 = parametric prior, location only; "
+            "3 = non-parametric prior, location and scale; 4 = non-parametric prior, "
+            "location only."
         ),
     )
     parser.add_argument(
@@ -153,26 +153,23 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="N",
         help=(
-            "Minimum non-missing values a feature must have in every batch it enters. "
-            "Default: auto, 2 for ComBat modes 1/3 and limma (parametric estimators "
-            "need ≥ 2 observations); 1 for modes 2/4 (non-parametric can handle "
-            "single observations). Override only if you have specific quality requirements."
+            "Minimum observed values a feature needs in a batch for that batch to count "
+            "in its affiliation. Default: 2 for limma and ComBat modes 1 and 3, which "
+            "estimate a variance per batch; 1 for the location-only modes 2 and 4."
         ),
     )
 
-    # -- Sorting and blocking -----------------------------------------------
     parser.add_argument(
         "--sort",
         choices=("sparsity", "jaccard", "seriation"),
         default=None,
         metavar="{sparsity,jaccard,seriation}",
         help=(
-            "Sort batches before blocking so dissimilar batches are not grouped together. "
-            "sparsity: order by missing-value fraction (fastest, good default when sorting). "
-            "jaccard: pairwise feature-overlap similarity (more accurate). "
-            "seriation: optimal leaf ordering via hierarchical clustering (slowest, most "
-            "accurate for many batches). "
-            "No effect when --block is omitted."
+            "Order the batches before blocking so that similar batches share a block. "
+            "sparsity: batches with more present features first. jaccard: a chain of "
+            "batches by the overlap of their present features. seriation: the first "
+            "principal component of the batches' presence vectors. No effect without "
+            "--block."
         ),
     )
     parser.add_argument(
@@ -181,35 +178,31 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="N",
         help=(
-            "Group N consecutive (optionally sorted) batches into one sub-matrix block. "
-            "Must be ≥ 2 and < total number of batches. "
-            "Reduces memory usage and improves correction for datasets with many batches "
-            "(≥ 5). Omit (default) to process all batches together."
+            "Group N neighbouring batches (in --sort order) into one block when forming "
+            "the sub-matrices; the engines still correct each batch. N must be at least "
+            "2 and below the number of batches. Default: each batch is its own block."
         ),
     )
 
-    # -- Feature handling ---------------------------------------------------
     parser.add_argument(
         "--unique-removal",
         action=argparse.BooleanOptionalAction,
         default=True,
         help=(
-            "Rescue features whose batch-presence pattern is unique (a singleton) by "
-            "cropping to the nearest shared pattern before correction. "
-            "Enabled by default; keeps more features in the output. "
-            "Disable only if you want strict pattern matching (--no-unique-removal)."
+            "Move a feature whose affiliation no other feature shares into the largest "
+            "shared affiliation within its own, as HarmonizR's ur = TRUE does; it then "
+            "loses the values of the dropped blocks but is corrected with others. "
+            "On by default; --no-unique-removal leaves such features raw."
         ),
     )
 
-    # -- Workflow helpers ---------------------------------------------------
     parser.add_argument(
         "--summary",
         default=None,
         metavar="PATH",
         help=(
-            "Write a JSON run summary to PATH after completion. "
-            "Contains all resolved parameters, input/output dimensions, and the "
-            "package version, useful for reproducibility and lab notebooks."
+            "Write a JSON run summary to PATH after completion: the resolved "
+            "parameters, input and output dimensions, and the package version."
         ),
     )
     parser.add_argument(
@@ -220,8 +213,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "then exit without running correction. "
             "Exit code 0 if inputs are valid, 1 on a validation error, 2 on a usage error "
             "or a missing input file. Writes no files; cannot be combined with --log-file, "
-            "--summary, or --json. "
-            "Use in pipeline pre-checks to catch problems before committing compute time."
+            "--summary, or --json."
         ),
     )
     parser.add_argument(
@@ -229,11 +221,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="PATH",
         help=(
-            "Path to a TOML, JSON, or YAML (.yaml/.yml) config file. "
-            "Keys map 1:1 to CLI flag names (algorithm, combat_mode, needed_values, "
-            "sort, block, unique_removal, output, output_format, summary). "
-            "CLI flags override config file values; config file overrides built-in defaults. "
-            "YAML requires pyyaml; TOML requires Python ≥ 3.11 or tomli on older versions."
+            "Path to a TOML, JSON, or YAML (.yaml/.yml) config file. Keys are the "
+            "option names with underscores: algorithm, combat_mode, needed_values, "
+            "sort, block, unique_removal, output, output_format, summary. Options on "
+            "the command line override the file, and the file overrides the defaults. "
+            "YAML needs pyyaml (pip install harmonizepy[config])."
         ),
     )
     parser.add_argument(
@@ -241,13 +233,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         dest="json_output",
         help=(
-            "Print the run summary as JSON to stdout after completion. "
-            "For programmatic consumption: pipe to jq or capture in a shell script. "
-            "Suppresses INFO log messages so stdout contains only the JSON object."
+            "Print the run summary as JSON to stdout after completion. INFO log "
+            "messages are held back, so stdout holds only the JSON object."
         ),
     )
 
-    # -- Verbosity ----------------------------------------------------------
     verbosity = parser.add_mutually_exclusive_group()
     verbosity.add_argument(
         "-v",
@@ -262,7 +252,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Suppress all progress messages; only warnings and errors are shown.",
     )
 
-    # -- Log file (optional override / disable) -----------------------------
     parser.add_argument(
         "--log-file",
         default=None,
@@ -280,7 +269,6 @@ def _build_parser() -> argparse.ArgumentParser:
         "written alongside the output with full DEBUG information.",
     )
 
-    # -- Version ------------------------------------------------------------
     parser.add_argument(
         "--version",
         action="version",
@@ -298,17 +286,16 @@ def _build_parser() -> argparse.ArgumentParser:
 def _resolve_output_path(
     data_path: str, output: str | None, output_format: str | None = None
 ) -> str:
-    """Return an output path based on explicit args or CLI defaults.
+    """Return the output path: ``-o`` when given, otherwise a default.
 
-    Without ``-o``, the default path is ``<stem>_corrected`` next to the input
-    data file, with the extension of ``--output-format`` (``.tsv`` by default,
-    ``.csv``, or ``.parquet``).
+    The default is ``<stem>_corrected`` next to the input data file, with the
+    extension of ``--output-format`` (``.tsv`` by default, ``.csv``, or
+    ``.parquet``). The caller's path style is kept: a path with a backslash or
+    a drive letter is treated as a Windows path, any other as a POSIX path, so
+    POSIX paths stay unchanged on Windows.
     """
     if output is not None:
         return output
-    # Preserve the path style supplied by the caller. This keeps POSIX-style
-    # paths stable when the CLI is exercised on Windows, while retaining
-    # native drive/backslash formatting for regular Windows paths.
     path_type = (
         PureWindowsPath
         if "\\" in data_path or re.match(r"[A-Za-z]:([\\/]|$)", data_path)
@@ -341,13 +328,20 @@ def _resolve_log_path(output_path: str) -> str:
 
 
 def _load_config(path: str) -> dict[str, object]:
-    """Load a TOML, JSON, or YAML config file and return the parsed mapping.
+    """Return the mapping in a TOML, JSON, or YAML config file.
 
-    Supported formats
-    -----------------
-    ``.json``         (stdlib, always available)
-    ``.toml``         (stdlib ``tomllib``)
-    ``.yaml``/``.yml`` (requires ``pyyaml``: ``pip install pyyaml``)
+    JSON and TOML are read with the standard library; YAML (``.yaml``,
+    ``.yml``) needs ``pyyaml``.
+
+    Raises
+    ------
+    ValueError
+        If the suffix is not one of these, the file does not parse, or its top
+        level is not a mapping.
+    ImportError
+        If a YAML file is given and ``pyyaml`` is not installed.
+    OSError
+        If the file cannot be read.
     """
     p = Path(path)
     ext = p.suffix.lower()
@@ -363,7 +357,7 @@ def _load_config(path: str) -> dict[str, object]:
 
     elif ext in (".yaml", ".yml"):
         try:
-            import yaml  # type: ignore[import-untyped]
+            import yaml  # type: ignore[import-untyped]  # pyyaml ships no type stubs
         except ImportError as error:
             raise ImportError(
                 "YAML config requires 'pyyaml': pip install harmonizepy[config]"
@@ -379,7 +373,7 @@ def _load_config(path: str) -> dict[str, object]:
 
     if not isinstance(raw, dict):
         raise ValueError(f"Config file must be a TOML/JSON/YAML mapping, got {type(raw).__name__}.")
-    return raw  # type narrowed to dict[Any, Any] by isinstance check above
+    return raw
 
 
 # ---------------------------------------------------------------------------
@@ -492,11 +486,23 @@ def _print_dry_run(
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    """Parse arguments and run the harmonization pipeline."""
+    """Run the ``harmonizepy`` command with *argv*, or ``sys.argv`` when ``None``.
+
+    A config file's values become parser defaults, read with a pre-parser
+    before the full parse, so options given on the command line always win.
+    Shell completion is set up when ``argcomplete`` is installed. A dry run
+    refuses ``--log-file``, ``--summary``, and ``--json``, since it writes
+    nothing those options would shape.
+
+    A correction run writes the corrected matrix, a log file next to it
+    unless ``--no-log`` (or at ``--log-file``), and the summary when
+    ``--summary`` is given; ``--json`` prints the summary to stdout.
+
+    Exit codes: 0 on success; 1 on an input, correction, or output error,
+    reported as one ERROR line; 2 on a usage error or a missing input file.
+    """
     parser = _build_parser()
 
-    # Shell completion: silently skip when argcomplete is not installed.
-    # This is the standard optional-dependency pattern, not a bug swallow.
     try:
         import argcomplete
 
@@ -504,10 +510,6 @@ def main(argv: Sequence[str] | None = None) -> None:
     except ImportError:
         pass
 
-    # -- Config file pre-parse: apply config values as parser defaults ------
-    # Use a lightweight pre-parser so we can call parser.set_defaults() before
-    # the full parse.  CLI flags always win because set_defaults() only affects
-    # the default value, not an explicitly supplied argument.
     _pre = argparse.ArgumentParser(add_help=False)
     _pre.add_argument("--config", default=None)
     _pre_ns, _ = _pre.parse_known_args(argv)
@@ -525,12 +527,9 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     args = parser.parse_args(argv)
 
-    # -- Resolve output path and format -------------------------------------
     output_path = _resolve_output_path(args.data, args.output, args.output_format)
     output_fmt = _infer_format(output_path, args.output_format)
 
-    # A dry run prints its plan and writes nothing, so options that only shape the
-    # files or the summary of a correction run would be ignored without a word.
     if args.dry_run:
         for flag, value in (
             ("--log-file", args.log_file),
@@ -540,7 +539,6 @@ def main(argv: Sequence[str] | None = None) -> None:
             if value:
                 parser.error(f"{flag} cannot be used with --dry-run")
 
-    # -- File existence pre-check (fast fail before any loading) ------------
     if not Path(args.data).is_file():
         parser.error(f"data file not found: '{args.data}'")
     if not Path(args.description).is_file():

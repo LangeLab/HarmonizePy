@@ -67,7 +67,7 @@ The unblocked medium ComBat m3 scenario is the clearest parity caveat in the cur
 
 ## Why R is limited to one core
 
-HarmonizR supports parallelism via `doParallel` and `foreach`. The current benchmark pins it to 1 core because `doParallel` with Unix forked workers and OpenBLAS compete for threads when worker count is increased. This produces worse wall-clock performance and higher memory, not a speedup. The 1-core baseline is the fair and stable reference point for this machine.
+HarmonizR supports parallelism via `doParallel` and `foreach`. The benchmark pins it to one core, as HarmonizePy runs on one thread, so that both are compared on the same resources.
 
 ---
 

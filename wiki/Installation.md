@@ -44,7 +44,7 @@ The `--dev` flag installs pytest, mypy, and ruff alongside the package.
 | `completion` | `pip install harmonizepy[completion]` | Shell tab-completion for the CLI via `argcomplete >= 3.0` |
 | `all` | `pip install harmonizepy[all]` | All three extras above |
 
-Parquet is the recommended output format for large datasets. Install the `io` extra if you plan to use `--output-format parquet` or write `.parquet` files directly from Python.
+Install the `io` extra to read or write Parquet files (`--output-format parquet`, or `.parquet` paths from Python).
 
 ---
 

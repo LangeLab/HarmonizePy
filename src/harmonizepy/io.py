@@ -1,6 +1,10 @@
-"""Input and output helpers.
+"""Reading and writing the data matrix and the batch description.
 
-Read/write HarmonizR-compatible data and batch description files.
+The data matrix is read from tab- or comma-separated text with pandas' C
+parser, or from Parquet with pyarrow, with the first column as feature names,
+as R ``read.table(header = TRUE, row.names = 1)`` reads HarmonizR's input.
+Repeated features are resolved by ``clean_features``. Outputs are written as
+TSV, CSV, or Parquet by suffix.
 """
 
 from __future__ import annotations
@@ -68,24 +72,23 @@ def _read_delimited(path: str, sep: str, *, index_col: int | None) -> pd.DataFra
     return pd.read_csv(path, sep=sep, index_col=index_col, engine="c")
 
 
-def _convert_pyarrow_dtypes(df: pd.DataFrame) -> pd.DataFrame:
-    """Convert pyarrow-backed and nullable columns and the index to NumPy dtypes in-place.
+def _to_numpy_dtypes(df: pd.DataFrame) -> pd.DataFrame:
+    """Convert extension-typed columns and index, as Parquet produces, to NumPy dtypes.
 
-    An integer column with a missing cell becomes float64 with NaN, since NumPy
-    integers cannot hold a missing value; an integer column without one stays
-    int64. A column of blanks becomes float64. Both readers and Parquet then
-    give the same dtypes for the same content.
+    The frame is changed in place and returned. A column of blanks becomes
+    float64; an integer column with a missing cell becomes float64 with NaN,
+    since NumPy integers cannot hold a missing value, and without one it stays
+    int64; other columns become float64 or text. Text files and Parquet files
+    with the same content then give the same dtypes.
     """
     if not _HAVE_PYARROW:
         return df
     from pandas import ArrowDtype
 
-    # Columns
     ext_cols = [col for col in df.columns if pd.api.types.is_extension_array_dtype(df[col].dtype)]
     for col in ext_cols:
         dtype = df[col].dtype
         if df[col].isna().all():
-            # A column of blanks has no type of its own (pyarrow reads it as null).
             df[col] = df[col].astype(float)
         elif pd.api.types.is_integer_dtype(dtype):
             df[col] = df[col].astype(float if df[col].isna().any() else int)
@@ -94,7 +97,6 @@ def _convert_pyarrow_dtypes(df: pd.DataFrame) -> pd.DataFrame:
         else:
             df[col] = df[col].astype(str)
 
-    # Index
     if isinstance(df.index.dtype, ArrowDtype):
         df.index = df.index.astype(str)
 
@@ -114,7 +116,14 @@ def clean_features(df: pd.DataFrame) -> pd.DataFrame:
     row, with missing cells in the same places; the repeat is removed and logged
     at INFO level. Features with different names are kept even when their values
     are identical. A name that appears more than once with different values
-    raises ``ValueError``. The input frame is not changed.
+    raises ``ValueError``.
+
+    The rows that share a name are checked in one pass: each is compared with
+    the first row of its name, missing cells equal to missing cells. For
+    frames that are not all numeric, exact repeats of name and values are
+    dropped and any name left twice has two value sets.
+
+    The input frame is not changed; when no name repeats, it is returned as is.
 
     Parameters
     ----------
@@ -135,8 +144,6 @@ def clean_features(df: pd.DataFrame) -> pd.DataFrame:
     if not has_repeated_name.any():
         return df
 
-    # One pass over the rows that share a name: compare each row with the first
-    # row of the same name, with missing cells equal to missing cells.
     shared = df[has_repeated_name]
     codes, _ = pd.factorize(shared.index, use_na_sentinel=False)
     if all(pd.api.types.is_numeric_dtype(dtype) for dtype in shared.dtypes):
@@ -146,9 +153,8 @@ def clean_features(df: pd.DataFrame) -> pd.DataFrame:
         same = (values == reference) | (np.isnan(values) & np.isnan(reference))
         differs = ~same.all(axis=1)
     else:
-        # Mixed dtypes: drop exact repeats of (name code, values); a code left twice
-        # has two value sets. Columns are renamed to positions so that the code
-        # column, labelled -1, cannot collide with a sample name.
+        # Columns renamed to positions so the code column, -1, cannot collide
+        # with a sample name.
         keyed = shared.set_axis(range(shared.shape[1]), axis=1)
         keyed[-1] = codes
         distinct = keyed.drop_duplicates()
@@ -182,7 +188,9 @@ def read_main_data(path: str) -> pd.DataFrame:
 
     The file must have a header row and use the first column as row names
     (feature identifiers), matching R
-    ``read.table(sep="\\t", header=TRUE, row.names=1)``.
+    ``read.table(sep="\\t", header=TRUE, row.names=1)``. Blank cells and the
+    usual missing-value markers (``NA``, ``NaN``, ``null``, ``N/A``, ``#N/A``,
+    ``None``) are read as missing. An empty index name is set to ``None``.
 
     Parameters
     ----------
@@ -225,12 +233,10 @@ def read_main_data(path: str) -> pd.DataFrame:
         _reject_repeated_sample_names(path, sep)
         df = _read_delimited(path, sep, index_col=0)
 
-    df = _convert_pyarrow_dtypes(df)
+    df = _to_numpy_dtypes(df)
 
     df = clean_features(df)
 
-    # Normalise index name: pyarrow engine may set it to empty string
-    # where the default C parser leaves it as None.
     if df.index.name == "":
         df.index.name = None
 
@@ -257,7 +263,9 @@ def read_description(path: str) -> pd.DataFrame:
     Returns
     -------
     DataFrame
-        Batch description with columns ID, sample, batch.
+        The file's columns as read, one row per sample, with a default
+        integer index. ``harmonize()`` checks them with
+        ``validate_description``; this function does not.
 
     Raises
     ------
@@ -269,7 +277,7 @@ def read_description(path: str) -> pd.DataFrame:
     >>> from harmonizepy.io import read_description
     >>> desc = read_description("batch.csv")  # doctest: +SKIP
     """
-    desc = _convert_pyarrow_dtypes(_read_delimited(path, ",", index_col=None))
+    desc = _to_numpy_dtypes(_read_delimited(path, ",", index_col=None))
 
     logger.debug(
         "Read description: %d samples, %d columns from %s", desc.shape[0], desc.shape[1], path
@@ -305,7 +313,7 @@ def write_output(df: pd.DataFrame, path: str) -> None:
     >>> import pandas as pd
     >>> from harmonizepy.io import write_output
     >>> df = pd.DataFrame({"s1": [1.0, 2.0]}, index=["f1", "f2"])
-    >>> write_output(df, "/tmp/out.tsv")  # doctest: +SKIP
+    >>> write_output(df, "corrected.tsv")  # doctest: +SKIP
     """
     write_frame(df, path, format_from_suffix(path))
 

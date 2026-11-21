@@ -1,6 +1,6 @@
 """Integration tests for the full HarmonizePy pipeline.
 
-Tests the complete spotting → splitting → adjust → concat flow via
+Tests the complete spotting -> splitting -> adjust -> concat flow via
 ``harmonize()`` and validates against R HarmonizR fixtures.
 """
 

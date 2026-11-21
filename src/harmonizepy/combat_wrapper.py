@@ -1,14 +1,11 @@
-"""ComBat integration layer.
-
-Thin public API that maps HarmonizR-style integer modes (1-4) to the
-underlying ``harmonizepy.combat.combat`` parameters.
-"""
+"""ComBat on a DataFrame, with HarmonizR's integer modes 1 to 4."""
 
 from __future__ import annotations
 
 import logging
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 
 from .combat import COMBAT_MODES, combat
@@ -19,11 +16,11 @@ logger = logging.getLogger(__name__)
 
 def adjust_combat(
     sub_df: pd.DataFrame,
-    batch_labels: np.ndarray,
+    batch_labels: npt.ArrayLike,
     mode: int = 1,
     ref_batch: int | None = None,
 ) -> pd.DataFrame:
-    """Apply ComBat batch correction to a complete sub-matrix.
+    """Correct a features x samples DataFrame with ComBat in one of modes 1 to 4.
 
     Parameters
     ----------

@@ -6,7 +6,7 @@ Sections
 2. TestNonSingletonUnchanged: non-singleton and empty tuples are not modified
 3. TestMinimalCropping: fewest batches removed (greedy largest-first)
 4. TestEdgeCases: all unique, single feature, already shared
-5. TestHelperFunctions: _find_best_crop
+5. TestFindBestCrop: _find_best_crop
 """
 
 from __future__ import annotations
@@ -226,7 +226,7 @@ class TestEdgeCases:
 
 
 # ---------------------------------------------------------------------------
-# 5. TestHelperFunctions
+# 5. TestFindBestCrop
 # ---------------------------------------------------------------------------
 
 

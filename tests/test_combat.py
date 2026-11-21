@@ -66,7 +66,7 @@ def _int_eprior_reference(
     g_hat: np.ndarray,
     d_hat: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Reference implementation matching the pre-optimization broadcast formula."""
+    """Per-block reference for ``_int_eprior``: the expanded likelihood, with broadcasting."""
     n_genes, _ = s_data.shape
     g_star = np.empty(n_genes)
     d_star = np.empty(n_genes)
@@ -155,7 +155,7 @@ def _it_sol_reference(
     conv: float = 1e-4,
     max_iter: int = 1_000_000,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Reference `_it_sol` using the pre-optimization iteration structure."""
+    """Reference ``_it_sol``: one batch, a fresh array per iteration."""
     nan_mask = np.isnan(s_data)
     all_nan = nan_mask.all(axis=1)
     active = ~all_nan
@@ -281,7 +281,7 @@ class TestEdgeCases:
         assert "did not converge" not in caplog.text
 
     def test_it_sol_matches_reference_on_finite_nan_mixture(self):
-        """Optimized `_it_sol` must match the pre-optimization iteration math.
+        """``_it_sol`` matches the one-batch reference on data with missing cells.
 
         Failure condition: buffer reuse or in-place updates change the fixed
         point reached by the parametric EB solver on mixed-observation data.
@@ -321,10 +321,10 @@ class TestEdgeCases:
         np.testing.assert_allclose(result_d, expected_d, rtol=1e-12, atol=1e-12, equal_nan=True)
 
     def test_int_eprior_matches_reference_formula(self):
-        """Optimized `_int_eprior` must match the broadcast reference math.
+        """``_int_eprior`` matches the broadcast reference on ordinary data.
 
-        Failure condition: the binomial-form optimization changes the
-        posterior estimates relative to the original likelihood formula.
+        Failure condition: the block computation changes the posterior estimates
+        relative to the reference likelihood.
 
         Tolerances: rtol=1e-12/atol=1e-12 because both implementations
         evaluate the same formula in float64 with only algebraic

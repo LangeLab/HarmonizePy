@@ -105,7 +105,7 @@ class TestSplittingBasic:
         assert result.shape == data.shape
 
 
-class TestSplittingNanAudit:
+class TestPerCellMissingValues:
     def test_per_cell_nan_passed_to_combat(self, monkeypatch: Any) -> None:
         """Sub-DataFrames with per-cell NaN are passed to combat, which handles it.
 

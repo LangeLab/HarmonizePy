@@ -1,15 +1,9 @@
-"""Batch blocking: group neighboring batches into superblocks.
+"""Blocks: groups of neighbouring batches used to form the sub-matrices.
 
-Blocking collapses *N* consecutive batches into a single block ID for
-the purpose of dissection (deciding which samples enter which sub-matrix
-during splitting). It is purely a indexing operation. The original
-``batch_list`` is kept unchanged and still drives the ComBat/limma
-adjustment step.
-
-When no blocking is requested, ``block_list == batch_list`` and no code
-in this module is needed.
-
-This mirrors R ``HarmonizR:::blocking``.
+A block label replaces the batch label only when affiliations and
+sub-matrices are formed; the engines still correct each original batch.
+Without blocking, the block list is the batch list. This follows R
+``HarmonizR:::blocking``.
 """
 
 from __future__ import annotations
@@ -26,47 +20,40 @@ def build_block_list(
     batch_list: npt.NDArray[np.integer],
     block_size: int,
 ) -> npt.NDArray[np.integer]:
-    """Map each sample to a block ID by grouping neighbouring batches.
+    """Return the block label of each sample, grouping neighbouring batches.
 
-    Batches appear in the order they are first encountered in
-    *batch_list*.  Every *block_size* consecutive unique batches are
-    assigned the same block ID.  If the total number of unique batches is
-    not evenly divisible by *block_size*, the trailing remainder batches
-    form a smaller final block.
-
-    The returned array has the same length and dtype as *batch_list* and
-    is 1-indexed (block IDs start at 1) to match R's convention.
+    Batches are taken in order of first appearance, and every *block_size*
+    of them share a block. When the number of batches is not a multiple of
+    *block_size*, the last block is smaller. Block labels start at 1, as in R.
 
     Parameters
     ----------
     batch_list : ndarray, shape (n_samples,)
-        Integer batch label per sample.  The unique values, taken in
-        first-appearance order, define the batch sequence that is
-        partitioned into blocks.
+        Batch label of each sample.
     block_size : int
-        Number of consecutive unique batches per block.  Must be >= 2
-        and < the number of unique batches (a block size >= n_batches
-        would merge all batches into one block, making adjustments
-        impossible).
+        Batches per block: at least 2 and fewer than the number of batches,
+        since one block holding every batch would leave nothing to correct.
 
     Returns
     -------
-    ndarray, shape (n_samples,), dtype same as *batch_list*
-        Block label per sample.
+    ndarray, shape (n_samples,)
+        Block label of each sample, with the dtype of *batch_list*.
 
     Raises
     ------
     ValueError
-        If *block_size* < 2 or *block_size* >= number of unique batches.
+        If *block_size* is below 2 or not below the number of batches.
 
     Examples
     --------
+    With four batches and blocks of three, the fourth batch forms a block alone:
+
     >>> import numpy as np
     >>> from harmonizepy.blocking import build_block_list
     >>> batch = np.array([1, 1, 2, 2, 3, 3, 4, 4])
     >>> build_block_list(batch, block_size=2)
     array([1, 1, 1, 1, 2, 2, 2, 2])
-    >>> build_block_list(batch, block_size=3)  # remainder: batch 4 alone
+    >>> build_block_list(batch, block_size=3)
     array([1, 1, 1, 1, 1, 1, 2, 2])
     """
     batch_arr = np.asarray(batch_list)
@@ -104,6 +91,6 @@ def build_block_list(
 # ---------------------------------------------------------------------------
 
 
-def _unique_ordered(arr: npt.NDArray[np.integer]) -> list[int]:
-    """Return unique values from *arr* in first-appearance order."""
-    return list(dict.fromkeys(int(v) for v in arr.tolist()))
+def _unique_ordered(arr: npt.NDArray[np.generic]) -> list[object]:
+    """Return the distinct values of *arr* in order of first appearance."""
+    return list(dict.fromkeys(arr.tolist()))

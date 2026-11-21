@@ -1,4 +1,4 @@
-"""Shared data structures for the HarmonizePy pipeline."""
+"""The run configuration and the array type shared by the engines."""
 
 from __future__ import annotations
 
@@ -15,34 +15,35 @@ FloatArray = npt.NDArray[np.floating[Any]]
 
 @dataclass(frozen=True, slots=True)
 class HarmonizeConfig:
-    """Configuration for a single harmonization run.
+    """Settings for one run of ``harmonize()``, checked when created.
+
+    The fields have the meaning and defaults of the ``harmonize()`` arguments
+    of similar name.
 
     Parameters
     ----------
-    algorithm : str
-        ``"ComBat"`` or ``"limma"``.
-    combat_mode : int
-        ComBat mode 1-4 (ignored when *algorithm* is ``"limma"``).
+    algorithm : {"ComBat", "limma"}
+        Correction engine.
+    combat_mode : {1, 2, 3, 4}
+        ComBat mode; ignored for limma.
     needed_values : int or None
-        Minimum non-missing values per batch for a feature to be included.
-        ``None`` (default) auto-selects: 2 for modes 1, 3 and limma; 1 for
-        modes 2, 4.  Mirrors the *needed_values* default in ``harmonize``.
-    sort_strategy : str or None
-        Batch sorting strategy: ``"sparsity"``, ``"jaccard"``,
-        ``"seriation"``, or ``None`` (no sort).
+        Minimum observed values per batch; ``None`` chooses 2 for limma and
+        modes 1 and 3, and 1 for modes 2 and 4.
+    sort_strategy : {"sparsity", "jaccard", "seriation"} or None
+        Batch order used to form blocks (``harmonize()``'s ``sort``).
     block_size : int or None
-        Number of consecutive batches to group into one block.  Must be
-        >= 2 and < total number of unique batches.  ``None`` disables
-        blocking.
+        Batches per block (``harmonize()``'s ``block``). Whether it is below
+        the number of batches is checked when the data are read.
     unique_removal : bool
-        When ``True`` (default), rescue singleton features whose batch
-        combination is unique by cropping to the nearest shared pattern.
+        Whether a feature with an affiliation of its own is moved into a
+        shared one.
 
     Raises
     ------
     ValueError
-        On invalid *algorithm*, *combat_mode*, *needed_values*,
-        *sort_strategy*, or *block_size*.
+        On an unknown algorithm, ComBat mode, or sort strategy, a
+        ``needed_values`` below 1, or a block size that is not an integer of at
+        least 2.
     TypeError
         If *unique_removal* is not a bool.
 

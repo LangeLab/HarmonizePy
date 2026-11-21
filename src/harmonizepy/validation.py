@@ -1,7 +1,11 @@
-"""Centralised input validation for HarmonizePy.
+"""Checks on the inputs of a run and of the engines.
 
-Every public-facing validation check lives here so error messages are
-consistent and the logic is not duplicated across modules.
+The data matrix, the batch description and its column rule, batch labels,
+the ComBat mode, the reference batch, and the arguments of ``harmonize()``
+and ``HarmonizeConfig`` are checked here, so that each rule has one place and
+one message. ``build_block_list`` and ``sort_batches`` repeat their argument
+checks because they can be called on their own. ``check_input_scale`` warns
+when the data do not look log-transformed.
 """
 
 from __future__ import annotations
@@ -16,6 +20,13 @@ import pandas as pd
 
 if TYPE_CHECKING:
     from .types import FloatArray
+
+# Every integer up to 2**53 is exact in float64; a float label at or beyond it
+# may already have been rounded to a neighbouring integer.
+_MAX_FLOAT_LABEL = 2.0**53
+_VALID_SORT_STRATEGIES: frozenset[str] = frozenset({"sparsity", "jaccard", "seriation"})
+_RAW_SCALE_P95 = 100.0
+_SCALE_SAMPLE = 100_000
 
 
 def _reject_infinite(
@@ -33,7 +44,7 @@ def _reject_infinite(
 
 
 def validate_data_matrix(df: pd.DataFrame) -> None:
-    """Check that *df* is a valid features-x-samples matrix.
+    """Check that *df* is a features x samples matrix the engines can use.
 
     Parameters
     ----------
@@ -51,7 +62,7 @@ def validate_data_matrix(df: pd.DataFrame) -> None:
     >>> import pandas as pd
     >>> from harmonizepy.validation import validate_data_matrix
     >>> df = pd.DataFrame({"s1": [1.0, 2.0], "s2": [3.0, 4.0]})
-    >>> validate_data_matrix(df)  # no error
+    >>> validate_data_matrix(df)
     """
     dups = df.index[df.index.duplicated(keep=False)].unique().tolist()
     if dups:
@@ -108,7 +119,7 @@ def validate_description(desc: pd.DataFrame, data: pd.DataFrame) -> None:
     >>> from harmonizepy.validation import validate_description
     >>> data = pd.DataFrame({"s1": [1.0], "s2": [2.0]})
     >>> desc = pd.DataFrame({"ID": ["s1", "s2"], "sample": [1, 2], "batch": [1, 2]})
-    >>> validate_description(desc, data)  # no error
+    >>> validate_description(desc, data)
     """
     ids, batches = _description_columns(desc)
     id_series = ids.astype(str)
@@ -168,11 +179,6 @@ def _description_columns(desc: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
             "Name the batch column 'batch'."
         )
     return desc[id_name], desc[batch_name]
-
-
-# Every integer up to 2**53 is exact in float64; a float label at or beyond it
-# may already have been rounded to a neighbouring integer.
-_MAX_FLOAT_LABEL = 2.0**53
 
 
 def _not_whole(values: npt.NDArray[np.float64]) -> npt.NDArray[np.bool_]:
@@ -368,9 +374,6 @@ def sample_batch_map(desc: pd.DataFrame) -> dict[str, int]:
     return dict(zip(id_series, _integer_labels(batches).tolist(), strict=True))
 
 
-_VALID_SORT_STRATEGIES: frozenset[str] = frozenset({"sparsity", "jaccard", "seriation"})
-
-
 def validate_core_args(
     algorithm: str,
     combat_mode: int,
@@ -440,7 +443,7 @@ def validate_harmonize_args(
         Block size; must be ``None`` or an integer >= 2.  If *n_batches*
         is provided it must also be strictly less than *n_batches*.
     unique_removal : bool
-        Singleton-rescue toggle; must be a ``bool``.
+        Whether unique removal runs; must be a ``bool``.
     n_batches : int or None
         Number of unique batches in the data.  When provided, validates
         ``block_size < n_batches``.
@@ -456,9 +459,9 @@ def validate_harmonize_args(
     Examples
     --------
     >>> from harmonizepy.validation import validate_harmonize_args
-    >>> validate_harmonize_args("ComBat", 2, 2)  # no error
+    >>> validate_harmonize_args("ComBat", 2, 2)
     >>> validate_harmonize_args("ComBat", 1, 2, sort_strategy="sparsity",
-    ...                         block_size=2, n_batches=4)  # no error
+    ...                         block_size=2, n_batches=4)
     """
     validate_core_args(
         algorithm, combat_mode, needed_values, sort_strategy, block_size, unique_removal
@@ -475,10 +478,6 @@ class InputScaleWarning(UserWarning):
 
     Silence it with ``warnings.filterwarnings("ignore", category=InputScaleWarning)``.
     """
-
-
-_RAW_SCALE_P95 = 100.0
-_SCALE_SAMPLE = 100_000
 
 
 def check_input_scale(values: FloatArray) -> None:

@@ -52,10 +52,10 @@ The default is ComBat mode 1 (parametric, location + scale). This handles the ma
 # Default: ComBat mode 1
 result = harmonize(data, batch)
 
-# limma: faster, linear-model correction. Good for a quick check or pre-scaled data.
+# limma: removes each feature's batch means with a linear model, without shrinkage.
 result = harmonize(data, batch, algorithm="limma")
 
-# ComBat mode 3: non-parametric. Better for small batches (fewer than ~10 samples per batch).
+# ComBat mode 3: non-parametric prior, location and scale.
 result = harmonize(data, batch, combat_mode=3)
 ```
 
@@ -65,7 +65,7 @@ See [[Algorithms]] for a full comparison of all modes and guidance on when to sw
 
 ## Datasets with many batches: add sorting and blocking
 
-For datasets with 5 or more batches, adding `sort` and `block` improves both runtime and correction quality:
+With many batches and much missingness, features spread over many small groups. Sorting and blocking form fewer, larger groups:
 
 ```python
 result = harmonize(
@@ -76,7 +76,7 @@ result = harmonize(
 )
 ```
 
-`sort="sparsity"` reorders batches so that those with similar completeness sit next to each other. `block=2` then groups every 2 consecutive batches into a single sub-matrix before running adjustment. This reduces peak memory and can improve correction stability when individual batches are small.
+`sort="sparsity"` orders batches by the number of features present in them. `block=2` then groups every 2 neighbouring batches when forming sub-matrices; a feature needs enough values in both batches of a block for the block to count. Compare the sub-matrix count of a dry run with and without blocking before choosing.
 
 See [[Pipeline]] for a conceptual explanation of what sorting and blocking do.
 

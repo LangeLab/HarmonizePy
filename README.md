@@ -51,9 +51,9 @@ HarmonizePy is a pure-Python batch-effect correction package for omics data. The
 **HarmonizR-compatible pipeline (feature parity with v1.10.0):**
 
 - Structural missingness handled automatically: features are grouped by observed batch support, corrected in compatible subsets, and reassembled into the original matrix shape.
-- Batch sorting: reorder batches so similar ones become neighbours. Three strategies: `"sparsity"` (completeness-based, fastest), `"jaccard"` (pairwise feature-overlap similarity), `"seriation"` (PCA-based ordering, more accurate for many batches).
-- Batch blocking: group `block=N` consecutive (optionally sorted) batches into a single sub-matrix, reducing peak memory and improving adjustment quality for datasets with many batches.
-- Unique-combination removal (`unique_removal=True`, default): features whose batch-presence pattern is unique across the dataset get rescued. They would otherwise form a singleton sub-matrix and be dropped. The algorithm crops their affiliation to the nearest shared pattern, trading some non-missing data for inclusion in a group adjustment.
+- Batch sorting: reorder batches so that similar ones become neighbours before blocking. Three strategies: `"sparsity"` (number of features present), `"jaccard"` (overlap of present features), `"seriation"` (first principal component of the presence vectors).
+- Batch blocking: group `block=N` neighbouring batches when forming sub-matrices. A feature needs enough values in every batch of a block for the block to count, so blocking trades observed values for fewer, larger groups. The engines still correct each batch.
+- Unique-combination removal (`unique_removal=True`, default): a feature whose batch-presence pattern no other feature shares would form a group of one and keep its raw values. Its affiliation is cropped to the largest shared pattern within its own, trading the values in the dropped blocks for a group correction.
 
 **Validation against R reference workflows:** the package is tested against `sva::ComBat`, `limma::removeBatchEffect`, and HarmonizR v1.10.0 reference outputs. Known edge-case differences in retention policy are documented in the [R Compatibility](https://github.com/LangeLab/HarmonizePy/wiki/R-Compatibility) wiki page. Runtime benchmarks across six datasets are in [Benchmarks](https://github.com/LangeLab/HarmonizePy/wiki/Benchmarks).
 
@@ -106,7 +106,7 @@ The low-level engines handle missing observations per feature and preserve NaN p
 
 ### Input format
 
-- **data**: features × samples matrix of log-transformed values, usually log2; HarmonizePy does not transform them, and warns with `InputScaleWarning` when the values look untransformed. For TSV/CSV files, the first column must contain feature names (read as the DataFrame index). When passing a DataFrame directly, feature names must be in `DataFrame.index` and sample names in `DataFrame.columns`.
+- **data**: features x samples matrix of log-transformed values, usually log2; HarmonizePy does not transform them, and warns with `InputScaleWarning` when the values look untransformed. For TSV/CSV files, the first column must contain feature names (read as the DataFrame index). When passing a DataFrame directly, feature names must be in `DataFrame.index` and sample names in `DataFrame.columns`.
 - **description**: CSV/DataFrame with columns `ID` (sample names matching data columns), `sample` (integer), `batch` (integer batch label).
 
 ### Parameter reference

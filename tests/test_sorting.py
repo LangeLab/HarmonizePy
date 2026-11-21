@@ -66,7 +66,7 @@ def _make_skewed_dataset() -> tuple[pd.DataFrame, np.ndarray]:
     Batch 3: 5 features present (all NaN in the other 15).
 
     With needed_values=2 and n_per_batch=3, presence counts are 20, 10, 5.
-    Sparsity sort descending → [batch1, batch2, batch3] (most complete first).
+    Sparsity sort descending gives [batch1, batch2, batch3] (most complete first).
     """
     rng = np.random.default_rng(42)
     n_features = 20
@@ -395,8 +395,8 @@ class TestValidation:
 # ---------------------------------------------------------------------------
 
 
-class TestHelperFunctions:
-    """Direct unit tests for internal helper functions."""
+class TestOrderingFunctions:
+    """The batch orderings and the column permutation, called directly."""
 
     def test_sparsity_order_descending(self):
         """_sparsity_order returns batches in descending completeness.

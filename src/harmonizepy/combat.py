@@ -1,9 +1,8 @@
-"""Empirical Bayes batch-effect correction (ComBat).
+"""Empirical-Bayes batch-effect correction (ComBat) in NumPy.
 
-Pure NumPy re-implementation of the Johnson, Li & Rabinovic (2007)
-algorithm [1]_ with full vectorisation and no legacy ``np.matrix`` usage.
-
-Four modes are supported, matching R ``sva::ComBat`` conventions:
+The method of Johnson, Li and Rabinovic (2007) [1]_, following R
+``sva::ComBat`` 3.60.0 [2]_, including its handling of missing cells, in which
+each feature is estimated on its observed cells. Four modes, as in HarmonizR:
 
 ====  =============  ===========
 Mode  ``par_prior``  ``mean_only``
@@ -16,15 +15,12 @@ Mode  ``par_prior``  ``mean_only``
 
 References
 ----------
-.. [1] Johnson WE, Li C, Rabinovic A. "Adjusting batch effects in
-    microarray expression data using empirical Bayes methods."
-    *Biostatistics* 8(1):118-127, 2007.
-
-Acknowledgements
-----------------
-Algorithm logic cross-referenced against:
-- R ``sva::ComBat``  (Leek JT et al., Bioconductor)
-- ``inmoose.pycombat`` (Behdenna A et al., GPL-3)
+.. [1] Johnson WE, Li C, Rabinovic A. Adjusting batch effects in microarray
+    expression data using empirical Bayes methods. Biostatistics
+    8(1):118-127, 2007. doi:10.1093/biostatistics/kxj037
+.. [2] Leek JT, Johnson WE, Parker HS, et al. sva: Surrogate Variable Analysis.
+    R package, Bioconductor. The ``inmoose`` Python port (Behdenna A et al.)
+    was also consulted.
 """
 
 from __future__ import annotations
@@ -40,18 +36,17 @@ from .validation import batch_codes, validate_engine_input, validate_ref_batch
 
 logger = logging.getLogger(__name__)
 
-# Lower bound applied to the pooled variance and to the batch scale estimates,
-# so that a zero variance never divides. A feature whose variance falls below it
-# is not estimated from its data, so it is left raw instead (see combat()).
+# Lower bound on the pooled variance and the batch scale estimates, so that a
+# zero variance never divides; features below it are left raw by combat().
 _VARIANCE_FLOOR = 1e-12
 
 # Target features per block of the non-parametric prior. A block holds one row
-# per target and one column per feature, so a block of 64 rows at 32000
-# features (16 MiB) falls out of the CPU cache; 16 rows keep it in cache.
+# per target and one column per feature; 16 rows took about half the time of
+# 64 at 32000 features and the same at 8000, with identical output.
 _EPRIOR_BLOCK_ROWS = 16
 
 # ---------------------------------------------------------------------------
-# Type aliases
+# Grouping records
 # ---------------------------------------------------------------------------
 
 
@@ -70,7 +65,7 @@ class ValidRowGroups:
 
 @dataclass(frozen=True)
 class _GroupedBatchDesignLayouts:
-    """Precomputed reduced one-hot layouts for grouped Beta.NA."""
+    """Per group of rows, the one-hot design over its observed samples and their counts."""
 
     reduced_designs: tuple[FloatArray | None, ...]
     counts: tuple[FloatArray | None, ...]
@@ -339,26 +334,27 @@ def _int_eprior(
     weights are not finite falls back to equal weights over the other features.
     The weighted sums use one matrix product per block.
 
-    NaN-safe: each gene uses only its non-NaN entries for the likelihood,
-    matching R sva::ComBat's per-gene handling where ``x <- sdat[i, !is.na(sdat[i, ])]``
-    and ``n <- length(x)``.  Likelihood for
-    gene *i* uses gene *i*'s non-NA count *n_i*, not the global batch
-    size.
+    Each target uses its own observed cells and their count, as R does with
+    ``x <- sdat[i, !is.na(sdat[i, ])]``.
 
     Parameters
     ----------
-    s_data : (n_genes, n_batch_samples)
-    g_hat, d_hat : (n_genes,)
+    s_data : ndarray, shape (n_features, n_batch_samples)
+        Standardised data of the batch; missing cells are allowed.
+    g_hat, d_hat : ndarray, shape (n_features,)
+        Location and scale estimates of the batch.
 
     Returns
     -------
-    gamma_star, delta_star : (n_genes,)
+    gamma_star, delta_star : ndarray, shape (n_features,)
+        Posterior estimates; a feature with no observed cell keeps its input
+        estimates.
     """
-    n_genes, _ = s_data.shape
+    n_features, _ = s_data.shape
     g_star = g_hat.copy()
     d_star = d_hat.copy()
 
-    if n_genes <= 1:
+    if n_features <= 1:
         return g_star, d_star
 
     d = np.maximum(d_hat, _VARIANCE_FLOOR)
@@ -369,9 +365,9 @@ def _int_eprior(
     sum_sq = (resid * resid).sum(axis=1)
     half_inv_d = 0.5 / d
     half_log_two_pi_d = 0.5 * np.log(2.0 * np.pi * d)
-    support = np.column_stack([g_hat, d, np.ones(n_genes)])
+    support = np.column_stack([g_hat, d, np.ones(n_features)])
     targets = np.flatnonzero(n_obs >= 1.0)
-    buffer = np.empty((_EPRIOR_BLOCK_ROWS, n_genes))
+    buffer = np.empty((_EPRIOR_BLOCK_ROWS, n_features))
 
     for start in range(0, targets.size, _EPRIOR_BLOCK_ROWS):
         rows = targets[start : start + _EPRIOR_BLOCK_ROWS]
@@ -530,12 +526,11 @@ def combat(
     mean_only: bool = False,
     ref_batch: int | None = None,
 ) -> FloatArray:
-    """Apply ComBat batch-effect correction.
+    """Correct batch effects with ComBat.
 
-    Per-cell NaN is handled per-feature by omitting NaN observations from
-    OLS, variance, and mean computations (matching R ``sva::ComBat``
-    v3.60.0's ``Beta.NA`` approach).  NaN stays in the same positions in
-    the output.
+    Missing cells are allowed: each feature's batch means and variances use
+    its observed cells only, as R ``sva::ComBat`` 3.60.0 does (``Beta.NA``),
+    and missing cells stay missing in the output.
 
     Some features are returned with their raw values, and the run log counts
     them:
@@ -560,23 +555,25 @@ def combat(
 
     Parameters
     ----------
-    data : ndarray, shape (n_features, n_samples)
-        Expression / abundance matrix.  Per-cell NaN is allowed.
+    data : array_like, shape (n_features, n_samples)
+        Log-scale values; missing cells are allowed. Not modified.
     batch : array_like, shape (n_samples,)
         Batch label per sample: whole numbers, one batch per distinct value.
     par_prior : bool
-        ``True`` for parametric EB (modes 1/2).
-        ``False`` for non-parametric EB (modes 3/4).
+        Parametric empirical-Bayes priors (modes 1 and 2) when ``True``,
+        non-parametric (modes 3 and 4) when ``False``.
     mean_only : bool
-        ``True`` to correct location only, leave scale untouched (modes 2/4).
+        Correct location only and leave the scale unchanged (modes 2 and 4).
+        A batch with a single sample makes the fit location-only whatever this
+        value is.
     ref_batch : int or None
-        If given, this batch is treated as the reference and is not adjusted.
+        A batch left unchanged, to which the others are adjusted. It needs at
+        least two samples.
 
     Returns
     -------
     ndarray, shape (n_features, n_samples)
-        Batch-corrected data.  NaN positions from input are preserved
-        in the output.
+        The corrected values, as a new array.
 
     Raises
     ------
@@ -590,10 +587,20 @@ def combat(
     >>> import numpy as np
     >>> from harmonizepy import combat
     >>> data = np.random.default_rng(0).normal(10, 2, (50, 12))
-    >>> batch = np.array([0]*4 + [1]*4 + [2]*4)
+    >>> batch = np.array([0] * 4 + [1] * 4 + [2] * 4)
     >>> corrected = combat(data, batch)
     >>> corrected.shape
     (50, 12)
+
+    Notes
+    -----
+    As in ``sva::ComBat``, the pooled variance is the mean square of the
+    residuals when the matrix has no missing cell and their sample variance
+    when it has any, so one missing cell multiplies every feature's pooled
+    variance by n / (n - 1), and its standard deviation by the square root of
+    that. The fit is logged at DEBUG level, features left raw at INFO level,
+    and a batch whose solver does not converge at WARNING level, on the
+    ``harmonizepy.combat`` logger.
     """
     data = np.asarray(data, dtype=np.float64)
     batch_int = batch_codes(batch)
@@ -759,12 +766,12 @@ def _beta_na_grouped_batch_design(
     valid_row_groups: ValidRowGroups,
     grouped_design_layouts: _GroupedBatchDesignLayouts | None = None,
 ) -> FloatArray:
-    """Grouped Beta.NA specialized for the one-hot batch design.
+    """Return each feature's batch means over its observed cells (sva's ``Beta.NA``).
 
-    `_combat_nan()` always uses the cached one-hot batch design from
-    `_make_design()`. For that design, the least-squares coefficient for each
-    batch is just the mean over the observed samples in that batch, with the
-    minimum-norm solution `0` for batches with no observed values.
+    With the one-hot batch design, the least-squares coefficient of a batch is
+    the mean of the feature's observed values in it; a batch with no observed
+    value gets 0, the minimum-norm solution. Rows with the same pattern of
+    observed cells are computed together. Shape (n_batches, n_features).
     """
     n_features, _ = data.shape
     betas = np.empty((design.shape[0], n_features), dtype=np.float64)
@@ -805,11 +812,10 @@ def _row_var_nan_grouped(
     data: FloatArray,
     valid_row_groups: ValidRowGroups | None = None,
 ) -> FloatArray:
-    """Row-wise sample variance grouped by identical valid-observation masks.
+    """Return each row's sample variance (``ddof=1``) over its observed cells.
 
-    For a fixed validity mask, rows share the same reduced submatrix.
-    Compute `ddof=1` variances on that reduced view in one batched pass
-    while preserving the existing 0/1-valid-entry handling.
+    Rows with the same pattern of observed cells are computed together. A row
+    with at most one observed cell gets 1.0.
     """
     n_features, _ = data.shape
     variances = np.empty(n_features, dtype=np.float64)

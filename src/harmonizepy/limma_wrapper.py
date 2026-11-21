@@ -1,17 +1,15 @@
-"""limma-style batch correction (removeBatchEffect), pure NumPy.
+"""Batch correction by a linear model, as R ``limma::removeBatchEffect`` does.
 
-Reimplements the algorithm from R limma::removeBatchEffect:
+Batch is encoded as sum-to-zero contrasts (R's ``contr.sum``), the design is
+an intercept plus those contrasts, each feature is fitted by least squares,
+and the fitted batch component is subtracted. Features that share a pattern
+of observed cells are fitted together.
 
-1. Encode batch as sum-to-zero contrasts (``contr.sum``).
-2. Build design ``[intercept | batch_contrasts]``.
-3. OLS fit: ``beta = (X'X)^{-1} X' Y'``.
-4. Subtract batch component: ``Y - beta_batch @ X_batch'``.
-
-Reference
----------
-Ritchie ME et al. "limma powers differential expression analyses for
-RNA-sequencing and microarray studies." *Nucleic Acids Research*
-43(7):e47, 2015.
+References
+----------
+Ritchie ME et al. limma powers differential expression analyses for
+RNA-sequencing and microarray studies. Nucleic Acids Research 43(7):e47,
+2015. doi:10.1093/nar/gkv007
 """
 
 from __future__ import annotations

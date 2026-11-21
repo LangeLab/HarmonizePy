@@ -1,12 +1,8 @@
-"""Data splitting and per-sub-frame adjustment.
+"""Correction of each group of features that share an affiliation.
 
-Groups features by their affiliation (missingness pattern), extracts
-sub-matrices containing only the columns (samples) present for that
-group, applies ComBat or limma adjustment, and returns the fully
-assembled corrected DataFrame.
-
-This mirrors the split-and-rebuild effect of R ``HarmonizR:::splitting``
-without materializing one full-width DataFrame per affiliation group.
+Each group's sub-matrix holds its features and the columns of its blocks; it
+is corrected by ComBat or limma and written into one output matrix. This has
+the effect of R ``HarmonizR:::splitting`` and its rebuild step.
 """
 
 from __future__ import annotations
@@ -37,35 +33,39 @@ def splitting(
     output_columns: pd.Index | None = None,
     data_np: npt.NDArray[np.float64] | None = None,
 ) -> pd.DataFrame:
-    """Split data by affiliation, adjust each sub-frame, return result.
+    """Correct each group of features that share an affiliation, and assemble the result.
 
     Parameters
     ----------
-    affiliation_list : list[tuple[int, ...]]
-        One tuple per feature (row), listing the block IDs where the feature
-        has sufficient data.  From ``spotting.spotting_missing_values``.
+    affiliation_list : list of tuple of int
+        One affiliation per feature, as ``build_affiliation_list`` returns.
     data : DataFrame
-        Features x samples.
-    batch_list : ndarray
-        Batch label per sample (1-indexed).
-    block_list : ndarray
-        Block label per sample (equals batch_list when no blocking).
-    algorithm : str
-        ``"ComBat"`` or ``"limma"``.
-    combat_mode : int
-        ComBat mode 1-4 (ignored when algorithm is limma).
-    data_np : ndarray or None, keyword-only
-        Optional precomputed float64 view or copy of *data* with shape
-        ``(n_features, n_samples)``. When provided, reused instead of
-        converting *data* again inside this function.
+        Features x samples matrix; missing cells are allowed. Not modified.
+    batch_list : ndarray, shape (n_samples,)
+        Batch label of each column.
+    block_list : ndarray, shape (n_samples,)
+        Block label of each column; equal to *batch_list* without blocking.
+    algorithm : {"ComBat", "limma"}
+        Correction engine.
+    combat_mode : {1, 2, 3, 4}
+        ComBat mode; ignored for limma.
+    output_col_order : ndarray of intp, shape (n_samples,), optional
+        For each column of *data*, as sorted, the output column it is written
+        to, so that the result is in the order before sorting.
+    output_columns : Index, optional
+        Column labels of the output; defaults to ``data.columns``.
+    data_np : ndarray, shape (n_features, n_samples), optional
+        *data* as float64, reused instead of converting it again.
 
     Returns
     -------
     DataFrame
-        Fully assembled corrected matrix. Features with empty affiliations
-        remain all-NaN to preserve completeness. A feature alone in its group,
-        or whose group spans a single batch, keeps its raw values with either
-        engine; the log counts both kinds.
+        The corrected matrix with the index of *data*. A feature with an empty
+        affiliation is all missing. A feature alone in its group, or in a group
+        that spans one batch, keeps its raw values with either engine: one
+        batch has no batch effect to remove, ComBat cannot form a prior from
+        one feature, and limma would remove the feature's own batch means with
+        any true difference between batches. The log counts both kinds.
 
     Raises
     ------
@@ -84,6 +84,13 @@ def splitting(
     >>> result = splitting(affil, data, batch, batch, algorithm="ComBat", combat_mode=2)
     >>> result.shape
     (3, 4)
+
+    Notes
+    -----
+    One output array is allocated and filled group by group; sub-matrices are
+    extracted one group at a time. A group of one feature takes a shortcut
+    without matrix indexing, and a group that spans the whole matrix is read
+    without a copy.
     """
     if algorithm not in ("ComBat", "limma"):
         raise ValueError(f"algorithm must be 'ComBat' or 'limma', got {algorithm!r}.")
@@ -93,15 +100,11 @@ def splitting(
     batch_arr = np.asarray(batch_list)
     block_arr = np.asarray(block_list)
 
-    # Convert to numpy once to avoid DataFrame overhead in the hot loop.
     if data_np is None:
         data_np = data.to_numpy(dtype=np.float64)
 
-    # Group features by affiliation using the shared reducer
     affil_to_features = reduce_to_unique_groups(affiliation_list)
 
-    # Cache sample indices once per block and affiliation to avoid
-    # rescanning block_arr for every unique group.
     block_to_cols: dict[int, list[int]] = {}
     for col_index, block_id in enumerate(block_arr.tolist()):
         block_to_cols.setdefault(int(block_id), []).append(col_index)
@@ -123,9 +126,6 @@ def splitting(
         data.shape[1],
     )
 
-    # Pre-allocate a single output array (n_features, n_samples) filled with NaN.
-    # This avoids allocating one full-width DataFrame per affiliation group,
-    # reducing peak memory from ~3x input to ~1x input.
     n_features, n_samples = data.shape
     output = np.full((n_features, n_samples), np.nan, dtype=np.float64)
 
@@ -134,25 +134,17 @@ def splitting(
 
     for affil, row_indices in affil_to_features.items():
         if len(affil) == 0:
-            continue  # rows stay NaN
+            continue
 
-        # Select cached columns for the blocks in this affiliation.
         col_indices = affil_to_cols[affil]
         target_col_indices = (
             col_indices if output_col_order is None else output_col_order[col_indices]
         )
 
-        # Fast path: single feature (common case with high NaN).
-        # Avoids np.array + np.ix_ overhead for the trivial 1-row case.
         if len(row_indices) == 1:
             ri = row_indices[0]
             sub_data = data_np[ri, col_indices]
             sub_batch = batch_arr[col_indices]
-            # A feature alone in its batch pattern keeps its raw values. A single batch
-            # has no batch effect to remove. With several batches, ComBat has no other
-            # feature to share a prior with, and limma would remove that one feature's
-            # batch means, true differences included; both engines leave it raw so the
-            # two give the same output for the same input.
             if len(np.unique(sub_batch)) < 2:
                 n_single_batch += 1
             else:
@@ -160,7 +152,6 @@ def splitting(
             output[ri, target_col_indices] = sub_data
             continue
 
-        # General path: multiple features.
         row_idx = np.array(row_indices, dtype=np.intp)
         spans_matrix = row_idx.size == n_features and np.array_equal(
             col_indices, np.arange(n_samples)

@@ -71,9 +71,9 @@ R silently coerces non-numeric cells to NA and silently removes rows whose value
 
 ### Sorting algorithm differences
 
-Jaccard and seriation sorting strategies produce different batch orderings from their R equivalents. The R versions use exact pairwise-similarity chaining (jaccard) and hierarchical optimal-leaf-ordering via `seriation::seriate` (seriation). HarmonizePy uses nearest-neighbour chaining (jaccard) and PCA-based ordering (seriation).
+All three sorting strategies can order batches differently from R. Sparsity counts the features present in each batch where R counts missing cells; jaccard builds a nearest-neighbour chain where R pairs the most similar batches first; seriation orders batches by the first principal component of their presence vectors where R uses hierarchical clustering with optimal leaf ordering (`seriation::seriate`). On generated test cases with contiguous batch labels, the orders agreed with R in 11 of 200 cases (sparsity), 54 of 200 (jaccard), and 24 of 400 (seriation). Sparsity agreed in all 200 when R's count of missing cells was used, so its difference comes from counting present features instead.
 
-In practice, both jaccard and sparsity sort produce identical batch orderings across all tested configurations. The seriation divergence produces a different ordering, but correction quality is within the same range. These algorithms are explicitly not required to match R exactly.
+Sorting changes the output only together with blocking. The strategies are not required to match R.
 
 ### Default output filename
 

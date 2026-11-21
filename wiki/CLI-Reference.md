@@ -71,7 +71,7 @@ When `-o` is omitted, the output is written next to the input data file as `<dat
 ## Workflow helpers
 
 - `--dry-run`: validate inputs, print run plan, exit without computing. Writes no files, and cannot be combined with `--log-file`, `--summary`, or `--json`. Exit code `0` if valid, `1` on a validation error, `2` on a usage error or a missing input file.
-- `--summary PATH`: write a JSON run summary to PATH after completion. Contains resolved parameters, input/output dimensions, and version.
+- `--summary PATH`: write a JSON run summary to PATH after completion. Contains the resolved parameters (including the `needed_values` the run used), input and output dimensions, and the package version.
 - `--json`: print the run summary as JSON to stdout. Suppresses INFO log messages.
 - `--config PATH`: load flags from a TOML, JSON, or YAML config file. CLI flags override config file values.
 

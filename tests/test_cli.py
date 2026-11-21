@@ -615,7 +615,7 @@ class TestCLIErrors:
         assert exc_info.value.code != 0
 
     def test_block_lt_2_exits_nonzero(self, tmp_path: Path) -> None:
-        """block=1 fails validation inside harmonize → exit 1."""
+        """block=1 fails validation inside harmonize gives exit 1."""
         with pytest.raises(SystemExit) as exc_info:
             main([DATA, BATCH, "-o", str(tmp_path / "r.tsv"), "--block", "1"])
         assert exc_info.value.code == 1
@@ -909,7 +909,7 @@ class TestCLIJson:
 
 
 # ===========================================================================
-# All-flags smoke test (plan §2.5 test_cli_all_flags)
+# Every option at once
 # ===========================================================================
 
 

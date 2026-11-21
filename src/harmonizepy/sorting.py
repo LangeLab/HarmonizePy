@@ -1,15 +1,10 @@
-"""Batch column sorting strategies for HarmonizePy.
+"""Batch orders that place similar batches next to each other before blocking.
 
-Sorting reorders **batch columns** (and their samples) in the data matrix
-so that similar batches become neighbors.  This only affects output when
-combined with blocking. Adjacent batches are grouped into blocks, so
-the ordering determines which batches share a block and therefore how
-much data is lost when features are absent in one block member.
-
-Calling ``sort_batches`` without subsequently applying blocking has
-no effect on adjusted values.
-
-This mirrors R ``HarmonizR:::sorting``.
+Blocking groups neighbouring batches, so the order decides which batches share
+a block, and how many values are lost where a feature is missing from one
+batch of a block. Without blocking the order has no effect on corrected
+values. The strategies follow R ``HarmonizR:::sorting``; how each of the three
+orders differs from R's is listed in ``assets/FEATURE_PARITY.md``.
 """
 
 from __future__ import annotations
@@ -32,63 +27,58 @@ def sort_batches(
     strategy: str,
     needed_values: int,
 ) -> tuple[pd.DataFrame, npt.NDArray[np.integer], npt.NDArray[np.intp]]:
-    """Reorder data columns so that similar batches are adjacent.
+    """Reorder the columns so that similar batches are adjacent.
 
-    Computes a permutation of batches using *strategy*, then reorders the
-    sample columns (and the accompanying *batch_list*) to match.  Call
-    this before blocking; call the returned ``col_order`` inverse after
-    ``rebuild`` to restore the original column ordering.
-
-    .. note::
-        Sorting without subsequent blocking leaves adjusted values
-        unchanged.  The function is a no-op on output when ``block=None``.
+    A feature counts as present in a batch when it has at least
+    *needed_values* observed values there. ``"sparsity"`` puts batches with
+    more present features first; ``"jaccard"`` chains batches by the overlap of
+    their present features; ``"seriation"`` orders them by the first principal
+    component of their presence vectors. Samples keep their relative order
+    within a batch.
 
     Parameters
     ----------
     data : DataFrame
-        Features x samples matrix.  Columns are sample IDs; rows are
-        features.  May contain NaN.
+        Features x samples matrix; missing cells are allowed. Not modified.
     batch_list : ndarray, shape (n_samples,)
-        Integer batch label per sample.
-    strategy : str
-        ``"sparsity"``, ``"jaccard"``, or ``"seriation"``.
+        Batch label of each column.
+    strategy : {"sparsity", "jaccard", "seriation"}
+        Ordering strategy.
     needed_values : int
-        Minimum non-NaN values per batch per feature for the feature to
-        count as "present" in that batch when building the binary
-        presence matrix used by all strategies.
+        Observed values a feature needs in a batch to count as present.
 
     Returns
     -------
     sorted_data : DataFrame
-        Copy of *data* with columns reordered by the new batch order.
-    sorted_batch_list : ndarray
-        *batch_list* reordered to match the new column order.
-    col_order : ndarray of int, shape (n_samples,)
-        Original column indices for each position in *sorted_data*.
-        To restore the original column order after rebuild, use
-        ``result.iloc[:, np.argsort(col_order)]``.
+        A new frame with the columns in the new order.
+    sorted_batch_list : ndarray, shape (n_samples,)
+        *batch_list* in the new order.
+    col_order : ndarray of intp, shape (n_samples,)
+        The input column index at each position of *sorted_data*;
+        ``np.argsort(col_order)`` restores the input order.
 
     Raises
     ------
     ValueError
-        If *strategy* is not one of the three accepted values.
+        If *strategy* is not one of the three names.
 
     Examples
     --------
+    Batch 1 has values for 3 of 10 features, so ``"sparsity"`` moves it last:
+
     >>> import numpy as np, pandas as pd
     >>> from harmonizepy.sorting import sort_batches
-    >>> rng = np.random.default_rng(0)
     >>> data = pd.DataFrame(
-    ...     rng.standard_normal((10, 6)),
-    ...     columns=["s1", "s2", "s3", "s4", "s5", "s6"],
+    ...     np.arange(60.0).reshape(10, 6), columns=["s1", "s2", "s3", "s4", "s5", "s6"]
     ... )
-    >>> batch = np.array([1, 1, 2, 2, 3, 3])
-    >>> data.iloc[5:, 4:] = float("nan")  # batch 3 has fewer present features
-    >>> sd, sb, co = sort_batches(data, batch, "sparsity", needed_values=2)
-    >>> sd.shape
-    (10, 6)
-    >>> list(sd.columns[:2])  # batch 3 (sparsest) is now first
-    ['s4', 's5']
+    >>> data.iloc[3:, 0:2] = np.nan
+    >>> sorted_data, sorted_batches, col_order = sort_batches(
+    ...     data, np.array([1, 1, 2, 2, 3, 3]), "sparsity", needed_values=2
+    ... )
+    >>> list(sorted_data.columns)
+    ['s3', 's4', 's5', 's6', 's1', 's2']
+    >>> col_order.tolist()
+    [2, 3, 4, 5, 0, 1]
     """
     if strategy not in _VALID_SORT_STRATEGIES:
         raise ValueError(
@@ -110,7 +100,7 @@ def sort_batches(
         batch_order = _sparsity_order(presence)
     elif strategy == "jaccard":
         batch_order = _jaccard_order(presence)
-    else:  # seriation
+    else:
         batch_order = _seriation_order(presence)
 
     ordered_batches = unique_batches[batch_order]
@@ -134,10 +124,10 @@ def _build_presence_matrix(
     unique_batches: npt.NDArray[np.integer],
     needed_values: int,
 ) -> npt.NDArray[np.bool_]:
-    """Binary (n_features x n_batches) presence matrix.
+    """Return the (n_features, n_batches) matrix of features present in each batch.
 
-    ``presence[i, j] = True`` iff batch ``unique_batches[j]`` has at least
-    *needed_values* non-NaN observations for feature *i*.
+    Entry (i, j) is true when feature *i* has at least *needed_values*
+    observed values in batch ``unique_batches[j]``.
     """
     values = data.to_numpy(dtype=np.float64)
     notna = ~np.isnan(values)
@@ -181,73 +171,56 @@ def _sparsity_order(presence: npt.NDArray[np.bool_]) -> npt.NDArray[np.intp]:
 
 
 def _jaccard_order(presence: npt.NDArray[np.bool_]) -> npt.NDArray[np.intp]:
-    """Greedy nearest-neighbour Jaccard ordering.
+    """Order batches by a greedy nearest-neighbour chain on Jaccard similarity.
 
-    Computes the pairwise Jaccard similarity matrix between batches via
-    vectorised integer matrix multiplication, then traverses batches
-    starting from the one with the highest total similarity to all others,
-    always picking the most similar unvisited batch next.
+    The similarity of two batches is the number of features present in both
+    divided by the number present in either, and 0 when neither has any. The
+    chain starts at the batch with the largest total similarity to the others
+    (the diagonal left out, since an empty batch has a self-similarity of 0, not
+    1) and moves each time to the most similar batch not yet visited.
     """
-    p = presence.astype(np.int32)  # (n_features, n_batches)
-    # intersection[i, j] = number of features present in both batch i and j
-    intersection = (p.T @ p).astype(np.float64)  # (n_batches, n_batches)
-    col_sums = presence.sum(axis=0).astype(np.float64)  # (n_batches,)
-    # union[i, j] = |A| + |B| - |A ∩ B|
-    union = col_sums[:, None] + col_sums[None, :] - intersection
+    counts = presence.astype(np.int32)
+    intersection = (counts.T @ counts).astype(np.float64)
+    present_per_batch = presence.sum(axis=0).astype(np.float64)
+    union = present_per_batch[:, None] + present_per_batch[None, :] - intersection
     with np.errstate(invalid="ignore", divide="ignore"):
         jaccard = np.where(union > 0, intersection / union, 0.0)
 
-    n = jaccard.shape[0]
-    if n == 1:
+    n_batches = jaccard.shape[0]
+    if n_batches == 1:
         return np.array([0], dtype=np.intp)
 
-    # Start from the batch most similar (on average) to all others.
-    # Subtract the diagonal (self-similarity) rather than a constant 1: empty
-    # batches have jaccard[i,i]=0 due to the 0/0 guard above, not 1.
-    sim_sums = jaccard.sum(axis=1) - np.diag(jaccard)
-    start = int(np.argmax(sim_sums))
-
-    visited = np.zeros(n, dtype=np.bool_)
+    similarity_to_others = jaccard.sum(axis=1) - np.diag(jaccard)
+    start = int(np.argmax(similarity_to_others))
+    visited = np.zeros(n_batches, dtype=np.bool_)
     order: list[int] = [start]
     visited[start] = True
-
-    for _ in range(n - 1):
-        current = order[-1]
-        sims = jaccard[current].copy()
-        sims[visited] = -1.0
-        nxt = int(np.argmax(sims))
-        order.append(nxt)
-        visited[nxt] = True
-
+    for _ in range(n_batches - 1):
+        candidates = jaccard[order[-1]].copy()
+        candidates[visited] = -1.0
+        nearest = int(np.argmax(candidates))
+        order.append(nearest)
+        visited[nearest] = True
     return np.array(order, dtype=np.intp)
 
 
 def _seriation_order(presence: npt.NDArray[np.bool_]) -> npt.NDArray[np.intp]:
-    """PCA-based seriation ordering (matches R ``seriation::seriate`` PCA method).
+    """Order batches by their score on the first principal component of presence.
 
-    Performs PCA on the batch presence vectors (batches as observations,
-    features as variables) and orders batches ascending by their first-PC
-    score.  This replicates R's ``seriation::seriate(binary_df, margin=2)``
-    default behaviour which uses ``prcomp(t(x), scale=FALSE)`` internally.
-    Sign is anchored so the batch with the largest absolute PC1 score is
-    positive (matching R's ``prcomp`` sign convention).
+    Batches are the observations and features the variables; the presence
+    matrix is centred per feature and not scaled, as ``prcomp(scale = FALSE)``
+    does. The sign is fixed so that the batch with the largest absolute score
+    is positive. With two batches or fewer the input order is returned. R
+    HarmonizR's seriation uses ``seriation::seriate``, which gives a different
+    order in general.
     """
-    p = presence.T.astype(np.float64)  # (n_batches, n_features)
-    n = p.shape[0]
-
-    if n <= 2:
-        return np.arange(n, dtype=np.intp)
-
-    # Centre columns (features) to mirror R's prcomp(t(binary_df), scale=FALSE)
-    p -= p.mean(axis=0)
-
-    # SVD into PC1 scores for each batch
-    U, s, _Vt = np.linalg.svd(p, full_matrices=False)  # noqa: N806 (standard SVD notation)
-    pc1 = U[:, 0] * s[0]
-
-    # Sign convention: make the PC1 direction point "toward" the batch with
-    # the largest absolute score being positive (mirrors R prcomp convention).
+    centred = presence.T.astype(np.float64)
+    n_batches = centred.shape[0]
+    if n_batches <= 2:
+        return np.arange(n_batches, dtype=np.intp)
+    centred -= centred.mean(axis=0)
+    left, singular, _ = np.linalg.svd(centred, full_matrices=False)
+    pc1 = left[:, 0] * singular[0]
     if pc1[np.argmax(np.abs(pc1))] < 0:
         pc1 = -pc1
-
     return np.argsort(pc1, kind="stable")

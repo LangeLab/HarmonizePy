@@ -124,11 +124,6 @@ def harmonize(
     InputScaleWarning
         When the values do not look log-transformed; see ``check_input_scale``.
 
-    Notes
-    -----
-    The inputs are not modified. Progress is logged at INFO level on the
-    ``harmonizepy`` loggers.
-
     Examples
     --------
     >>> from harmonizepy import HarmonizeConfig, harmonize
@@ -136,6 +131,11 @@ def harmonize(
     >>> result = harmonize(df, desc, algorithm="limma")  # doctest: +SKIP
     >>> cfg = HarmonizeConfig(sort_strategy="sparsity", block_size=2)
     >>> result = harmonize(df, desc, config=cfg)  # doctest: +SKIP
+
+    Notes
+    -----
+    The inputs are not modified. Progress is logged at INFO level on the
+    ``harmonizepy`` loggers.
     """
     if config is not None:
         algorithm = config.algorithm

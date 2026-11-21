@@ -1,13 +1,11 @@
-"""Affiliation logic: build and reduce per-feature batch affiliations.
+"""Affiliations: the blocks in which each feature has enough values.
 
-The affiliation list records, for each feature (row), which blocks have
-sufficient non-missing data.  ``reduce_to_unique_groups`` then collapses
-features sharing identical affiliations into groups so that
-``splitting.py`` can extract one sub-matrix per group.
-
-In the R HarmonizR source, ``unique()`` on the affiliation list *is* the
-binary reduction step - there is no separate operation.  This module
-combines both responsibilities.
+A feature's affiliation is the sorted tuple of block labels in which every
+batch holds at least ``needed_values`` observed values of the feature.
+Features with the same affiliation form a group, and each group is corrected
+as one sub-matrix. Unique removal moves a feature whose affiliation no other
+feature shares into the largest shared affiliation within its own, as R
+HarmonizR's ``ur = TRUE`` does.
 """
 
 from __future__ import annotations
@@ -27,11 +25,10 @@ def _assemble_affiliations(
     block_oks: list[npt.NDArray[np.bool_]],
     n_features: int,
 ) -> list[tuple[int, ...]]:
-    """Assemble per-feature affiliation tuples from per-block masks.
+    """Return one affiliation tuple per feature from the per-block masks.
 
-    Repeated block-membership patterns are common on fragmented datasets, so
-    cache the tuple reconstruction by mask pattern instead of rebuilding the
-    same Python tuple for every matching feature.
+    Features often share a pattern, so each distinct pattern is turned into a
+    tuple once: by a bit code for up to 64 blocks, by packed bytes beyond.
     """
     if not block_oks:
         return [()] * n_features
@@ -83,56 +80,59 @@ def build_affiliation_list(
     *,
     data_np: npt.NDArray[np.float64] | None = None,
 ) -> list[tuple[int, ...]]:
-    """Determine per-feature batch/block affiliation.
+    """Return each feature's affiliation: the blocks where it has enough values.
 
-    For each feature (row), identifies the blocks where the feature has
-    at least *needed_values* non-missing observations in every original
-    batch contained within that block.
+    A block counts for a feature when every batch inside the block holds at
+    least *needed_values* observed values of it.
 
     Parameters
     ----------
     data : DataFrame
-        Features x samples matrix (may contain NaN).
+        Features x samples matrix; missing cells are allowed.
     batch_list : ndarray, shape (n_samples,)
-        Integer batch label per sample.
+        Batch label of each column.
     block_list : ndarray, shape (n_samples,)
-        Integer block label per sample (equals *batch_list* when no
-        blocking is applied).
+        Block label of each column; equal to *batch_list* without blocking.
     needed_values : int
-        Minimum non-NA values per batch within a block.
-    data_np : ndarray or None, keyword-only
-        Optional precomputed float64 view or copy of *data* with shape
-        ``(n_features, n_samples)``. When provided, reused instead of
-        converting *data* again inside this function.
+        Minimum observed values per batch.
+    data_np : ndarray, shape (n_features, n_samples), optional
+        *data* as float64, reused instead of converting *data* again.
 
     Returns
     -------
-    list[tuple[int, ...]]
-        One tuple per feature.  Each tuple contains the sorted block IDs
-        where the feature has sufficient data.  An empty tuple means
-        the feature has insufficient data everywhere.
+    list of tuple of int
+        One sorted tuple of block labels per feature, in row order. An empty
+        tuple means no block qualifies.
 
     Raises
     ------
     ValueError
-        Propagated from NumPy if *batch_list* or *block_list* cannot be
-        broadcast against the columns of *data*.
+        If *batch_list* or *block_list* does not have one label per column.
 
     Examples
     --------
+    The second feature has one value in batch 2, below ``needed_values=2``:
+
     >>> import numpy as np, pandas as pd
     >>> from harmonizepy.affiliation import build_affiliation_list
-    >>> data = pd.DataFrame({"s1": [1.0, np.nan], "s2": [2.0, 3.0], "s3": [4.0, 5.0]})
-    >>> batch = np.array([1, 1, 2])
-    >>> build_affiliation_list(data, batch, batch, needed_values=1)
-    [(1, 2), (2,)]
+    >>> data = pd.DataFrame(
+    ...     {"s1": [1.0, 2.0], "s2": [1.5, 2.5], "s3": [3.0, np.nan], "s4": [3.5, 4.0]}
+    ... )
+    >>> batch = np.array([1, 1, 2, 2])
+    >>> build_affiliation_list(data, batch, batch, needed_values=2)
+    [(1, 2), (1,)]
     """
     batch_arr = np.asarray(batch_list)
     block_arr = np.asarray(block_list)
+    n_samples = data.shape[1]
+    if batch_arr.shape != (n_samples,) or block_arr.shape != (n_samples,):
+        raise ValueError(
+            f"batch_list and block_list need one label per column ({n_samples}); "
+            f"got {batch_arr.shape} and {block_arr.shape}."
+        )
 
     unique_blocks = np.unique(block_arr)
 
-    # Pre-compute: for each block, the sample indices per original batch
     block_info: list[list[np.ndarray]] = []
     for blk in unique_blocks:
         blk_mask = block_arr == blk
@@ -144,10 +144,6 @@ def build_affiliation_list(
         data_np = data.to_numpy(dtype=np.float64)
 
     notna = ~np.isnan(data_np)
-
-    # Vectorised per-block check across all features at once.
-    # For each block, compute a boolean array indicating whether each
-    # feature has >= needed_values non-NA in every batch within that block.
     block_oks: list[np.ndarray] = []
     for batch_indices in block_info:
         batch_oks = [notna[:, idx].sum(axis=1) >= needed_values for idx in batch_indices]
@@ -169,24 +165,18 @@ def build_affiliation_list(
 def reduce_to_unique_groups(
     affiliation_list: list[tuple[int, ...]],
 ) -> dict[tuple[int, ...], list[int]]:
-    """Group feature indices by their shared affiliation pattern.
+    """Group feature row indices by affiliation.
 
     Parameters
     ----------
-    affiliation_list : list[tuple[int, ...]]
-        One tuple per feature from ``build_affiliation_list``.
+    affiliation_list : list of tuple of int
+        One affiliation per feature, as ``build_affiliation_list`` returns.
 
     Returns
     -------
-    dict[tuple[int, ...], list[int]]
-        Mapping from each unique affiliation to the list of feature
-        row indices that share it.  Iteration order matches first
-        appearance.
-
-    Raises
-    ------
-    TypeError
-        If *affiliation_list* contains non-hashable elements.
+    dict
+        Each distinct affiliation, in order of first appearance, mapped to the
+        row indices of the features that have it, in row order.
 
     Examples
     --------
@@ -204,51 +194,35 @@ def reduce_to_unique_groups(
 def remove_unique_combinations(
     affiliation_list: list[tuple[int, ...]],
 ) -> list[tuple[int, ...]]:
-    """Rescue singleton features by cropping their affiliation to a shared pattern.
+    """Move each feature with an affiliation of its own into a shared one.
 
-    A feature whose batch-presence combination is unique (no other feature
-    shares it) would end up alone in a sub-matrix.  ComBat and limma cannot
-    adjust a single feature, so it would otherwise be dropped.
-
-    For each such singleton, this function finds the closest non-unique
-    affiliation (the one reachable by removing the fewest batches) and
-    replaces the singleton's affiliation with that pattern.  Empty
-    affiliations (features with no data anywhere) are left unchanged.
-
-    This mirrors R ``HarmonizR:::unique_removal`` (``ur`` parameter,
-    default ``TRUE`` in R HarmonizR v1.8.0).
+    A feature whose affiliation no other feature shares would form a group of
+    one, which is returned with its raw values. This step replaces such an
+    affiliation with the longest affiliation that at least two features share
+    and that is a proper subset of the feature's own; the feature then loses
+    the values in the dropped blocks but is corrected with others. Among
+    equally long candidates, the winner follows an internal order fixed by the
+    set of shared affiliations, so it does not depend on the order of the
+    rows. A feature with no shared subset, and empty affiliations, are
+    left unchanged. This follows R ``HarmonizR:::unique_removal`` (``ur``).
 
     Parameters
     ----------
-    affiliation_list : list[tuple[int, ...]]
-        One tuple per feature from ``build_affiliation_list``.
-        Each tuple contains sorted block IDs where the feature has
-        sufficient data.
+    affiliation_list : list of tuple of int
+        One affiliation per feature, as ``build_affiliation_list`` returns.
 
     Returns
     -------
-    list[tuple[int, ...]]
-        New affiliation list of the same length.  Singleton tuples are
-        replaced with a subset of their original blocks that at least one
-        other feature also shares.  Non-singleton and empty tuples are
-        unchanged.
-
-    Raises
-    ------
-    ValueError
-        If all non-empty affiliations are unique (no shared pattern exists
-        to crop to).  This indicates a dataset too fragmented for unique
-        removal to help. In practice this cannot happen when n_features > 1.
+    list of tuple of int
+        A new list of the same length; the input is not modified.
 
     Examples
     --------
+    The first feature's affiliation is its own; the others share ``(1, 2)``:
+
     >>> from harmonizepy.affiliation import remove_unique_combinations
-    >>> # Feature 0 is a singleton; features 1 and 2 share (1, 2)
-    >>> result = remove_unique_combinations([(1, 2, 3), (1, 2), (1, 2)])
-    >>> result[0]  # cropped to the nearest shared pattern
-    (1, 2)
-    >>> result[1:]  # unchanged
-    [(1, 2), (1, 2)]
+    >>> remove_unique_combinations([(1, 2, 3), (1, 2), (1, 2)])
+    [(1, 2), (1, 2), (1, 2)]
     """
     result = list(affiliation_list)
 

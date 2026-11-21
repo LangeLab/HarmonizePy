@@ -6,7 +6,7 @@ Sections
 2. TestBlockListValues: exact output for hand-crafted inputs
 3. TestEdgeCases: minimum block_size=2, non-contiguous batch IDs
 4. TestValidation: ValueError on bad block_size
-5. TestHelperFunctions: _unique_ordered
+5. TestUniqueOrdered: _unique_ordered
 """
 
 from __future__ import annotations
@@ -252,7 +252,7 @@ class TestValidation:
 
 
 # ---------------------------------------------------------------------------
-# 5. TestHelperFunctions
+# 5. TestUniqueOrdered
 # ---------------------------------------------------------------------------
 
 
@@ -301,3 +301,13 @@ def test_float_labels_are_blocked_by_first_appearance() -> None:
     """
     blocks = build_block_list(np.array([0.2, 0.2, 0.7, 1.0, 2.0, 0.7]), block_size=2)
     np.testing.assert_array_equal(blocks, [1, 1, 1, 2, 2, 1])
+
+
+def test_float_labels_are_counted_as_distinct_batches() -> None:
+    """Float labels that differ only after the decimal point are separate batches.
+
+    Failure condition: casting labels to int merges 0.2 and 0.7, so three batches
+    count as two and a block size of 2 is rejected.
+    """
+    blocks = build_block_list(np.array([0.2, 0.2, 0.7, 0.7, 1.5, 1.5]), block_size=2)
+    np.testing.assert_array_equal(blocks, [1, 1, 1, 1, 2, 2])

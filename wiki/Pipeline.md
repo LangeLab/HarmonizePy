@@ -20,28 +20,25 @@ Inputs are validated before any computation: shapes, column names, types, and sa
 
 ### 2. Batch sorting (optional)
 
-If `sort` is specified, batches are reordered before any other processing. The goal is to place batches with similar data characteristics next to each other. This improves blocking quality (groups of 2 consecutive batches will be more compatible) and can modestly improve correction quality.
+If `sort` is specified, batches are reordered before any other processing, so that batches with similar sets of observed features sit next to each other and share a block. A feature counts as present in a batch when it has at least `needed_values` values there.
 
 Three strategies are available:
 
-**`"sparsity"`** - Ranks batches by the fraction of features with data in that batch (completeness). Batches with similar overall completeness become neighbours. This is the fastest of the three strategies.
+**`"sparsity"`** - Orders batches by the number of features present, most first.
 
-**`"jaccard"`** - Ranks batches by pairwise feature-overlap similarity (Jaccard index over which features are observed). More computationally expensive than sparsity. Use it when batch sizes are uneven, because it measures feature overlap rather than just raw completeness counts.
+**`"jaccard"`** - Chains batches by Jaccard similarity: the features present in both batches over the features present in either. The chain starts at the batch most similar to all others and moves to the most similar batch not yet placed.
 
-**`"seriation"`** - Projects batches onto the first principal component of the feature-overlap space and sorts by that coordinate. This is the most computationally expensive sorting option. Use it for datasets with many batches (20+) and complex feature-overlap structure.
+**`"seriation"`** - Orders batches by their score on the first principal component of the batches' presence vectors.
+
+No measurement so far shows one strategy correcting better than another.
 
 The sorting order affects which features land in which sub-matrix groups after blocking, but it does not change the final correction result for the no-block case (each feature still ends up in a group with the same batches, just potentially in a different order).
 
 ### 3. Blocking (optional)
 
-If `block=N` is specified, consecutive batches are grouped into blocks of size N before affiliation spotting. Within each block, the batches are treated as a single pool: a feature must have data in enough batches within that block to qualify for adjustment in it.
+If `block=N` is specified, every N neighbouring batches (in sort order) form a block, and affiliations are formed over blocks instead of batches: a block counts for a feature when every batch inside it holds at least `needed_values` values of the feature. With many batches, fewer distinct patterns arise and features join larger groups; on the medium and high-missingness test fixtures, blocks of two reduced the groups from 4 to 3. The engines still correct each original batch inside a sub-matrix.
 
-Blocking serves two purposes:
-
-- **Memory reduction**: instead of holding sub-matrices spanning all batches simultaneously, the pipeline processes one block at a time. This is significant for datasets with many batches (SCP cohorts with 20-100 batches).
-- **Correction quality**: grouping similar batches reduces the risk that a poorly-matched batch distorts the EB prior for the whole group.
-
-`block=2` (pairs of consecutive batches) is the standard starting point. Combined with `sort="sparsity"`, it is the recommended configuration for datasets with 5+ batches.
+Blocking costs observed values: a feature missing from one batch of a block loses the whole block. On the test fixtures it did not change peak memory. No measurement so far gives a recommended block size; with many batches and much missingness, compare the share of features corrected with and without blocking, for example from the dry run's sub-matrix count and the run log.
 
 ### 4. Affiliation spotting
 

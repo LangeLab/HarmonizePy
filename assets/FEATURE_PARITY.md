@@ -12,7 +12,6 @@ Remaining limits are narrower:
 
 - Jaccard and seriation are fixture-backed and unit-tested, but exact algorithm matching to R is intentionally out of scope.
 - Combined-stress validation is now fixture-backed, but exact NaN-position parity on every feature is still not used as a release gate because of the documented mixed-NaN edge case.
-- Python source coverage is now measured directly in-repo and is currently 94% for `src/harmonizepy`.
 
 ---
 
@@ -48,21 +47,21 @@ Beta.NA <- function(y, X) {
 
 HarmonizePy implements the equivalent per-feature NaN handling across all computation steps:
 
-- **B.hat**: R uses `apply(dat, 1, Beta.NA, design)`. Python uses `_beta_na(y, design)` per feature. Verified on murine: max_rel 0.0003.
-- **var.pooled**: R uses `rowVars(residuals, na.rm=TRUE)`. Python uses `_row_var_nan(residuals)` per feature. Verified on murine: max_rel 0.0003.
-- **gamma.hat**: R uses `apply(s.data, 1, Beta.NA, batch.design)`. Python uses `_beta_na(y, design)` per feature. Verified on murine: max_rel 0.0003.
-- **delta.hat**: R uses `rowVars(s.data[, i], na.rm=TRUE)` per batch. Python uses `_row_var_nan(s_data[:, idx])` per batch per feature. Verified on murine: max_rel 0.0003.
-- **EB solver (parametric)**: R's `postvar`/`postmean` handle NaN per-feature via `n()` in postvar. Python's `_it_sol` is NaN-safe using `np.nansum` and per-feature non-NA count. Verified on murine: max_rel 0.0003.
-- **EB solver (non-parametric)**: R's `int.eprior` uses `x <- sdat[i, !is.na(sdat[i, ])]` and `n <- length(x)` per gene. Python's `_int_eprior` uses per-gene non-NA count `n_i` for likelihood normalization. Verified on murine: max_rel 0.0000.
+- **B.hat**: R uses `apply(dat, 1, Beta.NA, design)`. Python uses `_beta_na_grouped_batch_design`, the same per-feature batch means, computed for features with the same pattern of observed cells together. Murine: max_rel 0.0003.
+- **var.pooled**: R uses `rowVars(residuals, na.rm=TRUE)`. Python uses `_row_var_nan_grouped(residuals)` per feature. Murine: max_rel 0.0003.
+- **gamma.hat**: R uses `apply(s.data, 1, Beta.NA, batch.design)`. Python uses `_beta_na_grouped_batch_design` on the standardised data. Murine: max_rel 0.0003.
+- **delta.hat**: R uses `rowVars(s.data[, i], na.rm=TRUE)` per batch. Python uses `_row_var_nan_grouped(s_data[:, idx])` per batch. Murine: max_rel 0.0003.
+- **EB solver (parametric)**: R's `postvar`/`postmean` handle NaN per-feature via `n()` in postvar. Python's `_it_sol_batches` uses `np.nansum` and each feature's observed count, solving all batches of a group in one loop. Murine: max_rel 0.0003.
+- **EB solver (non-parametric)**: R's `int.eprior` uses `x <- sdat[i, !is.na(sdat[i, ])]` and `n <- length(x)` per gene. Python's `_int_eprior` uses each feature's observed count `n_i` in the likelihood. Murine: max_rel 0.0000.
 - **NaN in output**: Both keep NaN in the same positions as input. Murine: all match.
 
-**Key insight**: R does NOT drop rows with NaN. It handles NaN per-feature throughout the computation. The `na.omit` behavior previously described in older versions of sva is NOT present in v3.60.0. HarmonizePy matches the per-feature approach exactly.
+R does not drop rows with NaN in sva 3.60.0; it handles NaN per feature throughout, and so does HarmonizePy.
 
 **Murine dataset results** (4753 features, 25 samples, 4 batches, 49% missing):
 
 - All 5 methods concordant at machine epsilon (max_rel 0.0003 or less)
 - NaN positions match on all shared features (4479-4524 of 4753)
-- The 274-229 features only in Python reflect the intentional retention policy (single-feature groups and per-cell NaN features kept as all-NaN)
+- The 229 to 274 features present only in the Python output are those HarmonizR drops: single-feature groups, which HarmonizePy keeps with raw values, and features with no usable batch, which it keeps as missing rows.
 
 ---
 
@@ -93,11 +92,13 @@ R uses `plyr::rbind.fill` (align by row name). Python uses pre-allocated array +
 
 ## 3. Sorting Strategies
 
-**Sparsity sort**: R `find_na()` sums NAs per batch, orders ascending. Python `_sparsity_order()` counts present features, orders descending. Inverse logic, same ordering. **Verified.**
+**Sparsity sort**: R `find_na()` counts the missing cells of each batch and orders ascending. Python counts, per batch, the features present with at least `needed_values` values and orders descending. The two rank batches differently: on 200 generated cases with contiguous batch labels the orders agreed in 11, and in all 200 when R's missing-cell count is used instead, so the difference comes from the count. **Known difference.**
 
-**Jaccard sort**: R uses pair-first-then-chain. Python uses nearest-neighbour chain. Different algorithms, but in practice jaccard and sparsity produce identical batch orderings across all tested configurations (5/10/20 batches, 20%/40% structural missingness). The algorithmic divergence has zero practical impact on output. **Will not be reworked to match R.**
+**Jaccard sort**: R pairs the most similar batches first and then chains the pairs. Python builds a nearest-neighbour chain. The orders agreed in 54 of the same 200 cases. **Known difference.**
 
-**Seriation sort**: R uses `seriation::seriate(binary_df, margin=2)` (hierarchical clustering + optimal leaf ordering). Python uses NumPy SVD on centred presence matrix, sort by PC1. Different mathematical approaches produce different orderings, but the impact on corrected values is <5% mean difference from no-sort baseline. The divergence is within the expected variation of different sorting heuristics. **Will not be reworked to match R.**
+**Seriation sort**: R uses `seriation::seriate(binary_df, margin = 2)` (hierarchical clustering with optimal leaf ordering). Python orders batches by the first principal component of their presence vectors. The orders agreed in 24 of 400 cases. **Known difference.**
+
+Sorting changes the output only together with blocking. No evidence so far favours one ordering over another, so none is reworked to match R.
 
 **Batch label renumbering**: R renumbers batch labels to 1,2,3... in first-appearance order after sort. Python keeps original IDs. Block structure is identical (boundaries detected by value change, not absolute label).
 
@@ -148,11 +149,10 @@ Python retains more features in all cases. The trade-off: retained features are 
 | Seriation sort + block | PASS (rtol 5e-4) | -- | medium block=2 fixture plus broad unit coverage |
 | Per-cell NaN synthetic | PASS (max_rel 0.0000) | PASS (max_rel 0.0000) | NaN positions match |
 | Murine unblocked | PASS (max_rel 0.0003) | PASS (max_rel 2e-10) | real data, NaN positions match |
-| Murine blocked (block=2) | PASS (ComBat mode 1: max_rel 6e-06) | -- | benchmark wrapper bug fixed; blocked summary should still be regenerated |
+| Murine blocked (block=2) | PASS (ComBat mode 1: max_rel 6e-06) | -- | real data, NaN positions match |
 | Unique-removal chain rescue | PASS (rtol 1e-4) | -- | dedicated `ur=True` and `ur=False` fixtures |
 | Combined stress | PASS on value concordance for NaN-matching features | -- | dedicated fixture; minority NaN-position mismatch allowed |
 
-The catastrophic blocked benchmark rows previously reported in markdown and JSON artifacts were not real algorithmic divergences. The benchmark R wrapper passed `block` as an integer, HarmonizR rejected it, and the R side silently ran unblocked while Python still ran blocked. A corrected direct rerun on murine `ComBat` mode 1 with `block=2` gives `max_rel 5.73e-06`, `p95_rel 5.48e-15`, and `nan_match 1.0`. Treat existing benchmark-summary rows with `Block = 2` as invalid until they are regenerated with the fixed wrapper.
 
 ---
 
@@ -163,10 +163,10 @@ The catastrophic blocked benchmark rows previously reported in markdown and JSON
 - `needed_values` exposed as user parameter
 - Shell tab-completion via `argcomplete`
 - Centralized input validation (`validation.py`)
-- Parquet I/O (12x faster write than TSV)
+- Parquet input and output
 - Self-contained seriation via NumPy SVD
 - Module-level logging
-- Pre-allocated single-output-array rebuild (lower memory)
+- Rebuild into one pre-allocated output array
 - Robust batch count via `len(unique())`
 
 ## 9. R-Only Features
@@ -200,7 +200,7 @@ The catastrophic blocked benchmark rows previously reported in markdown and JSON
 6. **Column name handling**: R `check.names=FALSE` preserves special chars. Python default may mangle them. Minor.
 7. **Comment character**: R `comment.char=""` disables comment handling. Python default. No impact.
 8. **String factors**: R `stringsAsFactors=FALSE`. Python no factor concept. R-only.
-9. **Default output**: R `cured_data.tsv`. Python `<stem>_corrected.parquet`. Different.
+9. **Default output**: R `cured_data.tsv`. HarmonizePy `<stem>_corrected.tsv` next to the input, or the extension of `--output-format`.
 
 ### Zero Impact on Output
 
@@ -208,7 +208,7 @@ The catastrophic blocked benchmark rows previously reported in markdown and JSON
 2. **Log-only counter**: R has `sum_counter` for console message only. Python omits. Never feeds algorithm.
 3. **Visualization log2**: R applies `2^` before plotting. Python not supported. Purely diagnostic.
 4. **S4 support**: R has SummarizedExperiment I/O. Not applicable to Python.
-5. **Parallel execution**: R uses doParallel + foreach. Python single-threaded. Python faster anyway.
+5. **Parallel execution**: R uses doParallel + foreach. HarmonizePy runs on one thread.
 6. **Rebuild method**: R uses `rbind.fill`. Python uses pre-allocated array. Same output for same features.
 7. **Diagnostic plotting**: R has boxplots. Not supported in Python. Purely cosmetic.
 8. **var.pooled formula (dense)**: Both use `mean(residuals^2)`. Same.
