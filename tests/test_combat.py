@@ -13,6 +13,7 @@ Algorithm: Johnson WE, Li C, Rabinovic A. Biostatistics 8(1):118-127, 2007.
 from __future__ import annotations
 
 import logging
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -716,7 +717,7 @@ class TestFeaturesLeftRaw:
         assert np.isfinite(out[20]).all()
 
     def test_sparse_row_with_spread_is_corrected(self) -> None:
-        """A row with two differing values in one batch and none elsewhere is corrected.
+        """A sparse row with spread in two batches and none elsewhere is corrected.
 
         Failure condition: the row is left raw because it has few observations,
         although its variance is positive.
@@ -724,10 +725,11 @@ class TestFeaturesLeftRaw:
         rng = np.random.default_rng(3)
         batch = np.repeat([0, 1, 2, 3], 2)
         data = rng.normal(5, 1, (30, 8))
-        row = np.array([[1.0, 5.0] + [np.nan] * 6])
+        row = np.array([[1.0, 5.0, np.nan, np.nan, 2.0, 6.0, np.nan, np.nan]])
         out = combat(np.vstack([data, row]), batch)
-        assert not np.array_equal(out[30, :2], row[0, :2])
-        assert np.isfinite(out[30, :2]).all()
+        observed = ~np.isnan(row[0])
+        assert not np.array_equal(out[30, observed], row[0, observed])
+        assert np.isfinite(out[30, observed]).all()
 
     def test_unknown_ref_batch_raises_when_every_row_is_constant(self) -> None:
         """An unknown reference batch is rejected before any row is left raw.
@@ -758,16 +760,23 @@ class TestFeaturesLeftRaw:
         np.testing.assert_array_equal(out[:500], alone)
         np.testing.assert_array_equal(out[500], row)
 
-    def test_single_observed_value_is_corrected(self) -> None:
-        """A row with one observed value is corrected, since the engine gives it unit variance.
+    def test_feature_in_a_single_batch_is_left_raw(
+        self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A feature with values in one batch only keeps them, and the log counts it.
 
-        Failure condition: the row is left raw although the engine estimates it.
+        Failure condition: the feature is rescaled although it has no batch effect
+        to estimate.
         """
+        # The command line turns off propagation on the package logger, and caplog
+        # only sees records that propagate to the root logger.
+        monkeypatch.setattr(logging.getLogger("harmonizepy"), "propagate", True)
         data, batch = self._matrix(50)
-        row = np.array([[7.0] + [np.nan] * 11])
-        out = combat(np.vstack([data, row]), batch)
-        assert np.isfinite(out[50, 0])
-        assert out[50, 0] != 7.0
+        row = np.array([[7.0, 8.0, 7.5] + [np.nan] * 9])
+        with caplog.at_level(logging.INFO, logger="harmonizepy.combat"):
+            out = combat(np.vstack([data, row]), batch)
+        np.testing.assert_array_equal(out[50], row[0])
+        assert "1 feature(s) with values in a single batch left uncorrected" in caplog.text
 
     def test_single_reference_value_mean_only_is_corrected(self) -> None:
         """In mean-only mode, one reference value and a constant batch are still corrected.
@@ -1189,3 +1198,74 @@ def test_non_parametric_prior_keeps_precision_far_from_the_estimates(centre: flo
     # exponent; 1e-6 relative separates that from the cancellation it guards.
     np.testing.assert_allclose(g_star, g_ref, rtol=1e-6)
     np.testing.assert_allclose(d_star, d_ref, rtol=1e-6)
+
+
+class TestUnobservedBatch:
+    """A feature with no value in a whole batch is fitted on the batches it has."""
+
+    @staticmethod
+    def _data() -> tuple[np.ndarray, np.ndarray]:
+        rng = np.random.default_rng(24)
+        batch = np.repeat([0, 1, 2], 4)
+        shift = np.array([0.0, 1.0, -1.0])[batch]
+        data = rng.normal(10, 0.3, (200, 12)) + rng.normal(0, 0.5, (200, 1)) + shift
+        data[0, batch == 2] = np.nan
+        data[0, batch < 2] = 10.0 + shift[batch < 2] + rng.normal(0, 0.3, 8)
+        return data, batch
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [{}, {"mean_only": True}, {"par_prior": False}, {"par_prior": False, "mean_only": True}],
+    )
+    def test_level_follows_the_observed_batches(self, kwargs: dict[str, bool]) -> None:
+        """The feature's level stays near its correction on the observed batches alone.
+
+        Before, the unobserved batch counted as a batch effect of zero and pulled a
+        level of about 10.4 down to about 7.2. What remains is the shrinkage towards
+        batch priors centred on the all-batch mean.
+
+        Failure condition: the unobserved batch enters the grand mean or the prior.
+        """
+        data, batch = self._data()
+        keep = batch < 2
+        level = np.nanmean(combat(data, batch, **kwargs)[0])
+        alone = np.nanmean(combat(data[:, keep], batch[keep], **kwargs)[0])
+        # The batch shifts are +-1 and the old bias was 3.2; 0.4 covers the prior
+        # offset between the two fits, which reaches 0.25 in location-only mode.
+        assert abs(level - alone) < 0.4
+
+    def test_feature_missing_the_reference_batch_is_left_raw(
+        self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With ``ref_batch``, a feature with no value in the reference keeps its values.
+
+        Failure condition: the feature is adjusted to a reference level it does not
+        have, which pulled its level towards zero.
+        """
+        # The command line turns off propagation on the package logger, and caplog
+        # only sees records that propagate to the root logger.
+        monkeypatch.setattr(logging.getLogger("harmonizepy"), "propagate", True)
+        data, batch = self._data()
+        with caplog.at_level(logging.INFO, logger="harmonizepy.combat"):
+            out = combat(data, batch, ref_batch=2)
+        np.testing.assert_array_equal(out[0], data[0])
+        assert "1 feature(s) with no value in the reference batch left uncorrected" in caplog.text
+
+
+def test_batch_observed_by_one_feature_gives_finite_output() -> None:
+    """A batch in which only one feature has values leaves every output finite.
+
+    That batch has no prior to estimate, so its estimates are used unshrunk.
+
+    Failure condition: the prior variance of the batch is undefined and turns the
+    complete feature's values in that batch into NaN.
+    """
+    rng = np.random.default_rng(32)
+    batch = np.repeat([0, 1, 2], 4)
+    data = rng.normal(10, 1, (3, 12)) + np.repeat([0.0, 1.0, -1.0], 4)
+    data[1:, batch == 2] = np.nan
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        for kwargs in ({}, {"mean_only": True}, {"par_prior": False}):
+            out = combat(data, batch, **kwargs)
+            assert np.isfinite(out[~np.isnan(data)]).all()

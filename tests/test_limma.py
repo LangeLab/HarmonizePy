@@ -34,32 +34,25 @@ def make_test_data(n_proteins=50, n_samples_per_batch=5, n_batches=3, seed=42):
 
 
 def _remove_batch_effect_nan_reference(data: np.ndarray, batch: np.ndarray) -> np.ndarray:
-    """Per-feature NaN-safe limma reference used to fence grouped solves."""
-    unique_batches = np.unique(batch)
-    n_batch = len(unique_batches)
-    if n_batch < 2:
-        return data.copy()
+    """Per-feature limma reference: sum-to-zero contrasts over the batches each feature is observed in.
 
-    label_map = {b: i for i, b in enumerate(unique_batches)}
-    batch_idx = np.array([label_map[b] for b in batch], dtype=np.intp)
-
-    x_batch = np.zeros((data.shape[1], n_batch - 1), dtype=np.float64)
-    for j in range(n_batch - 1):
-        x_batch[batch_idx == j, j] = 1.0
-    x_batch[batch_idx == n_batch - 1, :] = -1.0
-
-    design = np.hstack([np.ones((data.shape[1], 1), dtype=np.float64), x_batch])
+    A feature observed in one batch only is returned as given.
+    """
     corrected = data.copy()
     for row_index in range(data.shape[0]):
         y = data[row_index, :]
         valid = ~np.isnan(y)
-        if valid.sum() < n_batch:
+        labels, batch_idx = np.unique(batch[valid], return_inverse=True)
+        n_batch = len(labels)
+        if n_batch < 2:
             continue
-        des = design[valid, :]
-        y1 = y[valid]
-        beta = np.linalg.lstsq(des, y1, rcond=None)[0]
-        beta_batch = np.nan_to_num(beta[1:], nan=0.0)
-        corrected[row_index, valid] = y1 - x_batch[valid, :] @ beta_batch
+        x_batch = np.zeros((int(valid.sum()), n_batch - 1), dtype=np.float64)
+        for j in range(n_batch - 1):
+            x_batch[batch_idx == j, j] = 1.0
+        x_batch[batch_idx == n_batch - 1, :] = -1.0
+        design = np.hstack([np.ones((int(valid.sum()), 1)), x_batch])
+        beta = np.linalg.lstsq(design, y[valid], rcond=None)[0]
+        corrected[row_index, valid] = y[valid] - x_batch @ beta[1:]
     return corrected
 
 
@@ -266,24 +259,50 @@ class TestLimmaInputs:
         with pytest.raises(ValueError, match=r"batch labels must be whole numbers below 2\*\*53"):
             remove_batch_effect(data, labels)
 
-    def test_row_with_fewer_values_than_batches_left_raw_and_logged(
+    def test_feature_missing_a_batch_is_fitted_on_its_observed_batches(self) -> None:
+        """A feature with no value in one batch is levelled across the batches it has.
+
+        Failure condition: the unobserved batch enters the fit and pulls the
+        feature's level towards zero.
+        """
+        rng = np.random.default_rng(12)
+        batch = np.repeat([0, 1, 2], 4)
+        shift = np.array([0.0, 1.0, -1.0])[batch]
+        data = rng.normal(10, 0.3, (200, 12)) + rng.normal(0, 0.5, (200, 1)) + shift
+        data[0, batch == 2] = np.nan
+        keep = batch < 2
+        out = remove_batch_effect(data, batch)
+        alone = remove_batch_effect(data[:, keep], batch[keep])
+        np.testing.assert_allclose(out[0, keep], alone[0], rtol=1e-12)
+
+    def test_feature_missing_a_batch_without_residual_is_left_raw(
         self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A row with fewer observed values than batches keeps its values, and the log counts it.
+        """A feature missing a batch with one value per observed batch keeps its values.
 
-        Failure condition: the row is changed, or left raw without a log line.
+        Fitting it would leave no residual and collapse its values to one level.
+
+        Failure condition: the values 10 and 11 both come back as 10.5.
         """
         # The command line turns off propagation on the package logger, and caplog
         # only sees records that propagate to the root logger.
         monkeypatch.setattr(logging.getLogger("harmonizepy"), "propagate", True)
-        rng = np.random.default_rng(12)
-        batch = np.repeat([0, 1, 2], 2)
+        rng = np.random.default_rng(33)
         data = rng.normal(5, 1, (4, 6))
-        data[3] = [1.0, np.nan, 2.0, np.nan, np.nan, np.nan]
+        data[3] = [10.0, np.nan, 11.0, np.nan, np.nan, np.nan]
         with caplog.at_level(logging.INFO, logger="harmonizepy.limma_wrapper"):
-            out = remove_batch_effect(data, batch)
+            out = remove_batch_effect(data, np.repeat([0, 1, 2], 2))
         np.testing.assert_array_equal(out[3], data[3])
-        assert "1 feature(s) with fewer observed values than batches" in caplog.text
+        assert "1 missing a batch with no more values than observed batches" in caplog.text
+
+    def test_feature_observed_in_one_batch_is_left_raw(self) -> None:
+        """A feature with values in a single batch has no batch effect to remove.
+
+        Failure condition: the feature is shifted although nothing can be estimated.
+        """
+        data = np.array([[1.0, 2.0, np.nan, np.nan], [1.0, 2.0, 3.0, 4.0], [2.0, 3.0, 1.0, 0.0]])
+        out = remove_batch_effect(data, [0, 0, 1, 1])
+        np.testing.assert_array_equal(out[0], data[0])
 
 
 def test_contrast_design_sums_to_zero() -> None:

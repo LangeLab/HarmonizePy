@@ -97,6 +97,8 @@ def _hyper_priors(delta_hat: FloatArray) -> tuple[float, float]:
     scale estimates; both are 1.0 (a flat prior) when that variance is zero or
     undefined.
     """
+    if delta_hat.size < 2:
+        return 1.0, 1.0
     m = float(delta_hat.mean())
     s2 = float(delta_hat.var(ddof=1))
     if s2 <= 0.0 or np.isnan(s2):
@@ -546,9 +548,15 @@ def combat(
       set the empirical-Bayes prior for every other feature; the others are
       corrected as if it were absent.
     - A single feature, which has no other features to share a prior with.
+    - A feature with values in a single batch, which has no batch effect to
+      estimate.
+    - With ``ref_batch``, a feature with no value in the reference batch.
 
     A feature with no observed value is returned as missing and does not enter
-    the fit of the others.
+    the fit of the others. A feature with no value in some batches is fitted on
+    the batches it has: the missing batches enter neither its grand mean nor
+    their priors. Because each batch's prior is shared, such a feature also
+    contributes to the priors of the batches it is observed in.
 
     Parameters
     ----------
@@ -607,9 +615,11 @@ def _combat_validated(
 ) -> FloatArray:
     """Set aside the features ComBat cannot fit, then run the dense or missing-value path.
 
-    Features with no observed value stay missing, and in the parametric modes
-    features whose variance the engine would floor keep their raw values; the
-    rest are corrected as if those features were absent. A single remaining
+    Features with no observed value stay missing. Features with values in a
+    single batch, features with no value in the reference batch, and, in the
+    parametric modes, features whose variance the engine would floor keep
+    their raw values. The rest are corrected as if those features were
+    absent. A single remaining
     feature, or a matrix with no observed value, is returned as given.
     """
     no_values = np.isnan(data).all(axis=1)
@@ -623,6 +633,42 @@ def _combat_validated(
             ref_batch=ref_batch,
         )
         return out
+
+    observed_batches = np.stack(
+        [(~np.isnan(data[:, batch_int == b])).any(axis=1) for b in np.unique(batch_int)]
+    ).sum(axis=0)
+    one_batch = observed_batches < 2
+    if one_batch.any() and not one_batch.all():
+        logger.info(
+            "%d feature(s) with values in a single batch left uncorrected", int(one_batch.sum())
+        )
+        out = data.copy()
+        out[~one_batch] = _combat_validated(
+            data[~one_batch],
+            batch_int,
+            par_prior=par_prior,
+            mean_only=mean_only,
+            ref_batch=ref_batch,
+        )
+        return out
+
+    if ref_batch is not None:
+        no_reference = np.isnan(data[:, batch_int == ref_batch]).all(axis=1)
+        if no_reference.any():
+            logger.info(
+                "%d feature(s) with no value in the reference batch left uncorrected",
+                int(no_reference.sum()),
+            )
+            out = data.copy()
+            if (~no_reference).sum() >= 2:
+                out[~no_reference] = _combat_validated(
+                    data[~no_reference],
+                    batch_int,
+                    par_prior=par_prior,
+                    mean_only=mean_only,
+                    ref_batch=ref_batch,
+                )
+            return out
 
     if par_prior:
         unestimable = _unestimable_rows(data, batch_int, mean_only=mean_only, ref_batch=ref_batch)
@@ -838,6 +884,7 @@ def _estimate_batch_effects(
     layout: _BatchLayout,
     *,
     par_prior: bool,
+    observed: npt.NDArray[np.bool_] | None = None,
 ) -> tuple[FloatArray, FloatArray]:
     """Shrink the per-batch location and scale estimates with the empirical-Bayes prior.
 
@@ -845,11 +892,35 @@ def _estimate_batch_effects(
     solver, or the closed-form posterior mean in location-only mode);
     non-parametric modes use the likelihood-weighted average over features.
     The reference batch, if any, gets location 0 and scale 1.
+
+    *observed*, shape (n_batches, n_features), marks the batches in which each
+    feature has a value; ``None`` means every feature has a value in every
+    batch. A batch's prior then uses only the features observed in it; the
+    estimates of a feature for a batch it lacks have no cell to adjust. A batch
+    observed by fewer than two features has no prior to estimate, so its
+    location and scale estimates are used unshrunk.
     """
-    gamma_bar = gamma_hat.mean(axis=1)
-    t2 = gamma_hat.var(axis=1, ddof=1)
+    few: npt.NDArray[np.bool_] | None = None
+    if observed is None:
+        gamma_bar = gamma_hat.mean(axis=1)
+        t2 = gamma_hat.var(axis=1, ddof=1)
+        delta_for_prior = list(delta_hat)
+    else:
+        few = observed.sum(axis=1) < 2
+        # Placeholder priors keep the shrinkage finite for batches whose
+        # estimates are restored unshrunk below.
+        gamma_bar = np.array(
+            [0.0 if few[i] else gamma_hat[i, observed[i]].mean() for i in range(layout.n_batch)]
+        )
+        t2 = np.array(
+            [
+                1.0 if few[i] else gamma_hat[i, observed[i]].var(ddof=1)
+                for i in range(layout.n_batch)
+            ]
+        )
+        delta_for_prior = [delta_hat[i, observed[i]] for i in range(layout.n_batch)]
     if par_prior and not layout.mean_only:
-        priors = [_hyper_priors(delta_hat[i]) for i in range(layout.n_batch)]
+        priors = [_hyper_priors(delta_for_prior[i]) for i in range(layout.n_batch)]
     else:
         priors = [(1.0, 1.0)] * layout.n_batch
 
@@ -866,10 +937,21 @@ def _estimate_batch_effects(
             if par_prior:
                 gamma_star[i] = _postmean_unit_scale(gamma_bar[i], t2[i], gamma_hat[i])
                 delta_star[i] = 1.0
-            else:
+            elif observed is None:
                 gamma_star[i], d_star = _int_eprior(s_data[:, idx], gamma_hat[i], delta_hat[i])
                 delta_star[i] = 1.0 if layout.mean_only else d_star
+            else:
+                rows = observed[i]
+                gamma_star[i], delta_star[i] = gamma_hat[i], delta_hat[i]
+                g_sub, d_sub = _int_eprior(
+                    s_data[rows][:, idx], gamma_hat[i, rows], delta_hat[i, rows]
+                )
+                gamma_star[i, rows] = g_sub
+                delta_star[i, rows] = 1.0 if layout.mean_only else d_sub
 
+    if few is not None and few.any():
+        gamma_star[few] = gamma_hat[few]
+        delta_star[few] = 1.0 if layout.mean_only else delta_hat[few]
     if layout.ref_idx is not None:
         gamma_star[layout.ref_idx] = 0.0
         delta_star[layout.ref_idx] = 1.0
@@ -937,6 +1019,8 @@ def _combat_nan(
     valid_row_groups = group_valid_rows(data)
     grouped_layouts = _prepare_grouped_batch_design_layouts(layout.design, valid_row_groups)
     b_hat = _beta_na_grouped_batch_design(data, layout.design, valid_row_groups, grouped_layouts)
+    observed = np.stack([(~np.isnan(data[:, idx])).any(axis=1) for idx in layout.batches_ind])
+    partial = ~observed.all(axis=0)
 
     if layout.ref_idx is not None:
         grand_mean = b_hat[layout.ref_idx]
@@ -945,6 +1029,9 @@ def _combat_nan(
         var_n = _row_var_nan_grouped(data[:, ref_cols] - fitted_ref)
     else:
         grand_mean = (layout.batch_sizes / data.shape[1]) @ b_hat
+        if partial.any():
+            weights = observed[:, partial] * layout.batch_sizes[:, np.newaxis]
+            grand_mean[partial] = (weights * b_hat[:, partial]).sum(axis=0) / weights.sum(axis=0)
         residuals = (layout.design.T @ b_hat).T
         np.subtract(data, residuals, out=residuals)
         var_n = _row_var_nan_grouped(residuals, valid_row_groups)
@@ -964,7 +1051,12 @@ def _combat_nan(
             delta_hat[b] = _row_var_nan_grouped(s_data[:, idx])
 
     gamma_star, delta_star = _estimate_batch_effects(
-        s_data, gamma_hat, delta_hat, layout, par_prior=par_prior
+        s_data,
+        gamma_hat,
+        delta_hat,
+        layout,
+        par_prior=par_prior,
+        observed=observed if partial.any() else None,
     )
     return _adjust(s_data, data, gamma_star, delta_star, std_pooled, stand_mean, layout)
 
