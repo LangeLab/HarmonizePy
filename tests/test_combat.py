@@ -1105,3 +1105,87 @@ class TestDesignCache:
             _get_cached_design(np.arange(n_samples) % n_batch, n_batch)
         last = np.arange(n_samples) % 39
         assert (39, last.astype(np.intp).tobytes()) in _design_cache
+
+
+class TestNonParametricPrior:
+    """The likelihood-weighted prior of the non-parametric modes."""
+
+    def test_missing_likelihood_falls_back_to_equal_weights(self) -> None:
+        """When a support feature's scale is NaN, the other targets average the rest equally.
+
+        The feature with the NaN scale is left out of its own average, so its row has
+        no NaN and is weighted by likelihood as usual.
+
+        Failure condition: the NaN spreads into the location estimates, or a target
+        keeps its own estimate in the average.
+        """
+        rng = np.random.default_rng(21)
+        s_data = rng.normal(0, 1, (6, 5))
+        g_hat = s_data.mean(axis=1)
+        d_hat = s_data.var(axis=1, ddof=1)
+        d_hat[0] = np.nan
+        g_star, _ = _int_eprior(s_data, g_hat, d_hat)
+        expected = np.array([np.delete(g_hat, i).mean() for i in range(1, 6)])
+        # Equal weights sum the same five values in another order than np.mean.
+        np.testing.assert_allclose(g_star[1:], expected, rtol=1e-14)
+        assert np.isfinite(g_star[0])
+
+    def test_far_targets_do_not_underflow(self) -> None:
+        """Targets far from every support feature still get finite estimates.
+
+        Failure condition: all weights underflow to zero and the estimate is NaN.
+        """
+        rng = np.random.default_rng(22)
+        s_data = rng.normal(0, 1, (50, 6))
+        s_data[0] += 1e3
+        g_hat = s_data.mean(axis=1)
+        d_hat = s_data.var(axis=1, ddof=1)
+        g_star, d_star = _int_eprior(s_data, g_hat, d_hat)
+        assert np.isfinite(g_star).all() and np.isfinite(d_star).all()
+
+
+def _reference_int_eprior(
+    s_data: np.ndarray, g_hat: np.ndarray, d_hat: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Per-pair loop written after R ``sva:::int.eprior`` 3.60.0, as an oracle.
+
+    The likelihood of target i under feature j sums the squared residuals
+    ``(x - g_j)^2`` directly, as R does, so it keeps full precision when the
+    values lie far from ``g_j``. Weights are scaled by the row maximum before
+    ``exp`` (R works in direct space and underflows earlier).
+    """
+    g_star, d_star = g_hat.copy(), d_hat.copy()
+    for i in range(s_data.shape[0]):
+        x = s_data[i][~np.isnan(s_data[i])]
+        others = [j for j in range(s_data.shape[0]) if j != i]
+        ll = np.array(
+            [
+                -((x - g_hat[j]) ** 2).sum() / (2 * d_hat[j])
+                - x.size / 2 * np.log(2 * np.pi * d_hat[j])
+                for j in others
+            ]
+        )
+        w = np.exp(ll - ll.max())
+        g_star[i] = (w * g_hat[others]).sum() / w.sum()
+        d_star[i] = (w * d_hat[others]).sum() / w.sum()
+    return g_star, d_star
+
+
+@pytest.mark.parametrize("centre", [0.0, 1e4, 1e6])
+def test_non_parametric_prior_keeps_precision_far_from_the_estimates(centre: float) -> None:
+    """Targets far from the support estimates, relative to their spread, keep full precision.
+
+    Failure condition: the likelihood is formed from sums of ``x^2`` and ``x``,
+    whose difference cancels, so the scale estimates go wrong by up to a factor of
+    three at a centre of 1e6 with a spread of 1e-3.
+    """
+    rng = np.random.default_rng(23)
+    s_data = centre + rng.normal(0, 1e-3, (50, 6)) + rng.normal(0, 1e-2, (50, 1))
+    g_hat = s_data.mean(axis=1) + rng.normal(0, 1e-3, 50)
+    d_hat = s_data.var(axis=1, ddof=1)
+    g_star, d_star = _int_eprior(s_data, g_hat, d_hat)
+    g_ref, d_ref = _reference_int_eprior(s_data, g_hat, d_hat)
+    # The reference itself carries rounding of order eps * centre^2 / d in the
+    # exponent; 1e-6 relative separates that from the cancellation it guards.
+    np.testing.assert_allclose(g_star, g_ref, rtol=1e-6)
+    np.testing.assert_allclose(d_star, d_ref, rtol=1e-6)

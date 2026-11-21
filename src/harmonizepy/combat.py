@@ -325,7 +325,17 @@ def _int_eprior(
     Each feature's estimate is the average of the other features' estimates,
     weighted by the likelihood of its observed cells under each of them
     (R ``sva:::int.eprior``). The computation is deterministic: a weighted sum
-    over features, computed in blocks of ``_EPRIOR_BLOCK_ROWS`` target rows.
+    over features, in blocks of ``_EPRIOR_BLOCK_ROWS`` target rows.
+
+    The log-likelihood of target *i* under support *j* is written as
+    ``-(SS_i + n_i (m_i - g_j)^2) / (2 d_j) - n_i log(2 pi d_j) / 2``, with
+    *m_i* the target's mean and *SS_i* its sum of squared deviations. Expanding
+    the square into sums of ``x^2`` and ``x`` loses precision when a target's
+    values lie far from the support estimates relative to their spread, so the
+    deviation from the mean is formed directly, as R does. The row maximum is
+    subtracted before ``exp``, so the weights cannot all underflow; a row whose
+    weights are not finite falls back to equal weights over the other features.
+    The weighted sums use one matrix product per block.
 
     NaN-safe: each gene uses only its non-NaN entries for the likelihood,
     matching R sva::ComBat's per-gene handling where ``x <- sdat[i, !is.na(sdat[i, ])]``
@@ -350,53 +360,40 @@ def _int_eprior(
         return g_star, d_star
 
     d = np.maximum(d_hat, _VARIANCE_FLOOR)
-    not_nan = ~np.isnan(s_data)
-    n_per_gene = not_nan.sum(axis=1).astype(np.float64)
-    sum_x = np.nansum(s_data, axis=1)
-    sum_x2 = np.nansum(s_data * s_data, axis=1)
-    g_hat_sq = g_hat * g_hat
-    log_two_pi_d = np.log(2.0 * np.pi * d)
-    neg_half_log_two_pi_d = -0.5 * log_two_pi_d
+    observed = ~np.isnan(s_data)
+    n_obs = observed.sum(axis=1).astype(np.float64)
+    mean = np.nansum(s_data, axis=1) / np.maximum(n_obs, 1.0)
+    resid = np.where(observed, s_data - mean[:, np.newaxis], 0.0)
+    sum_sq = (resid * resid).sum(axis=1)
+    half_inv_d = 0.5 / d
+    half_log_two_pi_d = 0.5 * np.log(2.0 * np.pi * d)
+    support = np.column_stack([g_hat, d, np.ones(n_genes)])
+    targets = np.flatnonzero(n_obs >= 1.0)
+    buffer = np.empty((_EPRIOR_BLOCK_ROWS, n_genes))
 
-    block_size = _EPRIOR_BLOCK_ROWS
-    for start in range(0, n_genes, block_size):
-        stop = min(start + block_size, n_genes)
-        block_indices = np.arange(start, stop, dtype=np.intp)
-        n_block = n_per_gene[start:stop]
-        valid_rows = n_block >= 1.0
-        if not np.any(valid_rows):
-            continue
-
-        target_indices = block_indices[valid_rows]
-        n_valid = n_block[valid_rows]
-        sum_x_valid = sum_x[start:stop][valid_rows]
-        sum_x2_valid = sum_x2[start:stop][valid_rows]
-
-        log_lh = (
-            sum_x2_valid[:, np.newaxis]
-            - 2.0 * sum_x_valid[:, np.newaxis] * g_hat[np.newaxis, :]
-            + n_valid[:, np.newaxis] * g_hat_sq[np.newaxis, :]
-        )
-        np.divide(log_lh, 2.0 * d[np.newaxis, :], out=log_lh)
+    for start in range(0, targets.size, _EPRIOR_BLOCK_ROWS):
+        rows = targets[start : start + _EPRIOR_BLOCK_ROWS]
+        log_lh = buffer[: rows.size]
+        np.subtract(mean[rows, np.newaxis], g_hat[np.newaxis, :], out=log_lh)
+        np.square(log_lh, out=log_lh)
+        log_lh *= n_obs[rows, np.newaxis]
+        log_lh += sum_sq[rows, np.newaxis]
+        log_lh *= half_inv_d
+        log_lh += n_obs[rows, np.newaxis] * half_log_two_pi_d
         np.negative(log_lh, out=log_lh)
-        log_lh += n_valid[:, np.newaxis] * neg_half_log_two_pi_d[np.newaxis, :]
-
-        row_ids = np.arange(target_indices.size, dtype=np.intp)
-        log_lh[row_ids, target_indices] = -np.inf
-
-        row_max = np.max(log_lh, axis=1, keepdims=True)
-        log_lh -= row_max
+        log_lh[np.arange(rows.size), rows] = -np.inf
+        log_lh -= log_lh.max(axis=1, keepdims=True)
         np.exp(log_lh, out=log_lh)
-        totals = log_lh.sum(axis=1)
+        sums = log_lh @ support
 
-        bad_totals = (totals == 0.0) | ~np.isfinite(totals)
-        if np.any(bad_totals):
-            log_lh[bad_totals] = 1.0
-            log_lh[bad_totals, target_indices[bad_totals]] = 0.0
-            totals = log_lh.sum(axis=1)
+        bad = (sums[:, 2] == 0.0) | ~np.isfinite(sums[:, 2])
+        if np.any(bad):
+            log_lh[bad] = 1.0
+            log_lh[np.flatnonzero(bad), rows[bad]] = 0.0
+            sums[bad] = log_lh[bad] @ support
 
-        g_star[target_indices] = (log_lh * g_hat[np.newaxis, :]).sum(axis=1) / totals
-        d_star[target_indices] = (log_lh * d[np.newaxis, :]).sum(axis=1) / totals
+        g_star[rows] = sums[:, 0] / sums[:, 2]
+        d_star[rows] = sums[:, 1] / sums[:, 2]
 
     return g_star, d_star
 

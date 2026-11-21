@@ -11,7 +11,7 @@ All notable changes to this project are documented in this file. The format is b
 - ComBat's parametric solver iterates all batches of a group together, each stopping at its own convergence; corrected values are unchanged. Per-group bookkeeping and peak memory are lower, and the design cache is bounded by size.
 - The per-group ComBat log line is at DEBUG level; the run's INFO lines report the number of groups.
 - CSV and TSV files are read with pandas' C parser on the calling thread, at every width; pyarrow's reader, which started a thread pool, is no longer used. Parquet is read without reader threads. The `io` extra is needed for Parquet only.
-- ComBat's non-parametric modes (3 and 4) compute the prior in smaller blocks, which keeps them in the CPU cache for large groups and lowers their peak memory; corrected values are unchanged.
+- ComBat's non-parametric modes (3 and 4) compute the prior in smaller blocks, which keeps them in the CPU cache for large groups and lowers their peak memory.
 
 ### Fixed
 
@@ -37,6 +37,7 @@ All notable changes to this project are documented in this file. The format is b
 - `combat_mode` must be an integer from 1 to 4 in `harmonize()`, `HarmonizeConfig`, `adjust_combat()`, and `splitting()`, with one error message. `True` and `1.0` were accepted by some of these and rejected by others.
 - `build_block_list()` accepts float batch labels; it raised a `KeyError` for labels that were not whole numbers.
 - The ComBat log line reports location-only correction when a one-sample batch forces it.
+- ComBat's non-parametric modes (3 and 4) form each likelihood from the deviations to the feature's own mean, as `sva::ComBat` does. Expanding the square lost precision when a feature's values lay far from the other features' estimates relative to their spread, which could put the scale estimates off by up to a factor of three. On the test fixtures, corrected values change by at most 6e-13 relative.
 
 
 ## [0.3.2] - 2026-05-29
