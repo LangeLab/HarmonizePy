@@ -25,7 +25,12 @@ from .io import clean_features, read_description, read_main_data, write_output
 from .sorting import sort_batches
 from .splitting import splitting
 from .types import HarmonizeConfig
-from .validation import validate_data_matrix, validate_description, validate_harmonize_args
+from .validation import (
+    sample_batch_map,
+    validate_data_matrix,
+    validate_description,
+    validate_harmonize_args,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -160,15 +165,7 @@ def harmonize(
     )
 
     # --- Extract batch labels aligned to data column order -----------------
-    # Look up ID and batch columns by name (robust to column reordering),
-    # falling back to positional indexing for backwards compatibility.
-    if "ID" in description.columns and "batch" in description.columns:
-        id_col = description["ID"]
-        batch_col = description["batch"]
-    else:
-        id_col = description.iloc[:, 0]
-        batch_col = description.iloc[:, 2]
-    sample_to_batch = dict(zip(id_col.astype(str), batch_col.astype(int), strict=True))
+    sample_to_batch = sample_batch_map(description)
     batch_list = np.array([sample_to_batch[col] for col in data.columns], dtype=np.int64)
 
     # --- Validate block_size now that we know n_batches --------------------

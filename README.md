@@ -142,7 +142,7 @@ harmonizepy data.tsv batch.csv --dry-run
 harmonizepy data.tsv batch.csv --config run.toml
 ```
 
-When `-o` is omitted, the output is written as `<data_stem>_corrected.tsv` next to the input file. See [CLI Reference](https://github.com/LangeLab/HarmonizePy/wiki/CLI-Reference) for all flags, output formats, and config file syntax.
+When `-o` is omitted, the output is written next to the input file as `<data_stem>_corrected` with the extension of `--output-format` (`.tsv` by default). See [CLI Reference](https://github.com/LangeLab/HarmonizePy/wiki/CLI-Reference) for all flags, output formats, and config file syntax.
 
 ## Running tests
 

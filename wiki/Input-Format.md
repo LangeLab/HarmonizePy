@@ -56,7 +56,7 @@ The batch description maps each sample to a batch. It is a CSV file with three r
 | Column | Type | Description |
 | --- | --- | --- |
 | `ID` | string | Sample name. Must match a column name in the data matrix exactly. |
-| `sample` | integer | Sample index. Must be unique per row. Used for ordering. |
+| `sample` | integer | Sample index, kept for compatibility with HarmonizR. HarmonizePy does not read it. |
 | `batch` | integer | Batch label. Samples with the same batch value are corrected together. |
 
 ### Example
@@ -75,18 +75,19 @@ In this example, Samples 1 and 2 are in batch 1, Samples 3 and 4 in batch 2, and
 
 ### Rules
 
-- Column names are case-sensitive. `ID`, `sample`, and `batch` must be spelled exactly as shown.
+- Column names are case-sensitive. The sample IDs come from the column named `ID` and the labels from the column named `batch`; without those names, the first column holds the IDs and the third the batch labels.
 - Every sample name in `ID` must appear as a column in the data matrix.
 - Every data matrix column must appear in `ID`. Extra samples in either direction raise a `ValueError`.
-- Batch labels must be integers. String labels raise a validation error.
-- At least 2 distinct batches are required. A single batch raises a `ValueError`.
+- Each sample is listed once. A repeated ID raises a `ValueError`.
+- Batch labels must be whole numbers (`1` or `1.0`). Text, blanks, and fractions such as `1.5` raise a `ValueError` that names the column.
+- With a single batch there is nothing to correct, and the data are returned unchanged.
 - Batch sizes do not need to be equal. Unbalanced batches are handled.
 
 ### When passing a DataFrame
 
 ```python
 batch = pd.read_csv("batch.csv")
-# No index_col needed. The ID, sample, and batch columns are used by name.
+# No index_col needed. The ID and batch columns are found by name, or else by position.
 ```
 
 ---
@@ -109,8 +110,8 @@ HarmonizePy validates both inputs before running any computation. Common errors 
 
 - `"duplicate feature names with different values"`: a feature name appears in two rows whose values differ
 - `"Non-numeric values in data matrix"`: a data cell contains text or a non-numeric value
-- `"Sample IDs in description not found in data columns"`: an `ID` value in the batch description does not match any column in the data matrix
-- `"Data columns not present in description"`: a data column has no corresponding row in the batch description
-- `"batch column must contain integers"`: the `batch` column holds strings or floats
-- `"At least 2 batches required"`: all samples share the same batch label
-- `"Missing required column: ID"`: the batch description is missing one of the three required columns
+- `"Sample IDs in description do not match data columns"`: an ID in the description is not a data column, or a data column has no row in the description; the message lists both kinds
+- `"batch labels in column 'batch' must be whole numbers"`: the batch column holds text, blanks, or fractions
+- `"sample IDs listed more than once in the description"`: a sample appears in two rows
+- `"description must have at least 3 columns"`: the batch description has fewer than three columns
+- `"the batch column cannot be found"` or `"the ID column cannot be found"`: the columns are not named and their positions point at the same column

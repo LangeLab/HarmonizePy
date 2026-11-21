@@ -192,6 +192,7 @@ The catastrophic blocked benchmark rows previously reported in markdown and JSON
 
 1. **Batch label renumbering**: R renumbers after sort. Python keeps original IDs. No impact on block structure.
 2. **Batch count**: R uses `tail()` (fragile). Python uses `len(unique())` (robust).
+   - **Description columns**: HarmonizR 1.10.0 reads the sample IDs from column 1 and the batches from column 3 by position, converting batches with `as.numeric`. Python uses the columns named `ID` and `batch` when present and falls back to those positions, and rejects batch labels that are not whole numbers.
 3. **Empty column removal**: R `janitor::remove_empty` removes both rows and cols. Python drops only all-NaN rows.
 4. **Numeric coercion**: R `vapply(as.numeric)` silently creates NA. Python raises ValueError on non-numeric.
 5. **Duplicate rows**: R `unique()` compares values only. Python requires the name and the values to repeat.

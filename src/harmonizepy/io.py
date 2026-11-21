@@ -234,7 +234,8 @@ def read_description(path: str) -> pd.DataFrame:
     path : str
         Path to the comma-separated file.  Expected columns: ``ID``
         (sample name), ``sample`` (integer index), ``batch`` (integer
-        batch label).
+        batch label).  Without the names ``ID`` and ``batch``, the first
+        column holds the sample IDs and the third the batch labels.
 
     Returns
     -------

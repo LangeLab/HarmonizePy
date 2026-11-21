@@ -41,10 +41,10 @@ harmonizepy data.tsv batch.csv -o corrected.tsv --summary run.json
 
 ## Output flags
 
-- `-o`, `--output PATH` (default: `<data_stem>_corrected.tsv`): output file path. Format is inferred from the extension (`.tsv`, `.csv`, `.parquet`, `.pq`).
+- `-o`, `--output PATH` (default: `<data_stem>_corrected.tsv`, or `.csv` or `.parquet` with `--output-format`): output file path. Format is inferred from the extension (`.tsv`, `.csv`, `.parquet`, `.pq`).
 - `--output-format {tsv,csv,parquet}` (default: inferred from extension): force a specific output format regardless of file extension. Parquet requires `harmonizepy[io]`.
 
-When `-o` is omitted, the output is written next to the input data file as `<data_stem>_corrected.tsv`. If `--output-format parquet` is given without `-o`, the default becomes `<data_stem>_corrected.parquet`.
+When `-o` is omitted, the output is written next to the input data file as `<data_stem>_corrected.tsv`. With `--output-format csv` or `--output-format parquet` and no `-o`, the extension follows the format: `<data_stem>_corrected.csv` or `<data_stem>_corrected.parquet`.
 
 ---
 
@@ -70,7 +70,7 @@ When `-o` is omitted, the output is written next to the input data file as `<dat
 
 ## Workflow helpers
 
-- `--dry-run`: validate inputs, print run plan, exit without computing. Exit code `0` if valid, `1` on error.
+- `--dry-run`: validate inputs, print run plan, exit without computing. Writes no files, and cannot be combined with `--log-file`, `--summary`, or `--json`. Exit code `0` if valid, `1` on a validation error, `2` on a usage error or a missing input file.
 - `--summary PATH`: write a JSON run summary to PATH after completion. Contains resolved parameters, input/output dimensions, and version.
 - `--json`: print the run summary as JSON to stdout. Suppresses INFO log messages.
 - `--config PATH`: load flags from a TOML, JSON, or YAML config file. CLI flags override config file values.

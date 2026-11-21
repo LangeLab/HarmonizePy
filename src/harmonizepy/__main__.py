@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import sys
 import tomllib
 from collections.abc import Sequence
@@ -28,7 +29,12 @@ from .affiliation import build_affiliation_list
 from .blocking import build_block_list
 from .core import harmonize
 from .io import read_description, read_main_data
-from .validation import validate_data_matrix, validate_description, validate_harmonize_args
+from .validation import (
+    sample_batch_map,
+    validate_data_matrix,
+    validate_description,
+    validate_harmonize_args,
+)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -100,7 +106,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "description",
-        help="Batch description (CSV with columns: ID, sample, batch).",
+        help=(
+            "Batch description (CSV with columns ID, sample, batch). Without the names "
+            "ID and batch, the first column holds the sample IDs and the third the batches."
+        ),
     )
 
     # -- Output -------------------------------------------------------------
@@ -110,10 +119,10 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="PATH",
         help=(
-            "Output file path. Default: <data_stem>_corrected.tsv placed next to the "
-            "input data file. If --output-format parquet is given without -o, the default "
-            "becomes <data_stem>_corrected.parquet. Format is inferred from the extension "
-            "(.tsv, .csv, .parquet/.pq) unless --output-format is given."
+            "Output file path. Default: <data_stem>_corrected placed next to the input "
+            "data file, with the extension of --output-format (.tsv by default, .csv, or "
+            ".parquet). Format is inferred from the extension (.tsv, .csv, .parquet/.pq) "
+            "unless --output-format is given."
         ),
     )
     parser.add_argument(
@@ -224,7 +233,9 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Load and validate inputs, resolve all parameters, print a run plan, "
             "then exit without running correction. "
-            "Exit code 0 if inputs are valid, 1 on validation error. "
+            "Exit code 0 if inputs are valid, 1 on a validation error, 2 on a usage error "
+            "or a missing input file. Writes no files; cannot be combined with --log-file, "
+            "--summary, or --json. "
             "Use in pipeline pre-checks to catch problems before committing compute time."
         ),
     )
@@ -304,9 +315,9 @@ def _resolve_output_path(
 ) -> str:
     """Return an output path based on explicit args or CLI defaults.
 
-    Without ``-o``, the default path is ``<stem>_corrected.tsv`` next to the
-    input data file. When ``--output-format parquet`` is given without ``-o``,
-    the default path becomes ``<stem>_corrected.parquet``.
+    Without ``-o``, the default path is ``<stem>_corrected`` next to the input
+    data file, with the extension of ``--output-format`` (``.tsv`` by default,
+    ``.csv``, or ``.parquet``).
     """
     if output is not None:
         return output
@@ -315,11 +326,11 @@ def _resolve_output_path(
     # native drive/backslash formatting for regular Windows paths.
     path_type = (
         PureWindowsPath
-        if "\\" in data_path or (len(data_path) > 1 and data_path[1] == ":")
+        if "\\" in data_path or re.match(r"[A-Za-z]:([\\/]|$)", data_path)
         else PurePosixPath
     )
     p = path_type(data_path)
-    ext = ".parquet" if output_format == "parquet" else ".tsv"
+    ext = {"csv": ".csv", "parquet": ".parquet"}.get(output_format or "tsv", ".tsv")
     return str(p.parent / f"{p.stem}_corrected{ext}")
 
 
@@ -544,6 +555,23 @@ def main(argv: Sequence[str] | None = None) -> None:
     output_path = _resolve_output_path(args.data, args.output, args.output_format)
     output_fmt = _infer_format(output_path, args.output_format)
 
+    # A dry run prints its plan and writes nothing, so options that only shape the
+    # files or the summary of a correction run would be ignored without a word.
+    if args.dry_run:
+        for flag, value in (
+            ("--log-file", args.log_file),
+            ("--summary", args.summary),
+            ("--json", args.json_output),
+        ):
+            if value:
+                parser.error(f"{flag} cannot be used with --dry-run")
+
+    # -- File existence pre-check (fast fail before any loading) ------------
+    if not Path(args.data).is_file():
+        parser.error(f"data file not found: '{args.data}'")
+    if not Path(args.description).is_file():
+        parser.error(f"description file not found: '{args.description}'")
+
     # -- Logging setup ------------------------------------------------------
     # Configure the root harmonizepy logger so all child modules
     # (harmonizepy.combat, harmonizepy.core, etc.) inherit the settings.
@@ -565,10 +593,11 @@ def main(argv: Sequence[str] | None = None) -> None:
     console.setFormatter(logging.Formatter(_LOG_FORMAT))
     root_logger.addHandler(console)
 
-    # File handler: always-on by default, writes DEBUG with timestamps.
+    # File handler: on by default for a correction run, writes DEBUG with timestamps.
     # Log path is derived from the output path (e.g. corrected.tsv -> corrected.log)
-    # unless overridden via --log-file, or disabled via --no-log.
-    if not args.no_log:
+    # unless overridden via --log-file, or disabled via --no-log. A dry run writes no
+    # files, so a log would sit next to an output that does not exist.
+    if not args.no_log and not args.dry_run:
         log_path = args.log_file if args.log_file else _resolve_log_path(output_path)
         try:
             fh = logging.FileHandler(log_path, mode="w", encoding="utf-8")
@@ -582,12 +611,6 @@ def main(argv: Sequence[str] | None = None) -> None:
                 log_path,
             )
 
-    # -- File existence pre-check (fast fail before any loading) ------------
-    if not Path(args.data).is_file():
-        parser.error(f"data file not found: '{args.data}'")
-    if not Path(args.description).is_file():
-        parser.error(f"description file not found: '{args.description}'")
-
     # -- Dry-run path -------------------------------------------------------
     # Suppress pipeline logging during dry-run so the plan output is clean.
     if args.dry_run:
@@ -599,13 +622,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             validate_data_matrix(data)
             validate_description(description, data)
             # Resolve n_batches so block_size can be validated properly
-            sample_to_batch = dict(
-                zip(
-                    description.iloc[:, 0].astype(str),
-                    description.iloc[:, 2].astype(int),
-                    strict=True,
-                )
-            )
+            sample_to_batch = sample_batch_map(description)
             batch_arr = np.array([sample_to_batch[col] for col in data.columns], dtype=np.int64)
             n_batches = int(np.unique(batch_arr).size)
             # Resolve effective needed_values once for both validation and spotting
@@ -663,7 +680,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         description_df = read_description(args.description)
 
         n_features_input, n_samples = data_df.shape
-        n_batches = int(description_df.iloc[:, 2].nunique())
+        n_batches = len(set(sample_batch_map(description_df).values()))
 
         result = harmonize(
             data_df,

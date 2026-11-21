@@ -80,15 +80,18 @@ def validate_description(desc: pd.DataFrame, data: pd.DataFrame) -> None:
     Parameters
     ----------
     desc : DataFrame
-        Batch description with at least 3 columns (ID, sample, batch).
+        Batch description with at least 3 columns (ID, sample, batch). The ID
+        and batch columns are found by name when present, otherwise by
+        position (first and third).
     data : DataFrame
         Data matrix whose column names must match the IDs in *desc*.
 
     Raises
     ------
     ValueError
-        If sample IDs do not match data columns or the description has
-        fewer than 3 columns.
+        If the description has fewer than 3 columns, its ID or batch column
+        cannot be found, it lists a sample ID more than once, its IDs do not
+        match the data columns, or a batch label is not a whole number.
 
     Examples
     --------
@@ -98,16 +101,14 @@ def validate_description(desc: pd.DataFrame, data: pd.DataFrame) -> None:
     >>> desc = pd.DataFrame({"ID": ["s1", "s2"], "sample": [1, 2], "batch": [1, 2]})
     >>> validate_description(desc, data)  # no error
     """
-    if desc.shape[1] < 3:
+    ids, batches = _description_columns(desc)
+    id_series = ids.astype(str)
+    repeated_ids = id_series[id_series.duplicated()]
+    if not repeated_ids.empty:
         raise ValueError(
-            f"description must have at least 3 columns (ID, sample, batch), "
-            f"got {desc.shape[1]}. Check the description file format."
+            f"sample IDs listed more than once in the description: "
+            f"{sorted(set(repeated_ids))[:5]}. Each sample must have one batch."
         )
-
-    if "ID" in desc.columns:
-        id_series = desc["ID"].astype(str)
-    else:
-        id_series = desc.iloc[:, 0].astype(str)
     desc_ids = set(id_series)
     data_ids = set(data.columns.astype(str))
 
@@ -121,8 +122,75 @@ def validate_description(desc: pd.DataFrame, data: pd.DataFrame) -> None:
             parts.append(f"in data but not description: {sorted(extra_data)[:5]}")
         raise ValueError(
             f"Sample IDs in description do not match data columns - {'; '.join(parts)}. "
-            f"The first column (or a column named 'ID') of description must list the exact column names of data."
+            f"The column named 'ID' (or else the first column) of description must list the "
+            f"exact column names of data."
         )
+
+    _integer_labels(batches)
+
+
+def _description_columns(desc: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
+    """Return the sample ID and batch columns of a batch description.
+
+    Each is found by name (``ID``, ``batch``) when present, otherwise by
+    position: the first column for IDs and the third for batches.
+
+    Raises
+    ------
+    ValueError
+        If the description has fewer than 3 columns, or the ID and batch rules
+        point at the same column.
+    """
+    if desc.shape[1] < 3:
+        raise ValueError(
+            f"description must have at least 3 columns (ID, sample, batch), "
+            f"got {desc.shape[1]}. Check the description file format."
+        )
+    id_name = "ID" if "ID" in desc.columns else desc.columns[0]
+    batch_name = "batch" if "batch" in desc.columns else desc.columns[2]
+    if batch_name == id_name:
+        if id_name == "batch":
+            raise ValueError(
+                "the ID column cannot be found: the first column is the batch column. "
+                "Name the ID column 'ID'."
+            )
+        raise ValueError(
+            "the batch column cannot be found: the third column is the ID column. "
+            "Name the batch column 'batch'."
+        )
+    return desc[id_name], desc[batch_name]
+
+
+# Every integer up to 2**53 is exact in float64; a float label at or beyond it
+# may already have been rounded to a neighbouring integer.
+_MAX_FLOAT_LABEL = 2.0**53
+
+
+def _integer_labels(batches: pd.Series) -> npt.NDArray[np.int64]:
+    """Return batch labels as integers, rejecting any label that is not a whole number.
+
+    Integer columns are used as they are. Other columns are read as numbers and
+    must hold whole numbers below 2**53 in magnitude, the range in which
+    float64 represents every integer exactly.
+
+    Raises
+    ------
+    ValueError
+        If a label is missing, not numeric, not a whole number, or out of range,
+        naming the column and the first offending values.
+    """
+    numeric = pd.to_numeric(batches, errors="coerce")
+    if pd.api.types.is_signed_integer_dtype(numeric.dtype) and not numeric.isna().any():
+        return numeric.to_numpy(dtype=np.int64)
+    values = numeric.to_numpy(dtype=np.float64, na_value=np.nan)
+    bad = ~np.isfinite(values) | (values != np.round(values)) | (np.abs(values) >= _MAX_FLOAT_LABEL)
+    if bad.any():
+        shown = [str(v) for v in batches[bad].tolist()[:5]]
+        raise ValueError(
+            f"batch labels in column {batches.name!r} must be whole numbers; "
+            f"found {', '.join(shown)}."
+        )
+    return values.astype(np.int64)
 
 
 def validate_combat_input(data: _Array, batch: npt.NDArray[np.integer[Any]]) -> None:
@@ -201,6 +269,37 @@ def validate_limma_input(data: _Array, batch: _Array) -> None:
         )
 
     _reject_infinite(data, range(data.shape[0]))
+
+
+def sample_batch_map(desc: pd.DataFrame) -> dict[str, int]:
+    """Map each sample ID to its integer batch label.
+
+    The ID and batch columns are found as in ``validate_description``: by the
+    names ``ID`` and ``batch`` when present, otherwise the first column holds
+    the IDs and the third holds the batch labels.
+
+    Parameters
+    ----------
+    desc : DataFrame
+        Batch description with at least three columns.
+
+    Returns
+    -------
+    dict[str, int]
+        Sample ID to batch label.
+
+    Raises
+    ------
+    ValueError
+        If the description has fewer than 3 columns, its ID or batch column
+        cannot be found, it lists a sample ID more than once, or a batch label
+        is not a whole number.
+    """
+    ids, batches = _description_columns(desc)
+    id_series = ids.astype(str)
+    if id_series.duplicated().any():
+        raise ValueError("sample IDs listed more than once in the description.")
+    return dict(zip(id_series, _integer_labels(batches).tolist(), strict=True))
 
 
 _VALID_SORT_STRATEGIES: frozenset[str] = frozenset({"sparsity", "jaccard", "seriation"})

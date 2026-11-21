@@ -990,3 +990,139 @@ class TestCLIAllFlags:
             unique_removal=True,
         )
         pd.testing.assert_frame_equal(cli, api, atol=1e-10)
+
+
+_SMALL_DATA: str = (
+    "id\ts1\ts2\ts3\ts4\ts5\ts6\n"
+    "p1\t1.0\t2.0\t3.0\t4.0\t5.0\t6.5\n"
+    "p2\t2.0\t2.5\t3.1\t4.2\t5.1\t6.0\n"
+    "p3\t1.5\t2.7\t3.3\t3.9\t5.5\t6.9\n"
+    "p4\t0.9\t2.2\t3.6\t4.1\t4.8\t6.2\n"
+)
+_DESC_ORDERS: dict[str, str] = {
+    "ID, sample, batch": "ID,sample,batch\n"
+    + "".join(f"s{i},{i},{1 if i <= 3 else 2}\n" for i in range(1, 7)),
+    "sample, ID, batch": "sample,ID,batch\n"
+    + "".join(f"{i},s{i},{1 if i <= 3 else 2}\n" for i in range(1, 7)),
+    "ID, batch, sample": "ID,batch,sample\n"
+    + "".join(f"s{i},{1 if i <= 3 else 2},{i}\n" for i in range(1, 7)),
+}
+
+
+def _small_inputs(
+    tmp_path: Path, desc_text: str = _DESC_ORDERS["ID, sample, batch"]
+) -> tuple[str, str]:
+    data = tmp_path / "data.tsv"
+    data.write_text(_SMALL_DATA, encoding="utf-8")
+    desc = tmp_path / "desc.csv"
+    desc.write_text(desc_text, encoding="utf-8")
+    return str(data), str(desc)
+
+
+class TestCLICsvDefaultName:
+    """The default output name follows --output-format."""
+
+    def test_csv_without_output_writes_csv_file(self, tmp_path: Path) -> None:
+        """With --output-format csv and no -o, a comma-separated .csv file is written.
+
+        Failure condition: CSV text is written into a file named .tsv.
+        """
+        from harmonizepy.__main__ import main
+
+        data, desc = _small_inputs(tmp_path)
+        main([data, desc, "--output-format", "csv", "-q"])
+        written = tmp_path / "data_corrected.csv"
+        assert written.exists()
+        assert not (tmp_path / "data_corrected.tsv").exists()
+        assert written.read_text(encoding="utf-8").splitlines()[0].count(",") == 6
+
+    def test_posix_path_with_colon_stays_posix(self) -> None:
+        """A POSIX path whose second character is a colon keeps its directory.
+
+        Failure condition: the path is read as a Windows drive path and the output
+        lands in the working directory under a name with a backslash.
+        """
+        from harmonizepy.__main__ import _resolve_output_path
+
+        assert _resolve_output_path("a:b/data.tsv", None) == "a:b/data_corrected.tsv"
+        assert _resolve_output_path("C:\\x\\data.tsv", None) == "C:\\x\\data_corrected.tsv"
+
+
+class TestCLIDryRunWritesNoFiles:
+    """A dry run writes no files."""
+
+    def test_dry_run_writes_no_log_file(self, tmp_path: Path) -> None:
+        """A dry run creates neither the output nor a log file.
+
+        Failure condition: a log is written next to an output that is never created.
+        """
+        from harmonizepy.__main__ import main
+
+        data, desc = _small_inputs(tmp_path)
+        main([data, desc, "--dry-run"])
+        assert not list(tmp_path.glob("*.log"))
+        assert not (tmp_path / "data_corrected.tsv").exists()
+
+    @pytest.mark.parametrize("flag", ["--log-file", "--summary", "--json"])
+    def test_dry_run_with_file_or_summary_option_is_an_error(
+        self, tmp_path: Path, flag: str
+    ) -> None:
+        """--dry-run with an option it would ignore exits with a usage error and writes nothing.
+
+        Failure condition: the option is silently ignored and the run exits 0.
+        """
+        from harmonizepy.__main__ import main
+
+        data, desc = _small_inputs(tmp_path)
+        extra = [] if flag == "--json" else [str(tmp_path / "x.out")]
+        with pytest.raises(SystemExit) as excinfo:
+            main([data, desc, "--dry-run", flag, *extra])
+        assert excinfo.value.code == 2
+        assert not (tmp_path / "x.out").exists()
+
+    def test_two_column_description_is_a_validation_error(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A description with two columns gives an error message, not a traceback.
+
+        Failure condition: an IndexError escapes from the batch lookup.
+        """
+        from harmonizepy.__main__ import main
+
+        data, desc = _small_inputs(tmp_path, "ID,grp\n" + "".join(f"s{i},1\n" for i in range(1, 7)))
+        with pytest.raises(SystemExit) as excinfo:
+            main([data, desc, "-q"])
+        assert excinfo.value.code == 1
+        assert "at least 3 columns" in capsys.readouterr().err
+
+
+class TestCLIBatchCount:
+    """The batch count does not depend on the column order of the description."""
+
+    @pytest.mark.parametrize("order", list(_DESC_ORDERS))
+    def test_summary_batch_count(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], order: str
+    ) -> None:
+        """Every description column order gives two batches in the JSON summary.
+
+        Failure condition: the summary counts the values of another column as batches.
+        """
+        from harmonizepy.__main__ import main
+
+        data, desc = _small_inputs(tmp_path, _DESC_ORDERS[order])
+        main([data, desc, "--json", "-q"])
+        assert json.loads(capsys.readouterr().out)["n_batches"] == 2
+
+    @pytest.mark.parametrize("order", list(_DESC_ORDERS))
+    def test_dry_run_batch_count(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], order: str
+    ) -> None:
+        """Every description column order gives two batches in the dry-run plan.
+
+        Failure condition: the plan counts the values of another column as batches.
+        """
+        from harmonizepy.__main__ import main
+
+        data, desc = _small_inputs(tmp_path, _DESC_ORDERS[order])
+        main([data, desc, "--dry-run"])
+        assert re.search(r"Batches:\s+2\b", capsys.readouterr().out)
