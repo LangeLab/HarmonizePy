@@ -1126,3 +1126,111 @@ class TestCLIBatchCount:
         data, desc = _small_inputs(tmp_path, _DESC_ORDERS[order])
         main([data, desc, "--dry-run"])
         assert re.search(r"Batches:\s+2\b", capsys.readouterr().out)
+
+
+_PATTERN_DATA: str = (
+    "id\ts1\ts2\ts3\ts4\ts5\ts6\n"
+    + "".join(f"p{i}\t{1.0 + i}\t{1.5 + i}\t{2.1 + i}\t{2.4 + i}\t\t\n" for i in range(1, 5))
+    + "p5\t1.0\t1.4\t2.0\t2.6\t3.1\t3.5\n"
+)
+_PATTERN_DESC: str = "ID,sample,batch\n" + "".join(
+    f"s{i},{i},{(i + 1) // 2}\n" for i in range(1, 7)
+)
+
+
+class TestCLIDryRunMatchesRun:
+    """The dry run reports the groups the correction run uses."""
+
+    @pytest.mark.parametrize("extra", [[], ["--sort", "sparsity", "--block", "2"]])
+    def test_submatrix_count_matches_correction_run(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], extra: list[str]
+    ) -> None:
+        """The dry-run sub-matrix count equals the number of groups the run corrects.
+
+        p5 is the only feature seen in all three batches, so unique removal moves it
+        into the pattern of p1 to p4 and the run corrects one group.
+
+        Failure condition: the dry run skips unique removal or sorting and reports a
+        different count.
+        """
+        data = tmp_path / "data.tsv"
+        data.write_text(_PATTERN_DATA, encoding="utf-8")
+        desc = tmp_path / "desc.csv"
+        desc.write_text(_PATTERN_DESC, encoding="utf-8")
+
+        main([str(data), str(desc), "--dry-run", *extra])
+        planned = re.search(r"Sub-matrices:\s+(\d+)", capsys.readouterr().out)
+        main([str(data), str(desc), "--no-log", *extra])
+        corrected = re.search(r"Adjusting (\d+) unique affiliation group", capsys.readouterr().err)
+        assert planned is not None and corrected is not None
+        assert planned.group(1) == corrected.group(1) == "1"
+
+
+class TestCLIRepeatedCalls:
+    """Several runs in one process."""
+
+    def test_second_run_logs_each_line_once(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A second ``main()`` call prints each log line once.
+
+        Failure condition: the first call's handlers stay attached, and every line of
+        the second call appears twice.
+        """
+        data, desc = _small_inputs(tmp_path)
+        main([data, desc, "--no-log"])
+        capsys.readouterr()
+        main([data, desc, "--no-log"])
+        lines = capsys.readouterr().err.splitlines()
+        done = [line for line in lines if "Done (" in line]
+        assert len(done) == 1
+
+
+class TestCLISummaryValues:
+    """Values recorded in the run summary."""
+
+    def test_summary_records_resolved_needed_values(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Without --needed-values, the summary records the value the run used.
+
+        Failure condition: the summary records null for an automatic value.
+        """
+        data, desc = _small_inputs(tmp_path)
+        main([data, desc, "--json", "-q", "--combat-mode", "2"])
+        assert json.loads(capsys.readouterr().out)["needed_values"] == 1
+
+
+class TestCLIConfigErrors:
+    """Unreadable config files end with a usage error, not a traceback."""
+
+    def test_malformed_yaml_is_a_usage_error(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A YAML config that does not parse exits with code 2 and a message.
+
+        Failure condition: the YAML parser's exception escapes as a traceback.
+        """
+        pytest.importorskip("yaml")
+        data, desc = _small_inputs(tmp_path)
+        config = tmp_path / "run.yaml"
+        config.write_text("algorithm: [unclosed\n", encoding="utf-8")
+        with pytest.raises(SystemExit) as excinfo:
+            main([data, desc, "--config", str(config)])
+        assert excinfo.value.code == 2
+        assert "invalid YAML" in capsys.readouterr().err
+
+
+def test_main_restores_package_logger_settings(tmp_path: Path) -> None:
+    """After ``main()`` returns, the package logger has its earlier level and propagation.
+
+    Failure condition: the logger stays at DEBUG without propagation, so later
+    library calls in the same process lose records from root handlers.
+    """
+    import logging
+
+    package_logger = logging.getLogger("harmonizepy")
+    before = (package_logger.level, package_logger.propagate)
+    data, desc = _small_inputs(tmp_path)
+    main([data, desc, "--no-log", "-q"])
+    assert (package_logger.level, package_logger.propagate) == before

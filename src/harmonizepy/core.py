@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
@@ -123,146 +124,205 @@ def harmonize(
         block = config.block_size
         unique_removal = config.unique_removal
 
-    # --- Determine needed_values (before validation) ------------------------
-    if needed_values is None:
-        if algorithm == "limma" or combat_mode in (1, 3):
-            needed_values = 2
-        else:
-            needed_values = 1
-
-    _start_time = time.monotonic()
-
-    # --- Validate basic arguments (before data load) ----------------------
-    validate_harmonize_args(
-        algorithm,
-        combat_mode,
-        needed_values,
-        sort_strategy=sort,
+    start_time = time.monotonic()
+    inputs = prepare_inputs(
+        data,
+        description,
+        algorithm=algorithm,
+        combat_mode=combat_mode,
+        needed_values=needed_values,
+        sort=sort,
+        block=block,
+        unique_removal=unique_removal,
+    )
+    plan = plan_affiliations(
+        inputs.data,
+        inputs.batch_list,
+        sort=sort,
+        block=block,
+        needed_values=inputs.needed_values,
         unique_removal=unique_removal,
     )
 
-    # --- Read inputs -------------------------------------------------------
+    logger.info("Adjusting %d unique affiliation group(s)", plan.n_groups)
+    result = splitting(
+        plan.affiliation_list,
+        plan.data,
+        plan.batch_list,
+        plan.block_list,
+        algorithm=algorithm,
+        combat_mode=combat_mode,
+        output_col_order=plan.col_order,
+        output_columns=inputs.data.columns if plan.col_order is not None else None,
+        data_np=plan.data_np,
+    )
+
+    n_features = inputs.data.shape[0]
+    if plan.n_empty == n_features:
+        logger.warning(
+            "All %d features dropped: no feature meets needed_values=%d "
+            "in any batch. Output is all-NaN.",
+            n_features,
+            inputs.needed_values,
+        )
+
+    if output_file is not None:
+        logger.info("Writing output to %s", output_file)
+        write_output(result, str(output_file))
+
+    logger.info("Done (%.2fs).", time.monotonic() - start_time)
+    return result
+
+
+def resolve_needed_values(algorithm: str, combat_mode: int, needed_values: int | None) -> int:
+    """Return the minimum observations per batch, choosing the default when it is ``None``.
+
+    The default is 2 for limma and the location-and-scale ComBat modes (1 and 3),
+    which estimate a variance per batch, and 1 for the location-only modes (2
+    and 4).
+    """
+    if needed_values is not None:
+        return needed_values
+    return 2 if algorithm == "limma" or combat_mode in (1, 3) else 1
+
+
+@dataclass(frozen=True)
+class PreparedInputs:
+    """Validated inputs of a run: the cleaned matrix and its batch labels."""
+
+    data: pd.DataFrame
+    batch_list: npt.NDArray[np.int64]
+    needed_values: int
+    n_batches: int
+
+
+def prepare_inputs(
+    data: pd.DataFrame | str | Path,
+    description: pd.DataFrame | str | Path,
+    *,
+    algorithm: str,
+    combat_mode: int,
+    needed_values: int | None,
+    sort: str | None,
+    block: int | None,
+    unique_removal: bool,
+) -> PreparedInputs:
+    """Read, clean, and validate the inputs of a run, and map samples to batches.
+
+    Shared by ``harmonize()`` and the command line dry run, so that both apply
+    the same checks. Paths are read with ``read_main_data`` and
+    ``read_description``; repeated features are removed by ``clean_features``.
+
+    Raises
+    ------
+    ValueError, TypeError
+        From the argument, matrix, and description checks in ``validation``.
+    OSError, ImportError
+        From reading a path: a missing or unreadable file, or Parquet without
+        ``pyarrow``.
+    """
+    resolved = resolve_needed_values(algorithm, combat_mode, needed_values)
+    validate_harmonize_args(
+        algorithm, combat_mode, resolved, sort_strategy=sort, unique_removal=unique_removal
+    )
     if isinstance(data, (str, Path)):
         logger.debug("Reading data from %s", data)
         data = read_main_data(str(data))
-    assert isinstance(data, pd.DataFrame)  # narrow: always DataFrame after load
-
     if isinstance(description, (str, Path)):
         logger.debug("Reading description from %s", description)
         description = read_description(str(description))
-    assert isinstance(description, pd.DataFrame)  # narrow: always DataFrame after load
 
-    # --- Clean and validate inputs -----------------------------------------
     data = clean_features(data)
     validate_data_matrix(data)
     validate_description(description, data)
+    logger.info("Input: %d features x %d samples", data.shape[0], data.shape[1])
 
-    n_features, n_samples = data.shape
-    logger.info(
-        "Input: %d features x %d samples",
-        n_features,
-        n_samples,
-    )
-
-    # --- Extract batch labels aligned to data column order -----------------
     sample_to_batch = sample_batch_map(description)
     batch_list = np.array([sample_to_batch[col] for col in data.columns], dtype=np.int64)
-
-    # --- Validate block_size now that we know n_batches --------------------
     n_batches = len(np.unique(batch_list))
-    validate_harmonize_args(
-        algorithm,
-        combat_mode,
-        needed_values,
-        block_size=block,
-        n_batches=n_batches,
-    )
-
+    validate_harmonize_args(algorithm, combat_mode, resolved, block_size=block, n_batches=n_batches)
     logger.info(
         "Algorithm: %s%s | batches: %d | needed_values: %d",
         algorithm,
         f" mode {combat_mode}" if algorithm == "ComBat" else "",
         n_batches,
-        needed_values,
+        resolved,
     )
+    return PreparedInputs(data, batch_list, resolved, n_batches)
 
-    # --- Sort batches ------------------------------------------------------
+
+@dataclass(frozen=True)
+class AffiliationPlan:
+    """The groups a run corrects, after sorting, blocking, and unique removal."""
+
+    data: pd.DataFrame
+    data_np: npt.NDArray[np.float64]
+    batch_list: npt.NDArray[np.integer]
+    block_list: npt.NDArray[np.integer]
+    col_order: npt.NDArray[np.intp] | None
+    affiliation_list: list[tuple[int, ...]]
+    n_empty: int
+
+    @property
+    def n_groups(self) -> int:
+        """Number of distinct non-empty affiliations, one sub-matrix each."""
+        return len({a for a in self.affiliation_list if a})
+
+
+def plan_affiliations(
+    data: pd.DataFrame,
+    batch_list: npt.NDArray[np.int64],
+    *,
+    sort: str | None,
+    block: int | None,
+    needed_values: int,
+    unique_removal: bool,
+) -> AffiliationPlan:
+    """Sort batches, build blocks, find each feature's affiliation, and apply unique removal.
+
+    Shared by ``harmonize()`` and the command line dry run, so that the dry run
+    reports the groups the correction uses.
+    """
+    n_features = data.shape[0]
+    n_batches = len(np.unique(batch_list))
     col_order: npt.NDArray[np.intp] | None = None
-    original_columns = data.columns
+    sorted_batches: npt.NDArray[np.integer] = batch_list
     if sort is not None:
         logger.info("Sorting %d batches by '%s'", n_batches, sort)
-        data, batch_list, col_order = sort_batches(  # type: ignore[assignment]
+        data, sorted_batches, col_order = sort_batches(
             data, batch_list, strategy=sort, needed_values=needed_values
         )
 
-    # --- Build block list --------------------------------------------------
     if block is not None:
-        logger.info("Blocking: %d batches → blocks of size %d", n_batches, block)
-        block_list = build_block_list(batch_list, block_size=block)
+        logger.info("Blocking: %d batches in blocks of %d", n_batches, block)
+        block_list = build_block_list(sorted_batches, block_size=block)
     else:
-        block_list = batch_list
+        block_list = sorted_batches
 
     data_np = data.to_numpy(dtype=np.float64)
-
-    # --- Spot missing values -----------------------------------------------
     affiliation_list = build_affiliation_list(
-        data,
-        batch_list,
-        block_list,
-        needed_values,
-        data_np=data_np,
+        data, sorted_batches, block_list, needed_values, data_np=data_np
     )
-    n_empty = sum(1 for a in affiliation_list if len(a) == 0)
+    n_empty = sum(1 for a in affiliation_list if not a)
     logger.debug(
-        "Spotting: %d features with data, %d features dropped (insufficient observations)",
+        "Spotting: %d features with data, %d features without a usable batch",
         n_features - n_empty,
         n_empty,
     )
 
-    # --- Unique removal ----------------------------------------------------
     if unique_removal:
-        before_ur = sum(1 for a in affiliation_list if len(a) == 0)
-        affiliation_list = remove_unique_combinations(affiliation_list)
-        after_ur = sum(1 for a in affiliation_list if len(a) == 0)
-        rescued = before_ur - after_ur
-        if rescued > 0:
+        cropped = remove_unique_combinations(affiliation_list)
+        n_cropped = sum(1 for old, new in zip(affiliation_list, cropped, strict=True) if old != new)
+        affiliation_list = cropped
+        if n_cropped:
             logger.info(
-                "Unique removal rescued %d feature(s) (%.1f%%)",
-                rescued,
-                100.0 * rescued / n_features,
+                "Unique removal moved %d feature(s) into a shared pattern (%.1f%%)",
+                n_cropped,
+                100.0 * n_cropped / n_features,
             )
         else:
-            logger.debug("Unique removal: no singleton patterns found")
+            logger.debug("Unique removal: no feature had a pattern of its own")
 
-    # --- Split, adjust, rebuild --------------------------------------------
-    n_groups = len({a for a in affiliation_list if len(a) > 0})
-    logger.info("Adjusting %d unique affiliation group(s)…", n_groups)
-    result = splitting(
-        affiliation_list,
-        data,
-        batch_list,
-        block_list,
-        algorithm=algorithm,
-        combat_mode=combat_mode,
-        output_col_order=col_order,
-        output_columns=original_columns if col_order is not None else None,
-        data_np=data_np,
+    return AffiliationPlan(
+        data, data_np, sorted_batches, block_list, col_order, affiliation_list, n_empty
     )
-
-    # --- Warn if all features were dropped --------------------------------
-    if n_empty == n_features:
-        logger.warning(
-            "All %d features dropped: no feature meets needed_values=%d "
-            "in any batch. Output is all-NaN.",
-            n_features,
-            needed_values,
-        )
-
-    # --- Write output ------------------------------------------------------
-    if output_file is not None:
-        logger.info("Writing output to %s", output_file)
-        write_output(result, str(output_file))
-
-    _elapsed = time.monotonic() - _start_time
-    logger.info("Done (%.2fs).", _elapsed)
-    return result

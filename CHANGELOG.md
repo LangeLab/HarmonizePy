@@ -21,6 +21,12 @@ All notable changes to this project are documented in this file. The format is b
 - CLI: `--output-format csv` without `-o` writes `<data_stem>_corrected.csv`. A dry run writes no files, and `--dry-run` with `--log-file`, `--summary`, or `--json` is a usage error (#22).
 - `harmonize()`, the dry run, and the run summary read the batch description by one rule: the columns named `ID` and `batch` when present, otherwise the first and third columns (#22).
 - A description that lists a sample twice, or has a batch label that is not a whole number, raises a `ValueError` that names the problem. Labels such as 1.5 were truncated to integers.
+- The dry run plans the groups exactly as the correction run does, including sorting and unique removal, so its sub-matrix count matches the run. It prints the `needed_values` the run will use instead of `auto`.
+- `read_main_data()` keeps rows with no value, as `harmonize()` does for a DataFrame, so a file and the same frame give the same rows.
+- Duplicate sample names raise a `ValueError`, in a DataFrame and in a file header, where the parser would otherwise rename the second column.
+- CLI: the run summary records the `needed_values` the run used; a malformed YAML config and reading or writing errors give an error message instead of a traceback; log lines are no longer repeated when `main()` runs more than once in a process, and `main()` leaves the package logger as it found it.
+- The log reports the number of features unique removal moved and the number of blocks correctly.
+- Parquet files are read without the deprecated `engine="auto"` option.
 
 ## [0.3.2] - 2026-05-29
 

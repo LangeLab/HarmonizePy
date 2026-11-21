@@ -280,3 +280,15 @@ class TestUniqueOrdered:
         """
         arr = np.array([5, 5, 5])
         assert _unique_ordered(arr) == [5]
+
+
+def test_block_count_logged_for_non_contiguous_labels(caplog: pytest.LogCaptureFixture) -> None:
+    """The log reports the number of blocks, also when a batch reappears at the end.
+
+    Failure condition: the count is taken from the last sample's block.
+    """
+    import logging
+
+    with caplog.at_level(logging.DEBUG, logger="harmonizepy.blocking"):
+        build_block_list(np.array([1, 1, 2, 2, 3, 3, 1, 1]), block_size=2)
+    assert "Built 2 blocks" in caplog.text

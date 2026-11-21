@@ -121,20 +121,27 @@ Config paths are resolved relative to the config file, not the current working d
 
 ## Dry-run output
 
-`--dry-run` validates inputs and prints a summary without running correction:
+`--dry-run` validates inputs, plans the sub-matrices exactly as a correction run would (sorting, blocking, and unique removal included), and prints a summary without running correction. The layout, with illustrative values:
 
-```bash
-HarmonizePy 0.3.2 dry run
-────────────────────────────────────────────────────
-Features:        1500
-Samples:         45
-Batches:         5
-Sub-matrices:    3  (unique affiliation groups)
-Algorithm:        ComBat mode 1
-Sort strategy:    sparsity
-Block size:       2
-Unique removal:   enabled
-Inputs valid. Use without --dry-run to run correction.
+```text
+  HarmonizePy 0.4.0 dry run
+  ----------------------------------------------------
+  Input data:      data.tsv
+  Description:     batch.csv
+  Output:          data_corrected.tsv  [tsv]
+  ----------------------------------------------------
+  Features:        1500
+  Samples:         45
+  Batches:         5
+  Sub-matrices:    3  (unique affiliation groups)
+  ----------------------------------------------------
+  Algorithm:       ComBat mode 1
+  needed_values:   2
+  Sort strategy:   sparsity
+  Block size:      2
+  Unique removal:  enabled
+  ----------------------------------------------------
+  Inputs valid. Use without --dry-run to run correction.
 ```
 
 ---

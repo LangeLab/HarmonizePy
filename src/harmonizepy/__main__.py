@@ -22,19 +22,11 @@ from collections.abc import Sequence
 from importlib.metadata import version
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
-import numpy as np
 import pandas as pd
 
-from .affiliation import build_affiliation_list
-from .blocking import build_block_list
-from .core import harmonize
+from .core import harmonize, plan_affiliations, prepare_inputs, resolve_needed_values
 from .io import read_description, read_main_data
-from .validation import (
-    sample_batch_map,
-    validate_data_matrix,
-    validate_description,
-    validate_harmonize_args,
-)
+from .validation import sample_batch_map
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -42,6 +34,10 @@ from .validation import (
 
 _LOG_FORMAT = "%(levelname)s [harmonizepy] %(message)s"
 _FILE_LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# Errors from reading, validating, correcting, or writing that end a run with
+# exit code 1 and one ERROR line instead of a traceback.
+_RUN_ERRORS = (ValueError, TypeError, KeyError, ImportError, OSError)
 
 _FORMATS = ("tsv", "csv", "parquet")
 
@@ -379,12 +375,15 @@ def _load_config(path: str) -> dict[str, object]:
     elif ext in (".yaml", ".yml"):
         try:
             import yaml  # type: ignore[import-untyped]
-        except ImportError:
+        except ImportError as error:
             raise ImportError(
                 "YAML config requires 'pyyaml': pip install harmonizepy[config]"
-            ) from None
+            ) from error
         with p.open(encoding="utf-8") as fh:
-            raw = yaml.safe_load(fh)
+            try:
+                raw = yaml.safe_load(fh)
+            except yaml.YAMLError as error:
+                raise ValueError(f"invalid YAML in config file '{path}': {error}") from error
 
     else:
         raise ValueError(f"Unsupported config format '{ext}'. Use .toml, .json, .yaml, or .yml.")
@@ -421,7 +420,7 @@ def _build_summary_dict(
     output_format: str,
     algorithm: str,
     combat_mode: int,
-    needed_values: int | None,
+    needed_values: int,
     sort: str | None,
     block: int | None,
     unique_removal: bool,
@@ -439,7 +438,7 @@ def _build_summary_dict(
         "output_format": output_format,
         "algorithm": algorithm,
         "combat_mode": combat_mode,
-        "needed_values": needed_values,  # None = auto-selected inside harmonize
+        "needed_values": needed_values,
         "sort_strategy": sort,
         "block_size": block,
         "unique_removal": unique_removal,
@@ -470,7 +469,7 @@ def _print_dry_run(
     output_format: str,
     algorithm: str,
     combat_mode: int,
-    needed_values: int | None,
+    needed_values: int,
     sort: str | None,
     block: int | None,
     unique_removal: bool,
@@ -480,12 +479,12 @@ def _print_dry_run(
     n_submatrices: int,
 ) -> None:
     """Print a human-readable dry-run summary to stdout."""
-    nv_str = "auto" if needed_values is None else str(needed_values)
+    nv_str = str(needed_values)
     sort_str = sort or "none"
     block_str = str(block) if block is not None else "none (all batches in one group)"
     ur_str = "enabled" if unique_removal else "disabled"
     algo_str = f"{algorithm} mode {combat_mode}" if algorithm == "ComBat" else algorithm
-    rule = "─" * 52
+    rule = "-" * 52
 
     lines = [
         "",
@@ -572,10 +571,29 @@ def main(argv: Sequence[str] | None = None) -> None:
     if not Path(args.description).is_file():
         parser.error(f"description file not found: '{args.description}'")
 
-    # -- Logging setup ------------------------------------------------------
-    # Configure the root harmonizepy logger so all child modules
-    # (harmonizepy.combat, harmonizepy.core, etc.) inherit the settings.
-    # --json suppresses INFO so stdout contains only the JSON object.
+    package_logger = logging.getLogger("harmonizepy")
+    saved_level, saved_propagate = package_logger.level, package_logger.propagate
+    handlers = _configure_logging(args, output_path)
+    try:
+        if args.dry_run:
+            _run_dry_run(args, output_path, output_fmt, console=handlers[0])
+        else:
+            _run_correction(args, output_path, output_fmt)
+    finally:
+        _detach_logging(handlers)
+        package_logger.setLevel(saved_level)
+        package_logger.propagate = saved_propagate
+
+
+def _configure_logging(args: argparse.Namespace, output_path: str) -> list[logging.Handler]:
+    """Attach the console handler and, for a correction run, the log file handler.
+
+    The console shows INFO by default, DEBUG with ``--verbose``, and WARNING with
+    ``--quiet`` or ``--json`` (so that stdout holds only the JSON object). The log
+    file, next to the output unless ``--log-file`` or ``--no-log`` is given,
+    records DEBUG with timestamps. A dry run writes no log file. The console
+    handler is first in the returned list.
+    """
     if args.verbose:
         level = logging.DEBUG
     elif args.quiet or args.json_output:
@@ -583,105 +601,106 @@ def main(argv: Sequence[str] | None = None) -> None:
     else:
         level = logging.INFO
 
-    root_logger = logging.getLogger("harmonizepy")
-    root_logger.setLevel(logging.DEBUG)
-    root_logger.propagate = False
+    package_logger = logging.getLogger("harmonizepy")
+    package_logger.setLevel(logging.DEBUG)
+    package_logger.propagate = False
 
-    # Terminal handler: clean format, no timestamps, respects --verbose/--quiet.
     console = logging.StreamHandler(sys.stderr)
     console.setLevel(level)
     console.setFormatter(logging.Formatter(_LOG_FORMAT))
-    root_logger.addHandler(console)
+    package_logger.addHandler(console)
+    handlers: list[logging.Handler] = [console]
 
-    # File handler: on by default for a correction run, writes DEBUG with timestamps.
-    # Log path is derived from the output path (e.g. corrected.tsv -> corrected.log)
-    # unless overridden via --log-file, or disabled via --no-log. A dry run writes no
-    # files, so a log would sit next to an output that does not exist.
     if not args.no_log and not args.dry_run:
         log_path = args.log_file if args.log_file else _resolve_log_path(output_path)
         try:
-            fh = logging.FileHandler(log_path, mode="w", encoding="utf-8")
-            fh.setLevel(logging.DEBUG)
-            fh.setFormatter(logging.Formatter(_FILE_LOG_FORMAT))
-            root_logger.addHandler(fh)
+            file_handler = logging.FileHandler(log_path, mode="w", encoding="utf-8")
         except OSError:
-            # If the log file cannot be created, warn and continue without it.
-            logging.getLogger("harmonizepy").warning(
-                "Could not create log file at %s; proceeding without file logging.",
-                log_path,
+            package_logger.warning(
+                "Could not create log file at %s; proceeding without file logging.", log_path
             )
+        else:
+            file_handler.setLevel(logging.DEBUG)
+            file_handler.setFormatter(logging.Formatter(_FILE_LOG_FORMAT))
+            package_logger.addHandler(file_handler)
+            handlers.append(file_handler)
+    return handlers
 
-    # -- Dry-run path -------------------------------------------------------
-    # Suppress pipeline logging during dry-run so the plan output is clean.
-    if args.dry_run:
-        _prev_level = console.level
-        console.setLevel(logging.WARNING)
-        try:
-            data = read_main_data(args.data)
-            description = read_description(args.description)
-            validate_data_matrix(data)
-            validate_description(description, data)
-            # Resolve n_batches so block_size can be validated properly
-            sample_to_batch = sample_batch_map(description)
-            batch_arr = np.array([sample_to_batch[col] for col in data.columns], dtype=np.int64)
-            n_batches = int(np.unique(batch_arr).size)
-            # Resolve effective needed_values once for both validation and spotting
-            if args.needed_values is not None:
-                nv_eff = args.needed_values
-            elif args.algorithm == "limma" or args.combat_mode in (1, 3):
-                nv_eff = 2
-            else:
-                nv_eff = 1
-            validate_harmonize_args(
-                args.algorithm,
-                args.combat_mode,
-                nv_eff,
-                sort_strategy=args.sort,
-                block_size=args.block,
-                unique_removal=args.unique_removal,
-                n_batches=n_batches,
-            )
-            # Build block list
-            if args.block is not None:
-                block_list = build_block_list(batch_arr, block_size=args.block)
-            else:
-                block_list = batch_arr.copy()
-            # Spot sub-matrices (no adjustment)
-            affiliation_list = build_affiliation_list(data, batch_arr, block_list, nv_eff)
-            n_submatrices = len({a for a in affiliation_list if len(a) > 0})
-        except (ValueError, TypeError, KeyError) as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
-            sys.exit(1)
-        finally:
-            console.setLevel(_prev_level)
 
-        n_features, n_samples = data.shape
-        _print_dry_run(
-            data_file=args.data,
-            description_file=args.description,
-            output_file=output_path,
-            output_format=output_fmt,
+def _detach_logging(handlers: list[logging.Handler]) -> None:
+    """Remove and close the handlers ``_configure_logging`` attached."""
+    package_logger = logging.getLogger("harmonizepy")
+    for handler in handlers:
+        package_logger.removeHandler(handler)
+        handler.close()
+
+
+def _run_dry_run(
+    args: argparse.Namespace, output_path: str, output_fmt: str, *, console: logging.Handler
+) -> None:
+    """Validate the inputs, plan the groups as a correction run would, and print the plan.
+
+    Pipeline log messages are held back to WARNING so that the plan is the only
+    output. Exits with code 1 and an ERROR line on an input error.
+    """
+    previous_level = console.level
+    console.setLevel(logging.WARNING)
+    try:
+        inputs = prepare_inputs(
+            args.data,
+            args.description,
             algorithm=args.algorithm,
             combat_mode=args.combat_mode,
             needed_values=args.needed_values,
             sort=args.sort,
             block=args.block,
             unique_removal=args.unique_removal,
-            n_features=n_features,
-            n_samples=n_samples,
-            n_batches=n_batches,
-            n_submatrices=n_submatrices,
         )
-        return  # exit 0 implicitly, no correction performed
+        plan = plan_affiliations(
+            inputs.data,
+            inputs.batch_list,
+            sort=args.sort,
+            block=args.block,
+            needed_values=inputs.needed_values,
+            unique_removal=args.unique_removal,
+        )
+    except _RUN_ERRORS as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
+    finally:
+        console.setLevel(previous_level)
 
-    # -- Full pipeline run --------------------------------------------------
+    n_features, n_samples = inputs.data.shape
+    _print_dry_run(
+        data_file=args.data,
+        description_file=args.description,
+        output_file=output_path,
+        output_format=output_fmt,
+        algorithm=args.algorithm,
+        combat_mode=args.combat_mode,
+        needed_values=inputs.needed_values,
+        sort=args.sort,
+        block=args.block,
+        unique_removal=args.unique_removal,
+        n_features=n_features,
+        n_samples=n_samples,
+        n_batches=inputs.n_batches,
+        n_submatrices=plan.n_groups,
+    )
+
+
+def _run_correction(args: argparse.Namespace, output_path: str, output_fmt: str) -> None:
+    """Correct the data, write the output, and write or print the run summary.
+
+    Exits with code 1 and an ERROR line when reading, validating, correcting, or
+    writing the output fails. A summary file that cannot be written gives a
+    WARNING line and does not change the exit code.
+    """
     try:
         data_df = read_main_data(args.data)
         description_df = read_description(args.description)
-
         n_features_input, n_samples = data_df.shape
         n_batches = len(set(sample_batch_map(description_df).values()))
-
         result = harmonize(
             data_df,
             description_df,
@@ -692,47 +711,42 @@ def main(argv: Sequence[str] | None = None) -> None:
             block=args.block,
             unique_removal=args.unique_removal,
         )
-    except (ValueError, TypeError, KeyError) as exc:
+    except _RUN_ERRORS as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         sys.exit(1)
 
-    # -- Write output -------------------------------------------------------
     try:
         _write_result(result, output_path, output_fmt)
-    except Exception as exc:
+    except _RUN_ERRORS as exc:
         print(f"ERROR writing output to '{output_path}': {exc}", file=sys.stderr)
         sys.exit(1)
-
     logging.getLogger("harmonizepy").info("Output written to %s", output_path)
 
-    # -- Run summary (--summary file and/or --json stdout) ------------------
-    if args.summary or args.json_output:
-        _summary = _build_summary_dict(
-            data_file=args.data,
-            description_file=args.description,
-            output_file=output_path,
-            output_format=output_fmt,
-            algorithm=args.algorithm,
-            combat_mode=args.combat_mode,
-            needed_values=args.needed_values,
-            sort=args.sort,
-            block=args.block,
-            unique_removal=args.unique_removal,
-            n_features_input=n_features_input,
-            n_features_output=result.shape[0],
-            n_samples=n_samples,
-            n_batches=n_batches,
-        )
-        if args.summary:
-            try:
-                _write_summary(args.summary, _summary)
-            except OSError as exc:
-                print(
-                    f"WARNING: could not write summary to '{args.summary}': {exc}",
-                    file=sys.stderr,
-                )
-        if args.json_output:
-            print(json.dumps(_summary, indent=2))
+    if not (args.summary or args.json_output):
+        return
+    summary = _build_summary_dict(
+        data_file=args.data,
+        description_file=args.description,
+        output_file=output_path,
+        output_format=output_fmt,
+        algorithm=args.algorithm,
+        combat_mode=args.combat_mode,
+        needed_values=resolve_needed_values(args.algorithm, args.combat_mode, args.needed_values),
+        sort=args.sort,
+        block=args.block,
+        unique_removal=args.unique_removal,
+        n_features_input=n_features_input,
+        n_features_output=result.shape[0],
+        n_samples=n_samples,
+        n_batches=n_batches,
+    )
+    if args.summary:
+        try:
+            _write_summary(args.summary, summary)
+        except OSError as exc:
+            print(f"WARNING: could not write summary to '{args.summary}': {exc}", file=sys.stderr)
+    if args.json_output:
+        print(json.dumps(summary, indent=2))
 
 
 if __name__ == "__main__":

@@ -17,6 +17,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from harmonizepy.core import harmonize
+
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 _has_fixtures = (FIXTURE_DIR / "small_input.tsv").exists()
 
@@ -707,3 +709,45 @@ class TestHarmonizeWithConfig:
         result_cfg = harmonize(data, desc, config=cfg)
         result_kw = harmonize(data, desc)
         pd.testing.assert_frame_equal(result_cfg, result_kw)
+
+
+class TestPathAndFrameInput:
+    """A file path and the same matrix as a DataFrame give the same result."""
+
+    def test_blank_row_kept_for_both_inputs(self, tmp_path: Path) -> None:
+        """A row with no value is kept as missing for a path and for a frame.
+
+        Failure condition: the reader drops the blank row and the two outputs have
+        different rows.
+        """
+        rng = np.random.default_rng(13)
+        samples = [f"s{i}" for i in range(1, 7)]
+        data = pd.DataFrame(
+            rng.normal(10, 1, (4, 6)), index=[f"p{i}" for i in range(4)], columns=samples
+        )
+        data.loc["blank"] = np.nan
+        desc = pd.DataFrame({"ID": samples, "sample": range(1, 7), "batch": [1, 1, 1, 2, 2, 2]})
+        data_path = tmp_path / "data.tsv"
+        data.to_csv(data_path, sep="\t")
+        from_path = harmonize(data_path, desc)
+        from_frame = harmonize(data, desc)
+        pd.testing.assert_frame_equal(from_path, from_frame, check_names=False)
+        assert from_path.loc["blank"].isna().all()
+
+
+def test_unique_removal_logs_moved_features(caplog: pytest.LogCaptureFixture) -> None:
+    """When unique removal moves a feature into a shared pattern, the log says so.
+
+    Failure condition: the count compares empty affiliations, which unique removal
+    never changes, so the message never appears.
+    """
+    import logging
+
+    samples = [f"s{i}" for i in range(1, 7)]
+    rows = [[1.0 + i, 1.5 + i, 2.1 + i, 2.4 + i, np.nan, np.nan] for i in range(4)]
+    rows.append([1.0, 1.4, 2.0, 2.6, 3.1, 3.5])
+    data = pd.DataFrame(rows, index=[f"p{i}" for i in range(5)], columns=samples)
+    desc = pd.DataFrame({"ID": samples, "sample": range(1, 7), "batch": [1, 1, 2, 2, 3, 3]})
+    with caplog.at_level(logging.INFO, logger="harmonizepy.core"):
+        harmonize(data, desc)
+    assert "Unique removal moved 1 feature(s) into a shared pattern" in caplog.text

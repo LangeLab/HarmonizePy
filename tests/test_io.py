@@ -74,20 +74,19 @@ class TestReadMainData:
         result = read_main_data(str(path))
         pd.testing.assert_frame_equal(result, expected)
 
-    def test_drops_all_nan_rows(self, tmp_path: Path) -> None:
-        """Rows that are entirely NaN are removed on read.
+    def test_keeps_all_nan_rows(self, tmp_path: Path) -> None:
+        """Rows that are entirely missing are kept, as for a DataFrame passed directly.
 
-        Failure condition: all-NaN rows are kept in the returned
-        DataFrame, violating the documented contract.
+        Failure condition: a file and the same frame give matrices with different rows.
         """
         df = pd.DataFrame(
             {"s1": [1.0, np.nan], "s2": [2.0, np.nan]},
-            index=["keep", "drop"],
+            index=["kept", "blank"],
         )
         path = _write_tsv(tmp_path / "data.tsv", df)
         result = read_main_data(str(path))
-        assert "drop" not in result.index
-        assert "keep" in result.index
+        assert list(result.index) == ["kept", "blank"]
+        assert result.loc["blank"].isna().all()
 
     def test_preserves_all_nan_columns(self, tmp_path: Path) -> None:
         """All-NaN sample columns are kept as structural missingness.
@@ -113,16 +112,16 @@ class TestReadMainData:
         with pytest.raises(FileNotFoundError):
             read_main_data("/nonexistent/file.tsv")
 
-    def test_empty_file_after_dropna(self, tmp_path: Path) -> None:
-        """File with only all-NaN rows returns an empty DataFrame.
+    def test_file_of_blank_rows_keeps_them(self, tmp_path: Path) -> None:
+        """A file whose only row is blank is read as one missing row.
 
-        Failure condition: all-NaN rows are dropped and the result
-        is an empty structure, or the function crashes on empty input.
+        Failure condition: the reader drops the row or fails on a matrix without values.
         """
         df = pd.DataFrame({"s1": [np.nan], "s2": [np.nan]}, index=["f1"])
         path = _write_tsv(tmp_path / "empty.tsv", df)
         result = read_main_data(str(path))
-        assert len(result) == 0
+        assert list(result.index) == ["f1"]
+        assert result.isna().all().all()
 
 
 # ---------------------------------------------------------------------------
@@ -367,3 +366,17 @@ class TestIntegerColumns:
         desc = read_description(str(path))
         assert desc["batch"].dtype == np.int64
         assert desc["sample"].dtype == np.int64
+
+
+@pytest.mark.parametrize("ext, sep", [("tsv", "\t"), ("csv", ",")])
+def test_repeated_sample_name_in_file_raises(tmp_path: Path, ext: str, sep: str) -> None:
+    """A sample name repeated in a file header is rejected by name.
+
+    Failure condition: the parser renames the second column to ``s1.1`` and the
+    run treats the two columns as different samples.
+    """
+    path = tmp_path / f"m.{ext}"
+    header = sep.join(["id", "s1", "s1", "s2"])
+    path.write_text(f"{header}\n" + sep.join(["p1", "1", "2", "3"]) + "\n")
+    with pytest.raises(ValueError, match=r"duplicate sample names: \['s1'\]"):
+        read_main_data(str(path))

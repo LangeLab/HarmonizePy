@@ -41,8 +41,8 @@ def validate_data_matrix(df: pd.DataFrame) -> None:
     Raises
     ------
     ValueError
-        If *df* has duplicate row indices, all-NaN rows, fewer than
-        2 columns, non-numeric dtype, or infinite values.
+        If *df* has duplicate feature or sample names, fewer than 2 columns,
+        a non-numeric column, or infinite values.
 
     Examples
     --------
@@ -56,6 +56,13 @@ def validate_data_matrix(df: pd.DataFrame) -> None:
         raise ValueError(
             f"data contains duplicate feature names (first {len(dups[:5])}: "
             f"{dups[:5]}). Each row must have a unique identifier."
+        )
+
+    repeated_samples = df.columns[df.columns.duplicated()].unique().tolist()
+    if repeated_samples:
+        raise ValueError(
+            f"data contains duplicate sample names: {repeated_samples[:5]}. "
+            "Each column must have a unique name."
         )
 
     bad = df.dtypes[~df.dtypes.map(pd.api.types.is_numeric_dtype)].index.tolist()

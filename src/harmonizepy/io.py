@@ -5,7 +5,9 @@ Read/write HarmonizR-compatible data and batch description files.
 
 from __future__ import annotations
 
+import csv
 import logging
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -25,15 +27,30 @@ except ImportError:
 _WIDE_COLUMN_THRESHOLD = 500
 
 
-def _count_columns(path: str, sep: str) -> int:
-    """Return the number of columns in the header line of a delimited file.
+def _header_fields(path: str, sep: str) -> list[str]:
+    """Return the fields of the header line of a delimited file, quotes removed."""
+    with Path(path).open(encoding="utf-8", newline="") as fh:
+        return next(csv.reader(fh, delimiter=sep), [])
 
-    Reads a single line from the file (header), splits by *sep*, and
-    returns the length.  Cost is microseconds for any reasonable file.
+
+def _count_columns(path: str, sep: str) -> int:
+    """Return the number of columns in the header line of a delimited file."""
+    return len(_header_fields(path, sep))
+
+
+def _reject_repeated_sample_names(path: str, sep: str) -> None:
+    """Raise ``ValueError`` if a sample name appears twice in the header.
+
+    The parsers rename a repeated header (``s1`` becomes ``s1.1``), so the check
+    reads the header itself. The first field names the feature column.
     """
-    with Path(path).open() as fh:
-        header = fh.readline()
-    return len(header.split(sep))
+    counts = Counter(_header_fields(path, sep)[1:])
+    repeated = sorted(name for name, count in counts.items() if count > 1)
+    if repeated:
+        raise ValueError(
+            f"data contains duplicate sample names: {repeated[:5]}. "
+            "Each column must have a unique name."
+        )
 
 
 def _use_pyarrow_csv(path: str, sep: str) -> bool:
@@ -169,7 +186,9 @@ def read_main_data(path: str) -> pd.DataFrame:
     Returns
     -------
     DataFrame
-        Numeric matrix with feature names as index and sample names as columns.
+        Matrix with feature names as index and sample names as columns, one
+        row per input row except removed repeats (see ``clean_features``).
+        Rows with no value are kept.
 
     Raises
     ------
@@ -178,7 +197,8 @@ def read_main_data(path: str) -> pd.DataFrame:
     ImportError
         If *path* is parquet and ``pyarrow`` is not installed.
     ValueError
-        If a feature name appears more than once with different values. A
+        If a sample name appears twice in the header of a delimited file, or
+        a feature name appears more than once with different values. A
         feature repeated with identical values is removed and logged.
 
     Examples
@@ -193,13 +213,15 @@ def read_main_data(path: str) -> pd.DataFrame:
     if ext in (".parquet", ".pq"):
         if not _HAVE_PYARROW:
             raise ImportError("Parquet reading requires pyarrow: pip install harmonizepy[io]")
-        df = pd.read_parquet(path, engine="auto")
+        df = pd.read_parquet(path)
     elif ext == ".csv":
+        _reject_repeated_sample_names(path, ",")
         if _HAVE_PYARROW and _count_columns(path, ",") <= _WIDE_COLUMN_THRESHOLD:
             df = pd.read_csv(path, sep=",", index_col=0, engine="pyarrow", dtype_backend="pyarrow")
         else:
             df = pd.read_csv(path, sep=",", index_col=0)
     else:
+        _reject_repeated_sample_names(path, "\t")
         if _HAVE_PYARROW and _count_columns(path, "\t") <= _WIDE_COLUMN_THRESHOLD:
             df = pd.read_csv(path, sep="\t", index_col=0, engine="pyarrow", dtype_backend="pyarrow")
         else:
@@ -207,10 +229,7 @@ def read_main_data(path: str) -> pd.DataFrame:
 
     df = _convert_pyarrow_dtypes(df)
 
-    # Repeats are checked before blank rows are dropped, so that a name repeated
-    # once with values and once blank is reported, not silently resolved.
     df = clean_features(df)
-    df = df.dropna(how="all", axis=0)
 
     # Normalise index name: pyarrow engine may set it to empty string
     # where the default C parser leaves it as None.

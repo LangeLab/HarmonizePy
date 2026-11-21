@@ -32,7 +32,8 @@ Here `P00001` is missing in Sample_4, and `P00003` is missing in Samples 1, 2, a
 
 - A feature name may repeat only with identical values. The repeat is removed and logged; the same name with different values raises a `ValueError`. Different names with identical values are both kept
 - All non-index values must be numeric. Non-numeric text cells (other than NaN markers) raise a `ValueError`
-- An all-NaN row is dropped when the matrix is read from a file. In a DataFrame passed to `harmonize()`, it is kept and returned as missing
+- An all-NaN row is kept and returned as missing, whether the matrix comes from a file or a DataFrame
+- Sample names must be unique. A repeated column name raises a `ValueError`
 - No minimum number of features is enforced, but at least 2 features are needed for ComBat's empirical Bayes prior estimation
 
 ### When passing a DataFrame

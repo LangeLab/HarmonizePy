@@ -89,7 +89,7 @@ def build_block_list(
 
     block_arr = np.vectorize(batch_to_block.__getitem__)(batch_arr).astype(batch_arr.dtype)
 
-    n_blocks = int(block_arr[-1])
+    n_blocks = len(np.unique(block_arr))
     logger.debug(
         "Built %d blocks of size %d from %d batches",
         n_blocks,

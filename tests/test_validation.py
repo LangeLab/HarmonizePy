@@ -421,3 +421,14 @@ class TestDescriptionColumns:
         desc = pd.DataFrame({"ID": ["s1", "s1", "s2"], "sample": [1, 2, 3], "batch": [1, 2, 1]})
         with pytest.raises(ValueError, match="listed more than once"):
             sample_batch_map(desc)
+
+
+def test_duplicate_sample_names_raise() -> None:
+    """A repeated sample name in the data matrix is rejected.
+
+    Failure condition: the matrix passes, and a sorted run fails with a shape error
+    or an unsorted run silently maps both columns to one description row.
+    """
+    df = pd.DataFrame([[1.0, 2.0, 3.0]], columns=["s1", "s1", "s2"])
+    with pytest.raises(ValueError, match="duplicate sample names"):
+        validate_data_matrix(df)
