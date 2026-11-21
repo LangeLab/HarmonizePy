@@ -1,11 +1,16 @@
-"""Core pipeline entry point for HarmonizePy.
+"""The ``harmonize()`` pipeline and the steps it shares with the command line.
 
-Orchestrates the full batch-correction workflow:
+A run reads and validates the inputs, maps samples to batches, optionally
+sorts the batches and groups neighbouring batches into blocks, finds each
+feature's affiliation (the blocks in which it has enough values), applies
+unique removal, corrects each group of features that share an affiliation
+with ComBat or limma, and reassembles the matrix in the input column order::
 
-    read → [sort] → [block] → spot missing → [unique removal]
-        → split → adjust (ComBat / limma) → concat → [re-sort] → write
+    read -> validate -> [sort] -> [block] -> affiliation -> [unique removal]
+         -> correct each group -> reassemble -> [write]
 
-This mirrors the R ``HarmonizR::harmonizR()`` function.
+The pipeline follows R ``HarmonizR::harmonizR()`` from HarmonizR 1.10.0. The
+differences are listed in ``assets/FEATURE_PARITY.md``.
 """
 
 from __future__ import annotations
@@ -49,73 +54,83 @@ def harmonize(
     unique_removal: bool = True,
     output_file: str | Path | None = None,
 ) -> pd.DataFrame:
-    """Run the full HarmonizePy batch-correction pipeline.
+    """Correct batch effects in a matrix with missing values.
 
     Parameters
     ----------
     data : DataFrame, str, or Path
-        Features x samples matrix (may contain NaN for structural
-        missingness).  If a path, read from that TSV file.
+        Features x samples matrix, feature names as the index. Missing cells
+        are allowed and stay missing. A path is read with ``read_main_data``:
+        ``.csv`` as comma-separated, ``.parquet`` or ``.pq`` as Parquet, and
+        anything else as tab-separated.
     description : DataFrame, str, or Path
-        Batch description with columns ``ID``, ``sample``, ``batch``.
-        If a path, read from that CSV file.
+        Batch description, one row per sample. The columns named ``ID`` and
+        ``batch`` hold the sample names and batch labels; without those
+        names, the first and third columns are used. Batch labels must be
+        whole numbers. A path is read as CSV.
     config : HarmonizeConfig or None
-        If provided, all algorithm settings are taken from this object.
-        Individual keyword arguments (``algorithm``, ``combat_mode``,
-        ``needed_values``, ``sort``, ``block``, ``unique_removal``) are
-        ignored when *config* is given.  Useful for re-running or
-        storing reproducible run configurations.
-    algorithm : ``"ComBat"`` or ``"limma"``
-        Adjustment algorithm.
-    combat_mode : int
-        ComBat mode 1-4 (ignored when *algorithm* is ``"limma"``).
+        Settings for the run. When given, it replaces ``algorithm``,
+        ``combat_mode``, ``needed_values``, ``sort``, ``block``, and
+        ``unique_removal``.
+    algorithm : {"ComBat", "limma"}
+        Correction engine.
+    combat_mode : {1, 2, 3, 4}
+        ComBat mode: 1 parametric location and scale, 2 parametric location
+        only, 3 non-parametric location and scale, 4 non-parametric location
+        only. Ignored for limma.
     needed_values : int or None
-        Minimum non-missing values per batch for a feature to enter
-        a sub-matrix.  ``None`` (default) auto-selects: 2 for modes
-        1, 3 and limma; 1 for modes 2, 4.
-    sort : ``"sparsity"``, ``"jaccard"``, ``"seriation"``, or ``None``
-        Batch sorting strategy.  Reorders batch columns so similar
-        batches become adjacent before blocking.  Has no effect on
-        output when *block* is ``None``; allowed without *block* to
-        match R behaviour.
+        Minimum observed values a feature needs in a batch for that batch to
+        count in its affiliation. ``None`` chooses 2 for limma and modes 1 and
+        3, and 1 for modes 2 and 4.
+    sort : {"sparsity", "jaccard", "seriation"} or None
+        Batch order used to form blocks. It changes the output only together
+        with ``block``.
     block : int or None
-        Block size: number of consecutive (optionally sorted) batches
-        to group into one block during dissection.  Must be >= 2 and
-        strictly less than the total number of unique batches.
-        ``None`` (default) disables blocking.
+        Number of neighbouring batches per block, at least 2 and fewer than
+        the number of batches. ``None`` treats every batch as its own block.
     unique_removal : bool
-        When ``True`` (default), singleton features (those whose
-        batch-presence pattern is unique across all features) are
-        rescued by cropping to the nearest shared pattern before
-        splitting.  Mirrors R's ``ur=TRUE`` default.
+        When ``True``, a feature whose affiliation no other feature shares is
+        moved to the largest shared affiliation within its own, as R
+        ``ur = TRUE`` does.
     output_file : str, Path, or None
-        If given, write the corrected matrix to this TSV path.
+        If given, the corrected matrix is also written here, in the format of
+        the suffix (``.csv``, ``.parquet`` or ``.pq``, otherwise TSV).
 
     Returns
     -------
     DataFrame
-        Batch-corrected matrix (features x samples), in the original
-        column order.  NaN values remain where the feature lacked
-        sufficient data in a batch.  A feature repeated with the same
-        name and identical values appears once; the removal is logged.
+        Corrected matrix with the input's features and columns, in the input
+        order, except that a feature repeated with the same name and values
+        appears once. A feature with no usable batch is all missing. A feature
+        alone in its affiliation, one whose affiliation spans a single batch,
+        and, in the parametric ComBat modes, one whose variance is too small
+        to estimate keep their raw values; the log counts each kind.
 
     Raises
     ------
     ValueError
-        On invalid arguments, mismatched inputs, or a feature name that
-        appears more than once with different values.
+        On an invalid argument, a matrix or description that fails
+        validation, or a feature name repeated with different values.
+    TypeError
+        If ``unique_removal`` is not a bool.
+    OSError
+        If a path cannot be read or ``output_file`` cannot be written.
+    ImportError
+        If a Parquet file is read or written without ``pyarrow``.
+
+    Notes
+    -----
+    The inputs are not modified. Progress is logged at INFO level on the
+    ``harmonizepy`` loggers.
 
     Examples
     --------
-    >>> from harmonizepy import harmonize
-    >>> result = harmonize("data.tsv", "batch.csv")
-    >>> result = harmonize(df, desc_df, algorithm="limma")
-    >>> result = harmonize(df, desc_df, combat_mode=3, needed_values=1)
-    >>> result = harmonize(df, desc_df, sort="sparsity", block=2)
-    >>> cfg = HarmonizeConfig(algorithm="limma", sort_strategy="sparsity", block_size=2)
-    >>> result = harmonize(df, desc_df, config=cfg)
+    >>> from harmonizepy import HarmonizeConfig, harmonize
+    >>> result = harmonize("data.tsv", "batch.csv")  # doctest: +SKIP
+    >>> result = harmonize(df, desc, algorithm="limma")  # doctest: +SKIP
+    >>> cfg = HarmonizeConfig(sort_strategy="sparsity", block_size=2)
+    >>> result = harmonize(df, desc, config=cfg)  # doctest: +SKIP
     """
-    # --- Apply config (overrides individual kwargs when provided) ----------
     if config is not None:
         algorithm = config.algorithm
         combat_mode = config.combat_mode
@@ -213,6 +228,19 @@ def prepare_inputs(
     the same checks. Paths are read with ``read_main_data`` and
     ``read_description``; repeated features are removed by ``clean_features``.
 
+    Parameters
+    ----------
+    data, description
+        As in ``harmonize()``.
+    algorithm, combat_mode, needed_values, sort, block, unique_removal
+        As in ``harmonize()``; ``needed_values`` may be ``None``.
+
+    Returns
+    -------
+    PreparedInputs
+        The cleaned matrix, the batch label of each of its columns, the
+        resolved ``needed_values``, and the number of batches.
+
     Raises
     ------
     ValueError, TypeError
@@ -282,6 +310,22 @@ def plan_affiliations(
 
     Shared by ``harmonize()`` and the command line dry run, so that the dry run
     reports the groups the correction uses.
+
+    Parameters
+    ----------
+    data : DataFrame
+        Cleaned features x samples matrix.
+    batch_list : ndarray of int64, shape (n_samples,)
+        Batch label of each column of *data*.
+    sort, block, needed_values, unique_removal
+        As in ``harmonize()``, with ``needed_values`` resolved.
+
+    Returns
+    -------
+    AffiliationPlan
+        The matrix and labels in sorted column order, the block of each
+        column, the permutation back to the input order (``None`` without
+        sorting), and each feature's affiliation.
     """
     n_features = data.shape[0]
     n_batches = len(np.unique(batch_list))
