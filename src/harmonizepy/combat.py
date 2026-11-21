@@ -129,121 +129,180 @@ def _it_sol(
     conv: float = 1e-4,
     max_iter: int = 1_000_000,
 ) -> tuple[FloatArray, FloatArray]:
-    """Iterative EB solver for one batch (parametric path).
+    """Solve the parametric empirical-Bayes estimates for one batch.
 
-    NaN-safe: per-gene statistics are computed on non-NaN entries,
-    matching R sva::ComBat's handling of missing data within batches.
+    A one-batch call of ``_it_sol_batches``; see there for the method.
 
     Parameters
     ----------
-    s_data : (n_genes, n_batch_samples)
-        Standardised data for a single batch. May contain NaN.
-    g_hat, d_hat : (n_genes,)
-        Initial estimates of additive / multiplicative effects.
+    s_data : ndarray, shape (n_features, n_batch_samples)
+        Standardised data of the batch. May contain NaN.
+    g_hat, d_hat : ndarray, shape (n_features,)
+        Location and scale estimates of the batch.
     g_bar, t2 : float
-        Prior mean and variance for gamma.
+        Mean and variance of the normal prior on the location.
     a, b : float
-        Hyper-priors for the inverse-gamma on delta.
+        Hyper-priors of the inverse-gamma prior on the scale.
+    conv : float
+        Relative change below which the iteration stops (``sva``'s 1e-4).
+    max_iter : int
+        Iteration limit; ``sva`` has none.
 
     Returns
     -------
-    gamma_star, delta_star : (n_genes,)
+    gamma_star, delta_star : ndarray, shape (n_features,)
     """
-    nan_mask = np.isnan(s_data)
-    all_nan = nan_mask.all(axis=1)
-    active = ~all_nan
+    gamma_star, delta_star = _it_sol_batches(
+        s_data,
+        [np.arange(s_data.shape[1], dtype=np.intp)],
+        g_hat[np.newaxis, :],
+        d_hat[np.newaxis, :],
+        np.array([g_bar]),
+        np.array([t2]),
+        np.array([a]),
+        np.array([b]),
+        conv=conv,
+        max_iter=max_iter,
+    )
+    return gamma_star[0], delta_star[0]
 
-    # Genes with no observed values cannot inform the EB update. Keep their
-    # initial estimates and skip the iterative solver entirely.
-    if not np.any(active):
-        return g_hat.copy(), d_hat.copy()
 
-    n_per_gene = np.float64((~nan_mask).sum(axis=1))
-    n_per_gene = np.maximum(n_per_gene, 1.0)
+def _it_sol_batches(
+    s_data: FloatArray,
+    batches_ind: list[npt.NDArray[np.intp]],
+    g_hat: FloatArray,
+    d_hat: FloatArray,
+    g_bar: FloatArray,
+    t2: FloatArray,
+    a: FloatArray,
+    b: FloatArray,
+    conv: float = 1e-4,
+    max_iter: int = 1_000_000,
+) -> tuple[FloatArray, FloatArray]:
+    """Solve the parametric empirical-Bayes estimates of every batch in one loop.
 
-    sum_x = np.nansum(s_data, axis=1)
-    sum_x2 = np.nansum(s_data * s_data, axis=1)
+    For each batch this is R ``sva``'s ``it.sol``: alternate the posterior
+    location and scale of every feature until the largest relative change of
+    either falls below ``conv``. Each feature uses its observed cells only, and
+    a feature with no observed cell in a batch keeps its initial estimates.
 
-    t2_n = t2 * n_per_gene
-    t2_n_g_hat = t2_n * g_hat  # uses ORIGINAL g_hat, not updated g_new
+    All batches iterate together, and each stops at its own convergence, so
+    the result equals solving the batches one at a time. The working arrays
+    shrink as batches converge, so a converged batch costs nothing further.
+    Rows of a batch are not frozen individually: as in ``sva``, every row
+    updates until the batch as a whole converges. Log records are written per
+    batch, in batch order, after the loop.
 
-    g_prev = g_hat[active].copy()
-    d_prev = d_hat[active].copy()
-    t2_n_active = t2_n[active]
-    t2_n_g_hat_active = t2_n_g_hat[active]
-    sum_x_active = sum_x[active]
-    sum_x2_active = sum_x2[active]
-    n_per_gene_active = n_per_gene[active]
-    d_denom = 0.5 * n_per_gene_active + a - 1.0
+    Parameters
+    ----------
+    s_data : ndarray, shape (n_features, n_samples)
+        Standardised data. May contain NaN.
+    batches_ind : list of ndarray
+        Column indices of each batch.
+    g_hat, d_hat : ndarray, shape (n_batches, n_features)
+        Location and scale estimates.
+    g_bar, t2, a, b : ndarray, shape (n_batches,)
+        Prior mean and variance of the location, and hyper-priors of the scale.
+    conv : float
+        Relative change below which a batch stops (``sva``'s 1e-4).
+    max_iter : int
+        Iteration limit; a batch that reaches it is logged as not converged.
 
-    g_curr = np.empty_like(g_prev)
-    d_curr = np.empty_like(d_prev)
-    sum2 = np.empty_like(g_prev)
-    delta_g = np.empty_like(g_prev)
-    delta_d = np.empty_like(d_prev)
-    denom_g = np.empty_like(g_prev)
-    denom_d = np.empty_like(d_prev)
-    latest_g = g_prev
-    latest_d = d_prev
+    Returns
+    -------
+    gamma_star, delta_star : ndarray, shape (n_batches, n_features)
+    """
+    n_obs = np.empty_like(g_hat)
+    sum_x = np.empty_like(g_hat)
+    sum_x2 = np.empty_like(g_hat)
+    for i, idx in enumerate(batches_ind):
+        batch_data = s_data[:, idx]
+        n_obs[i] = (~np.isnan(batch_data)).sum(axis=1)
+        sum_x[i] = np.nansum(batch_data, axis=1)
+        sum_x2[i] = np.nansum(batch_data * batch_data, axis=1)
+    active = n_obs > 0
+    n_obs = np.maximum(n_obs, 1.0)
+
+    t2_n = t2[:, np.newaxis] * n_obs
+    t2_n_g_hat = t2_n * g_hat
+    d_denom = 0.5 * n_obs + a[:, np.newaxis] - 1.0
+
+    g_star = g_hat.copy()
+    d_star = d_hat.copy()
+    stop_iteration = np.zeros(len(batches_ind), dtype=np.intp)
+    stop_change = np.full(len(batches_ind), np.nan)
+    rows = np.flatnonzero(active.any(axis=1))
+    g_curr, d_curr = g_hat[rows], d_hat[rows]
+    run_active = active[rows]
+    every_row_active = bool(run_active.all())
+    run_t2_n, run_t2_n_g_hat, run_n_obs = t2_n[rows], t2_n_g_hat[rows], n_obs[rows]
+    run_sum_x, run_sum_x2, run_d_denom = sum_x[rows], sum_x2[rows], d_denom[rows]
+    run_g_bar, run_b = g_bar[rows, np.newaxis], b[rows, np.newaxis]
 
     for iteration in range(max_iter):
-        np.multiply(d_prev, g_bar, out=g_curr)
-        g_curr += t2_n_g_hat_active
-        np.divide(g_curr, t2_n_active + d_prev, out=g_curr)
+        if rows.size == 0:
+            break
+        g_prev, d_prev = g_curr, d_curr
 
-        np.multiply(g_curr, g_curr, out=sum2)
-        sum2 *= n_per_gene_active
-        sum2 -= 2.0 * g_curr * sum_x_active
-        sum2 += sum_x2_active
+        g_curr = d_prev * run_g_bar
+        g_curr += run_t2_n_g_hat
+        np.divide(g_curr, run_t2_n + d_prev, out=g_curr)
 
-        d_curr[:] = 0.5 * sum2 + b
-        np.divide(d_curr, d_denom, out=d_curr)
+        sum2 = g_curr * g_curr
+        sum2 *= run_n_obs
+        sum2 -= 2.0 * g_curr * run_sum_x
+        sum2 += run_sum_x2
+        d_curr = 0.5 * sum2 + run_b
+        np.divide(d_curr, run_d_denom, out=d_curr)
 
-        np.subtract(g_curr, g_prev, out=delta_g)
-        np.abs(delta_g, out=delta_g)
-        np.copyto(denom_g, g_prev)
-        np.abs(denom_g, out=denom_g)
-        np.maximum(denom_g, 1e-12, out=denom_g)
-        np.divide(delta_g, denom_g, out=delta_g)
+        # Relative changes, guarded against a zero previous value.
+        delta_g = np.abs(g_curr - g_prev) / np.maximum(np.abs(g_prev), 1e-12)
+        delta_d = np.abs(d_curr - d_prev) / np.maximum(np.abs(d_prev), 1e-12)
+        if not every_row_active:
+            delta_g = np.where(run_active, delta_g, -np.inf)
+            delta_d = np.where(run_active, delta_d, -np.inf)
+            g_curr = np.where(run_active, g_curr, g_prev)
+            d_curr = np.where(run_active, d_curr, d_prev)
+        max_g, max_d = delta_g.max(axis=1), delta_d.max(axis=1)
+        # Python's max(a, b): b only when b > a, so a NaN scale change is ignored
+        # while the location change is finite, as in the per-batch solver.
+        change = np.where(max_d > max_g, max_d, max_g)
+        stop_change[rows] = change
 
-        np.subtract(d_curr, d_prev, out=delta_d)
-        np.abs(delta_d, out=delta_d)
-        np.copyto(denom_d, d_prev)
-        np.abs(denom_d, out=denom_d)
-        np.maximum(denom_d, 1e-12, out=denom_d)
-        np.divide(delta_d, denom_d, out=delta_d)
+        finished = ~np.isfinite(change) | (change < conv)
+        if not finished.any():
+            continue
+        done = rows[finished]
+        stop_iteration[done] = iteration + 1
+        g_star[done] = g_curr[finished]
+        d_star[done] = d_curr[finished]
+        keep = ~finished
+        rows = rows[keep]
+        g_curr, d_curr, run_active = g_curr[keep], d_curr[keep], run_active[keep]
+        run_t2_n, run_t2_n_g_hat, run_n_obs = run_t2_n[keep], run_t2_n_g_hat[keep], run_n_obs[keep]
+        run_sum_x, run_sum_x2 = run_sum_x[keep], run_sum_x2[keep]
+        run_d_denom, run_g_bar, run_b = run_d_denom[keep], run_g_bar[keep], run_b[keep]
 
-        change = max(float(delta_g.max()), float(delta_d.max()))
-        latest_g = g_curr
-        latest_d = d_curr
-
-        # A non-finite change never falls below the threshold, so without this
-        # stop the loop would run to max_iter (about a minute) to the same result.
-        if not np.isfinite(change):
+    unconverged = set(rows.tolist())
+    for k, row in enumerate(rows.tolist()):
+        g_star[row] = g_curr[k]
+        d_star[row] = d_curr[k]
+    for row in range(len(batches_ind)):
+        if row in unconverged:
             logger.warning(
-                "Solver stopped at iteration %d: the change is not finite", iteration + 1
+                "Batch did not converge after %d iterations (final change=%.2e)",
+                max_iter,
+                stop_change[row],
             )
-            break
-
-        if change < conv:
-            logger.debug("Converged in %d iterations (change=%.2e)", iteration + 1, change)
-            break
-
-        g_prev, g_curr = g_curr, g_prev
-        d_prev, d_curr = d_curr, d_prev
-    else:
-        logger.warning(
-            "Batch did not converge after %d iterations (final change=%.2e)",
-            max_iter,
-            change,
-        )
-
-    gamma_star = g_hat.copy()
-    delta_star = d_hat.copy()
-    gamma_star[active] = latest_g
-    delta_star[active] = latest_d
-
-    return gamma_star, delta_star
+        elif stop_iteration[row] and not np.isfinite(stop_change[row]):
+            logger.warning(
+                "Solver stopped at iteration %d: the change is not finite", stop_iteration[row]
+            )
+        elif stop_iteration[row]:
+            logger.debug(
+                "Converged in %d iterations (change=%.2e)", stop_iteration[row], stop_change[row]
+            )
+    return g_star, d_star
 
 
 # ---------------------------------------------------------------------------
@@ -339,6 +398,8 @@ def _int_eprior(
 _design_cache: dict[
     tuple[int, bytes], tuple[FloatArray, FloatArray, list[npt.NDArray[np.intp]]]
 ] = {}
+# Upper bound on the memory the design cache keeps alive between calls.
+_DESIGN_CACHE_MAX_BYTES = 16 * 2**20
 
 
 def _make_design(batch: npt.NDArray[np.intp], n_batch: int) -> FloatArray:
@@ -356,7 +417,10 @@ def _get_cached_design(
     """Return the one-hot design, its Gram matrix, and the column indices of each batch.
 
     Consecutive groups often share a batch layout, so results are cached by the
-    layout; the cache holds at most 64 layouts and is cleared when full.
+    layout. After each insertion the oldest layouts are dropped until the cache
+    holds at most 64 layouts and at most ``_DESIGN_CACHE_MAX_BYTES``, so that
+    wide matrices do not keep large designs alive after a run; the newest
+    layout is always kept.
     """
     key = (n_batch, batch_int.tobytes())
     cached = _design_cache.get(key)
@@ -365,10 +429,20 @@ def _get_cached_design(
 
     design = _make_design(batch_int, n_batch)
     layout = (design, design @ design.T, [np.where(batch_int == i)[0] for i in range(n_batch)])
-    if len(_design_cache) > 64:
-        _design_cache.clear()
     _design_cache[key] = layout
+    while len(_design_cache) > 1 and (
+        len(_design_cache) > 64 or _design_cache_bytes() > _DESIGN_CACHE_MAX_BYTES
+    ):
+        del _design_cache[next(iter(_design_cache))]
     return layout
+
+
+def _design_cache_bytes() -> int:
+    """Return the bytes held by the design cache."""
+    return sum(
+        entry[0].nbytes + entry[1].nbytes + sum(ind.nbytes for ind in entry[2])
+        for entry in _design_cache.values()
+    )
 
 
 def _unestimable_rows(
@@ -403,11 +477,17 @@ def _unestimable_rows(
 
     per_batch = {}
     for batch_id, n_cols in zip(batch_ids, batch_sizes, strict=True):
-        cols = batch_int == batch_id
-        observed = obs[:, cols]
-        n_obs = observed.sum(axis=1)
-        mean_b = np.nansum(data[:, cols], axis=1) / np.maximum(n_obs, 1)
-        resid = np.where(observed, data[:, cols] - mean_b[:, np.newaxis], 0.0)
+        cols = np.flatnonzero(batch_int == batch_id)
+        block = data[:, cols]
+        if has_nan:
+            observed = obs[:, cols]
+            n_obs = observed.sum(axis=1)
+            mean_b = np.nansum(block, axis=1) / np.maximum(n_obs, 1)
+            resid = np.where(observed, block - mean_b[:, np.newaxis], 0.0)
+        else:
+            n_obs = np.full(data.shape[0], cols.size)
+            mean_b = np.sum(block, axis=1) / max(cols.size, 1)
+            resid = block - mean_b[:, np.newaxis]
         per_batch[batch_id] = (n_obs, (resid * resid).sum(axis=1), int(n_cols))
 
     if ref_batch is None:
@@ -766,20 +846,22 @@ def _estimate_batch_effects(
     else:
         priors = [(1.0, 1.0)] * layout.n_batch
 
-    gamma_star = np.empty_like(gamma_hat)
-    delta_star = np.empty_like(gamma_hat)
-    for i, idx in enumerate(layout.batches_ind):
-        if par_prior and layout.mean_only:
-            gamma_star[i] = _postmean_unit_scale(gamma_bar[i], t2[i], gamma_hat[i])
-            delta_star[i] = 1.0
-        elif par_prior:
-            a_prior, b_prior = priors[i]
-            gamma_star[i], delta_star[i] = _it_sol(
-                s_data[:, idx], gamma_hat[i], delta_hat[i], gamma_bar[i], t2[i], a_prior, b_prior
-            )
-        else:
-            gamma_star[i], d_star = _int_eprior(s_data[:, idx], gamma_hat[i], delta_hat[i])
-            delta_star[i] = 1.0 if layout.mean_only else d_star
+    if par_prior and not layout.mean_only:
+        a_prior = np.array([prior[0] for prior in priors])
+        b_prior = np.array([prior[1] for prior in priors])
+        gamma_star, delta_star = _it_sol_batches(
+            s_data, layout.batches_ind, gamma_hat, delta_hat, gamma_bar, t2, a_prior, b_prior
+        )
+    else:
+        gamma_star = np.empty_like(gamma_hat)
+        delta_star = np.empty_like(gamma_hat)
+        for i, idx in enumerate(layout.batches_ind):
+            if par_prior:
+                gamma_star[i] = _postmean_unit_scale(gamma_bar[i], t2[i], gamma_hat[i])
+                delta_star[i] = 1.0
+            else:
+                gamma_star[i], d_star = _int_eprior(s_data[:, idx], gamma_hat[i], delta_hat[i])
+                delta_star[i] = 1.0 if layout.mean_only else d_star
 
     if layout.ref_idx is not None:
         gamma_star[layout.ref_idx] = 0.0
@@ -812,7 +894,7 @@ def _adjust(
 
 
 def _log_fit(data: FloatArray, layout: _BatchLayout, *, par_prior: bool, label: str) -> None:
-    logger.info(
+    logger.debug(
         "%s %s, %s: %d features x %d samples across %d batches",
         label,
         "parametric" if par_prior else "non-parametric",
@@ -856,12 +938,15 @@ def _combat_nan(
         var_n = _row_var_nan_grouped(data[:, ref_cols] - fitted_ref)
     else:
         grand_mean = (layout.batch_sizes / data.shape[1]) @ b_hat
-        fitted = (layout.design.T @ b_hat).T
-        var_n = _row_var_nan_grouped(data - fitted, valid_row_groups)
+        residuals = (layout.design.T @ b_hat).T
+        np.subtract(data, residuals, out=residuals)
+        var_n = _row_var_nan_grouped(residuals, valid_row_groups)
+        del residuals
 
     std_pooled = np.sqrt(np.maximum(var_n, _VARIANCE_FLOOR))
     stand_mean = grand_mean[:, np.newaxis]
-    s_data = (data - stand_mean) / std_pooled[:, np.newaxis]
+    s_data = data - stand_mean
+    s_data /= std_pooled[:, np.newaxis]
 
     gamma_hat = _beta_na_grouped_batch_design(
         s_data, layout.design, valid_row_groups, grouped_layouts
@@ -904,11 +989,14 @@ def _combat_dense(
     else:
         grand_mean = (layout.batch_sizes / data.shape[1]) @ b_hat
         residuals = data.T - layout.design.T @ b_hat
-    var_pooled = (residuals**2).mean(axis=0)
+    np.square(residuals, out=residuals)
+    var_pooled = residuals.mean(axis=0)
+    del residuals
 
     std_pooled = np.sqrt(np.maximum(var_pooled, _VARIANCE_FLOOR))
     stand_mean = grand_mean[:, np.newaxis]
-    s_data = (data - stand_mean) / std_pooled[:, np.newaxis]
+    s_data = data - stand_mean
+    s_data /= std_pooled[:, np.newaxis]
 
     gamma_hat = np.linalg.solve(layout.xx_t, layout.design @ s_data.T)
     delta_hat = np.ones_like(gamma_hat)

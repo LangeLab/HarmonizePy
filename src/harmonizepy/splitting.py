@@ -162,7 +162,10 @@ def splitting(
 
         # General path: multiple features.
         row_idx = np.array(row_indices, dtype=np.intp)
-        sub_data = data_np[np.ix_(row_idx, col_indices)]
+        spans_matrix = row_idx.size == n_features and np.array_equal(
+            col_indices, np.arange(n_samples)
+        )
+        sub_data = data_np if spans_matrix else data_np[np.ix_(row_idx, col_indices)]
         sub_batch = batch_arr[col_indices]
 
         unique_batches = np.unique(sub_batch)

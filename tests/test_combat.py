@@ -954,3 +954,154 @@ class TestEngineInputs:
         frame = pd.DataFrame(np.ones((3, 4)), columns=list("abcd"))
         with pytest.raises(ValueError, match="batch length"):
             adjust_combat(frame, [0, 0])
+
+
+def _reference_it_sol(
+    s_data: np.ndarray,
+    g_hat: np.ndarray,
+    d_hat: np.ndarray,
+    g_bar: float,
+    t2: float,
+    a: float,
+    b: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """One-batch solver written after R ``sva::it.sol`` 3.60.0, as a per-batch oracle.
+
+    Each feature uses its observed cells; the change is ``max(change_g, change_d)``
+    with Python's ``max``, so a NaN scale change is ignored while the location
+    change is finite; the loop stops at a non-finite change or below 1e-4.
+    """
+    n = np.maximum((~np.isnan(s_data)).sum(axis=1).astype(float), 1.0)
+    sum_x, sum_x2 = np.nansum(s_data, axis=1), np.nansum(s_data * s_data, axis=1)
+    g_prev, d_prev = g_hat.copy(), d_hat.copy()
+    while True:
+        g = (t2 * n * g_hat + d_prev * g_bar) / (t2 * n + d_prev)
+        d = (0.5 * (g * g * n - 2.0 * g * sum_x + sum_x2) + b) / (0.5 * n + a - 1.0)
+        change = max(
+            float((np.abs(g - g_prev) / np.maximum(np.abs(g_prev), 1e-12)).max()),
+            float((np.abs(d - d_prev) / np.maximum(np.abs(d_prev), 1e-12)).max()),
+        )
+        if not np.isfinite(change) or change < 1e-4:
+            return g, d
+        g_prev, d_prev = g, d
+
+
+class TestBatchedSolver:
+    """The empirical-Bayes solver that iterates all batches of a group together."""
+
+    # The setup takes the mean of a row with no observed cell in one batch.
+    @pytest.mark.filterwarnings("ignore:Mean of empty slice:RuntimeWarning")
+    @pytest.mark.filterwarnings("ignore:Degrees of freedom:RuntimeWarning")
+    def test_batched_solver_equals_one_batch_at_a_time(self) -> None:
+        """Solving all batches together gives exactly the per-batch results.
+
+        Batches converge after different numbers of iterations, and one row has no
+        observed cell in a batch, so per-batch stopping and inactive rows are both
+        exercised.
+
+        Failure condition: a batch keeps iterating after its own convergence, or an
+        inactive row is updated.
+        """
+        from harmonizepy.combat import _it_sol_batches
+
+        rng = np.random.default_rng(16)
+        batches_ind = [np.arange(0, 4), np.arange(4, 10), np.arange(10, 13)]
+        s_data = rng.normal(0, 1, (40, 13)) * np.repeat([0.5, 1.0, 3.0], [4, 6, 3])
+        s_data[3, 4:10] = np.nan
+        s_data[rng.random(s_data.shape) < 0.1] = np.nan
+        g_hat = np.array([np.nanmean(s_data[:, idx], axis=1) for idx in batches_ind])
+        d_hat = np.array([np.nanvar(s_data[:, idx], axis=1, ddof=1) for idx in batches_ind])
+        g_hat = np.nan_to_num(g_hat)
+        d_hat = np.nan_to_num(d_hat, nan=1.0)
+        g_bar, t2 = g_hat.mean(axis=1), g_hat.var(axis=1, ddof=1)
+        a, b = np.array([2.0, 3.0, 5.0]), np.array([1.0, 2.0, 4.0])
+        together = _it_sol_batches(s_data, batches_ind, g_hat, d_hat, g_bar, t2, a, b)
+        for i, idx in enumerate(batches_ind):
+            alone = _it_sol(s_data[:, idx], g_hat[i], d_hat[i], g_bar[i], t2[i], a[i], b[i])
+            np.testing.assert_array_equal(together[0][i], alone[0])
+            np.testing.assert_array_equal(together[1][i], alone[1])
+
+    @pytest.mark.filterwarnings("ignore::RuntimeWarning")
+    @pytest.mark.parametrize("scale", [1.0, 1e250])
+    def test_matches_the_per_batch_reference(self, scale: float) -> None:
+        """The solver equals the R-style one-batch reference, for ordinary and huge values.
+
+        Failure condition: the batched loop's stopping rule or arithmetic departs from
+        the one-batch reference.
+        """
+        rng = np.random.default_rng(19)
+        for _ in range(20):
+            s_data = rng.normal(0, 1, (1, 2)) * scale
+            g_hat = s_data.mean(axis=1)
+            d_hat = np.maximum(s_data.var(axis=1, ddof=1), 1e-12)
+            expected = _reference_it_sol(s_data, g_hat, d_hat, 0.0, 1.0, 3.0, 2.0)
+            got = _it_sol(s_data, g_hat, d_hat, 0.0, 1.0, 3.0, 2.0)
+            np.testing.assert_array_equal(got[0], expected[0])
+            np.testing.assert_array_equal(got[1], expected[1])
+
+    @pytest.mark.filterwarnings("ignore::RuntimeWarning")
+    def test_warnings_follow_batch_order(
+        self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Warnings for several batches appear in batch order, with the final change.
+
+        Failure condition: the warnings follow the iteration at which each batch
+        stopped, or the non-convergence warning lacks the final change.
+        """
+        from harmonizepy.combat import _it_sol_batches
+
+        # The command line turns off propagation on the package logger, and caplog
+        # only sees records that propagate to the root logger.
+        monkeypatch.setattr(logging.getLogger("harmonizepy"), "propagate", True)
+        rng = np.random.default_rng(20)
+        s_data = np.hstack([rng.normal(0, 1, (5, 4)), rng.normal(0, 1, (5, 4)) * 1e200])
+        batches_ind = [np.arange(4), np.arange(4, 8)]
+        g_hat = np.array([s_data[:, idx].mean(axis=1) for idx in batches_ind])
+        d_hat = np.array([s_data[:, idx].var(axis=1, ddof=1) for idx in batches_ind])
+        with caplog.at_level(logging.WARNING, logger="harmonizepy.combat"):
+            _it_sol_batches(
+                s_data,
+                batches_ind,
+                g_hat,
+                d_hat,
+                np.zeros(2),
+                np.ones(2),
+                np.full(2, 3.0),
+                np.full(2, 2.0),
+                max_iter=2,
+            )
+        messages = [record.getMessage() for record in caplog.records]
+        assert messages[0].startswith("Batch did not converge after 2 iterations (final change=")
+        assert "not finite" in messages[1]
+
+
+class TestDesignCache:
+    """The design cache stays within its bounds and keeps repeated layouts."""
+
+    def test_design_cache_stays_within_its_byte_bound(self) -> None:
+        """Wide designs do not keep the cache above its byte bound after a call.
+
+        Failure condition: the cache keeps every design of a wide run alive.
+        """
+        from harmonizepy.combat import _DESIGN_CACHE_MAX_BYTES, _design_cache_bytes
+
+        rng = np.random.default_rng(17)
+        n_samples = 20_000
+        for n_batch in range(2, 40):
+            batch = np.arange(n_samples) % n_batch
+            combat(rng.normal(size=(3, n_samples)), batch, mean_only=True)
+        assert _design_cache_bytes() <= _DESIGN_CACHE_MAX_BYTES
+
+    def test_recent_layout_stays_cached_when_the_budget_is_full(self) -> None:
+        """After the byte budget is reached, the newest layouts remain cached.
+
+        Failure condition: the whole cache is cleared, so a layout used again at
+        once must be rebuilt.
+        """
+        from harmonizepy.combat import _design_cache, _get_cached_design
+
+        n_samples = 20_000
+        for n_batch in range(2, 40):
+            _get_cached_design(np.arange(n_samples) % n_batch, n_batch)
+        last = np.arange(n_samples) % 39
+        assert (39, last.astype(np.intp).tobytes()) in _design_cache

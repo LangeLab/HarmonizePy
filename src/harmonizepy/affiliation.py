@@ -259,12 +259,13 @@ def remove_unique_combinations(
         logger.debug("No shared patterns available for rescue")
         return result
 
+    targets = [(pattern, frozenset(pattern)) for pattern in non_unique]
     rescued = 0
     for i, affil in enumerate(result):
         if not affil or affil in non_unique:
             continue
 
-        best = _find_best_crop(frozenset(affil), non_unique)
+        best = _find_best_crop(frozenset(affil), targets)
         if best is not None:
             result[i] = best
             rescued += 1
@@ -276,19 +277,17 @@ def remove_unique_combinations(
 
 def _find_best_crop(
     affil_set: frozenset[int],
-    non_unique: set[tuple[int, ...]],
+    targets: list[tuple[tuple[int, ...], frozenset[int]]],
 ) -> tuple[int, ...] | None:
-    """Return the largest subset of *affil_set* that is in *non_unique*.
+    """Return the longest target pattern that is a proper subset of *affil_set*.
 
-    Iterates over the non-unique patterns directly rather than generating
-    all subsets of *affil_set*. For datasets with few non-unique patterns
-    and long affiliations this is orders of magnitude faster.
-
-    Returns ``None`` if no non-empty subset matches.
+    *targets* pairs each shared pattern with its set, built once by the caller.
+    Ties go to the pattern met first in *targets*. Returns ``None`` if no
+    target is a proper subset.
     """
     best = None
-    for pattern in non_unique:
-        if set(pattern).issubset(affil_set) and len(pattern) < len(affil_set):
+    for pattern, pattern_set in targets:
+        if len(pattern) < len(affil_set) and pattern_set.issubset(affil_set):
             if best is None or len(pattern) > len(best):
                 best = pattern
     return best

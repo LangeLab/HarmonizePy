@@ -237,7 +237,7 @@ class TestFindBestCrop:
         Failure condition: a non-maximal subset is returned.
         """
         non_unique: set[tuple[int, ...]] = {(1, 2, 3), (1, 2)}
-        best = _find_best_crop(frozenset({1, 2, 3, 4}), non_unique)
+        best = _find_best_crop(frozenset({1, 2, 3, 4}), [(p, frozenset(p)) for p in non_unique])
         assert best == (1, 2, 3)
 
     def test_returns_none_when_no_match(self):
@@ -246,7 +246,7 @@ class TestFindBestCrop:
         Failure condition: a non-existent match is returned.
         """
         non_unique: set[tuple[int, ...]] = {(5, 6)}
-        best = _find_best_crop(frozenset({1, 2}), non_unique)
+        best = _find_best_crop(frozenset({1, 2}), [(p, frozenset(p)) for p in non_unique])
         assert best is None
 
     def test_single_element_subset(self):
@@ -255,7 +255,7 @@ class TestFindBestCrop:
         Failure condition: single-element subsets are skipped.
         """
         non_unique: set[tuple[int, ...]] = {(3,)}
-        best = _find_best_crop(frozenset({1, 2, 3}), non_unique)
+        best = _find_best_crop(frozenset({1, 2, 3}), [(p, frozenset(p)) for p in non_unique])
         assert best == (3,)
 
     def test_exact_match_not_searched(self):
@@ -265,5 +265,5 @@ class TestFindBestCrop:
         is already a non-unique pattern.
         """
         non_unique: set[tuple[int, ...]] = {(1, 2, 3), (1, 2)}
-        best = _find_best_crop(frozenset({1, 2, 3}), non_unique)
+        best = _find_best_crop(frozenset({1, 2, 3}), [(p, frozenset(p)) for p in non_unique])
         assert best == (1, 2)

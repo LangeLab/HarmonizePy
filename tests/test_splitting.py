@@ -14,6 +14,7 @@ import pytest
 
 from harmonizepy.affiliation import build_affiliation_list
 from harmonizepy.combat import combat as _combat
+from harmonizepy.limma_wrapper import remove_batch_effect
 from harmonizepy.splitting import splitting
 
 _Affil = list[tuple[int, ...]]
@@ -234,3 +235,35 @@ class TestSplittingArguments:
         batch = np.array([1, 1, 2, 2])
         with pytest.raises(ValueError, match=message):
             splitting([(1, 2), (1, 2)], data, batch, batch, algorithm=algorithm, combat_mode=mode)
+
+
+class TestSpanningGroup:
+    """A group that covers every row and column is read without a copy."""
+
+    @pytest.mark.parametrize("algorithm", ["ComBat", "limma"])
+    @pytest.mark.parametrize("with_missing", [False, True])
+    def test_output_equals_engine_and_input_unchanged(
+        self, algorithm: str, with_missing: bool
+    ) -> None:
+        """The spanning group gives the engine's output and leaves the caller's array as it was.
+
+        Failure condition: the engine writes into the shared array, or the in-place
+        read changes the result.
+        """
+        rng = np.random.default_rng(18)
+        values = rng.normal(10, 1, (8, 6)) + np.repeat([0.0, 1.0, 2.0], 2)
+        if with_missing:
+            values[2, 0] = np.nan
+            values[5, 3] = np.nan
+        data = pd.DataFrame(values, columns=list("abcdef"))
+        data_np = data.to_numpy(dtype=np.float64)
+        before = data_np.copy()
+        batch = np.array([1, 1, 2, 2, 3, 3])
+        out = splitting(
+            [(1, 2, 3)] * 8, data, batch, batch, algorithm=algorithm, combat_mode=1, data_np=data_np
+        )
+        np.testing.assert_array_equal(data_np, before)
+        expected = (
+            _combat(before, batch) if algorithm == "ComBat" else remove_batch_effect(before, batch)
+        )
+        np.testing.assert_array_equal(out.to_numpy(), expected)

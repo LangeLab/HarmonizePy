@@ -6,6 +6,11 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Changed
+
+- ComBat's parametric solver iterates all batches of a group together, each stopping at its own convergence; corrected values are unchanged. Per-group bookkeeping and peak memory are lower, and the design cache is bounded by size.
+- The per-group ComBat log line is at DEBUG level; the run's INFO lines report the number of groups.
+
 ### Fixed
 
 - ComBat, parametric modes: a feature whose variance the engine would raise to its 1e-12 floor, such as a feature that is constant inside a batch, no longer sets the empirical-Bayes prior for every other feature. It keeps its raw values, as `sva::ComBat` does for exactly constant rows, and the other features are corrected as if it were absent (#18).
