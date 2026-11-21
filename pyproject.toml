@@ -61,7 +61,8 @@ requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "src/harmonizepy"]
+addopts = "--doctest-modules"
 
 [tool.coverage.run]
 source = ["src/harmonizepy"]
