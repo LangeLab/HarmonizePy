@@ -39,7 +39,7 @@ The `--dev` flag installs pytest, mypy, and ruff alongside the package.
 
 | Extra | Install command | What it adds |
 | --- | --- | --- |
-| `io` | `pip install harmonizepy[io]` | Parquet output support and faster CSV/TSV reading via `pyarrow >= 14.0` |
+| `io` | `pip install harmonizepy[io]` | Parquet input and output via `pyarrow >= 14.0` |
 | `config` | `pip install harmonizepy[config]` | YAML config files via `pyyaml >= 6.0`. JSON and TOML work without this extra. |
 | `completion` | `pip install harmonizepy[completion]` | Shell tab-completion for the CLI via `argcomplete >= 3.0` |
 | `all` | `pip install harmonizepy[all]` | All three extras above |

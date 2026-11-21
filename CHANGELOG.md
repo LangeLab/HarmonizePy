@@ -10,6 +10,7 @@ All notable changes to this project are documented in this file. The format is b
 
 - ComBat's parametric solver iterates all batches of a group together, each stopping at its own convergence; corrected values are unchanged. Per-group bookkeeping and peak memory are lower, and the design cache is bounded by size.
 - The per-group ComBat log line is at DEBUG level; the run's INFO lines report the number of groups.
+- CSV and TSV files are read with pandas' C parser on the calling thread, at every width; pyarrow's reader, which started a thread pool, is no longer used. Parquet is read without reader threads. The `io` extra is needed for Parquet only.
 - ComBat's non-parametric modes (3 and 4) compute the prior in smaller blocks, which keeps them in the CPU cache for large groups and lowers their peak memory; corrected values are unchanged.
 
 ### Fixed

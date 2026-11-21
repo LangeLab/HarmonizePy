@@ -21,21 +21,11 @@ try:
 except ImportError:
     _HAVE_PYARROW = False
 
-# CSV/TSV reading: pyarrow engine is faster for tall/narrow data but slower
-# for very wide data (thousands of columns).  We sample the header line to
-# count columns and pick the engine accordingly.
-_WIDE_COLUMN_THRESHOLD = 500
-
 
 def _header_fields(path: str, sep: str) -> list[str]:
     """Return the fields of the header line of a delimited file, quotes removed."""
     with Path(path).open(encoding="utf-8", newline="") as fh:
         return next(csv.reader(fh, delimiter=sep), [])
-
-
-def _count_columns(path: str, sep: str) -> int:
-    """Return the number of columns in the header line of a delimited file."""
-    return len(_header_fields(path, sep))
 
 
 def _reject_repeated_sample_names(path: str, sep: str) -> None:
@@ -68,22 +58,14 @@ def format_from_suffix(path: str) -> str:
     return _FORMAT_BY_SUFFIX.get(Path(path).suffix.lower(), "tsv")
 
 
-def _use_pyarrow_csv(path: str, sep: str) -> bool:
-    """Return ``True`` if pyarrow engine should be used for this CSV/TSV file.
-
-    PyArrow is preferred for files with ``<= _WIDE_COLUMN_THRESHOLD`` columns
-    (where it is typically faster) and slower for very wide files.
-    """
-    return bool(_HAVE_PYARROW and _count_columns(path, sep) <= _WIDE_COLUMN_THRESHOLD)
-
-
 def _read_delimited(path: str, sep: str, *, index_col: int | None) -> pd.DataFrame:
-    """Read a delimited file, with the pyarrow engine for files up to the column threshold."""
-    if _use_pyarrow_csv(path, sep):
-        return pd.read_csv(
-            path, sep=sep, index_col=index_col, engine="pyarrow", dtype_backend="pyarrow"
-        )
-    return pd.read_csv(path, sep=sep, index_col=index_col)
+    """Read a delimited file with pandas' C parser.
+
+    The C parser runs on the calling thread. pyarrow's CSV reader is not used:
+    it starts a thread pool, and on this package's inputs it is no faster on
+    narrow files and slower on wide ones.
+    """
+    return pd.read_csv(path, sep=sep, index_col=index_col, engine="c")
 
 
 def _convert_pyarrow_dtypes(df: pd.DataFrame) -> pd.DataFrame:
@@ -237,7 +219,7 @@ def read_main_data(path: str) -> pd.DataFrame:
     if ext in (".parquet", ".pq"):
         if not _HAVE_PYARROW:
             raise ImportError("Parquet reading requires pyarrow: pip install harmonizepy[io]")
-        df = pd.read_parquet(path)
+        df = pd.read_parquet(path, engine="pyarrow", use_threads=False)
     else:
         sep = "," if ext == ".csv" else "\t"
         _reject_repeated_sample_names(path, sep)

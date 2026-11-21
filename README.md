@@ -73,7 +73,7 @@ uv sync --dev --python 3.12.13
 # Optional extras
 pip install harmonizepy[config]      # YAML/TOML support for --config flag
 pip install harmonizepy[completion]  # Shell tab-completion via argcomplete
-pip install harmonizepy[io]          # Parquet IO and pyarrow-accelerated CSV/TSV paths
+pip install harmonizepy[io]          # Parquet input and output
 ```
 
 See [Installation](https://github.com/LangeLab/HarmonizePy/wiki/Installation) for the full dependency list and optional extras detail.

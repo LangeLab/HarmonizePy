@@ -325,7 +325,6 @@ class TestIntegerColumns:
         Failure condition: the dtype of a column depends on how many columns the
         file has, or a column of blanks is read as text by one reader.
         """
-        from harmonizepy.io import _WIDE_COLUMN_THRESHOLD
 
         def write(n_cols: int, path: Path) -> pd.DataFrame:
             cols = [f"s{i}" for i in range(n_cols)]
@@ -338,7 +337,7 @@ class TestIntegerColumns:
             path.write_text("\n".join(lines) + "\n")
             return read_main_data(str(path))
 
-        wide = write(_WIDE_COLUMN_THRESHOLD + 1, tmp_path / "wide.tsv")
+        wide = write(501, tmp_path / "wide.tsv")
         narrow = write(4, tmp_path / "narrow.tsv")
         for col in ["s0", "s1", "s2"]:
             assert wide[col].dtype == narrow[col].dtype, col
@@ -416,3 +415,21 @@ def test_write_frame_writes_the_named_format(tmp_path: Path, fmt: str, sep: str)
     path = tmp_path / "out.dat"
     write_frame(pd.DataFrame({"s1": [1.0], "s2": [2.0]}, index=["p1"]), str(path), fmt)
     assert path.read_text().splitlines()[0].count(sep) == 2
+
+
+def test_reading_a_delimited_file_starts_no_threads(tmp_path: Path) -> None:
+    """Reading a TSV and a CSV runs on the calling thread and leaves no new thread behind.
+
+    Failure condition: the reader starts a thread pool, as pyarrow's CSV reader does.
+    """
+    tasks = Path("/proc/self/task")
+    if not tasks.is_dir():
+        pytest.skip("thread listing needs /proc")
+    data_path = tmp_path / "m.tsv"
+    data_path.write_text("id\ts1\ts2\ts3\np1\t1\t2\t3\np2\t4\t5\t6\n")
+    desc_path = tmp_path / "d.csv"
+    desc_path.write_text("ID,sample,batch\ns1,1,1\ns2,2,1\ns3,3,2\n")
+    before = set(tasks.iterdir())
+    read_main_data(str(data_path))
+    read_description(str(desc_path))
+    assert set(tasks.iterdir()) <= before
