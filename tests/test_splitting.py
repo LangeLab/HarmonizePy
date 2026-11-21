@@ -209,3 +209,28 @@ class TestSingleFeatureGroupRaw:
         out = splitting(affil, data, batch, batch, algorithm=algorithm, combat_mode=1)
         # Exact equality: raw values are copied, so no tolerance applies.
         np.testing.assert_array_equal(out.iloc[2].to_numpy(), data.iloc[2].to_numpy())
+
+
+class TestSplittingArguments:
+    """Unknown engines and modes are rejected before any group is corrected."""
+
+    @pytest.mark.parametrize(
+        "algorithm, mode, message",
+        [
+            ("bogus", 1, "algorithm must be"),
+            ("ComBat", 9, "combat_mode must be"),
+            ("ComBat", [2], "combat_mode must be"),
+        ],
+    )
+    def test_unknown_algorithm_or_mode_raises(
+        self, algorithm: str, mode: object, message: str
+    ) -> None:
+        """An unknown algorithm or ComBat mode raises ``ValueError``.
+
+        Failure condition: an unknown algorithm silently runs ComBat, or an unknown
+        mode raises a bare ``KeyError``.
+        """
+        data = pd.DataFrame(np.ones((2, 4)), columns=list("abcd"))
+        batch = np.array([1, 1, 2, 2])
+        with pytest.raises(ValueError, match=message):
+            splitting([(1, 2), (1, 2)], data, batch, batch, algorithm=algorithm, combat_mode=mode)

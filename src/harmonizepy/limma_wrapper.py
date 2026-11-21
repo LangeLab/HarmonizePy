@@ -23,7 +23,7 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
-from .validation import validate_limma_input
+from .validation import batch_codes, validate_limma_input
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ def _group_valid_rows(data: _Array) -> list[tuple[npt.NDArray[np.bool_], npt.NDA
 
 def remove_batch_effect(
     data: _Array,
-    batch: _Array,
+    batch: npt.ArrayLike,
 ) -> _Array:
     """Remove batch effects using a linear model (limma-style).
 
@@ -60,18 +60,21 @@ def remove_batch_effect(
     ----------
     data : ndarray, shape (n_features, n_samples)
         Expression / abundance matrix.  Per-cell NaN is allowed.
-    batch : ndarray, shape (n_samples,)
-        Integer batch labels.
+    batch : array_like, shape (n_samples,)
+        Batch label per sample: whole numbers, one batch per distinct value.
 
     Returns
     -------
     ndarray, shape (n_features, n_samples)
-        Batch-corrected data.  NaN positions from input are preserved.
+        Batch-corrected data.  NaN positions from input are preserved.  A
+        feature with fewer observed values than batches cannot be fitted and
+        keeps its raw values; the run log counts such features.
 
     Raises
     ------
     ValueError
-        On wrong dimensionality or batch length mismatch.
+        On wrong dimensionality, batch length mismatch, batch labels that are
+        not whole numbers, or infinite values.
 
     Examples
     --------
@@ -84,22 +87,22 @@ def remove_batch_effect(
     (20, 8)
     """
     data = np.asarray(data, dtype=np.float64)
-    batch = np.asarray(batch).ravel()
+    batch_int = batch_codes(batch)
 
-    validate_limma_input(data, batch)
+    validate_limma_input(data, batch_int)
 
     has_nan = np.isnan(data).any()
     if not has_nan:
-        return _remove_batch_effect_dense(data, batch)
+        return _remove_batch_effect_dense(data, batch_int)
 
     if np.isnan(data).all():
         logger.debug("All-NaN input, returning copy")
         return data.copy()
 
-    return _remove_batch_effect_nan(data, batch)
+    return _remove_batch_effect_nan(data, batch_int)
 
 
-def _remove_batch_effect_nan(data: _Array, batch: _Array) -> _Array:
+def _remove_batch_effect_nan(data: _Array, batch: npt.NDArray[np.intp]) -> _Array:
     """limma batch correction with per-feature NaN handling."""
     _, n_samples = data.shape
 
@@ -122,9 +125,11 @@ def _remove_batch_effect_nan(data: _Array, batch: _Array) -> _Array:
     design = np.hstack([intercept, X_batch])
 
     corrected = data.copy()
+    n_unfitted = 0
     for valid, row_indices in _group_valid_rows(data):
         if valid.sum() < n_batch:
-            continue  # not enough observations, keep NaN
+            n_unfitted += len(row_indices)
+            continue
 
         valid_idx = np.flatnonzero(valid)
         des = design[valid, :]
@@ -133,10 +138,15 @@ def _remove_batch_effect_nan(data: _Array, batch: _Array) -> _Array:
         beta_batch = np.nan_to_num(beta[:, 1:], nan=0.0)
         corrected[np.ix_(row_indices, valid_idx)] = group_data - beta_batch @ X_batch[valid, :].T
 
+    if n_unfitted:
+        logger.info(
+            "%d feature(s) with fewer observed values than batches left uncorrected",
+            n_unfitted,
+        )
     return corrected
 
 
-def _remove_batch_effect_dense(data: _Array, batch: _Array) -> _Array:
+def _remove_batch_effect_dense(data: _Array, batch: npt.NDArray[np.intp]) -> _Array:
     """Dense (NaN-free) limma-style batch correction.  See ``remove_batch_effect``."""
     _, n_samples = data.shape
 
@@ -170,16 +180,16 @@ def _remove_batch_effect_dense(data: _Array, batch: _Array) -> _Array:
 
 def adjust_limma(
     sub_df: pd.DataFrame,
-    batch_labels: _Array,
+    batch_labels: npt.ArrayLike,
 ) -> pd.DataFrame:
     """DataFrame wrapper around ``remove_batch_effect``.
 
     Parameters
     ----------
     sub_df : DataFrame
-        Features x samples.  Must not contain NaN.
+        Features x samples.  Missing cells are allowed and stay missing.
     batch_labels : array-like
-        Integer batch label per sample (column).
+        Batch label per sample (column), whole numbers.
 
     Returns
     -------
@@ -189,7 +199,8 @@ def adjust_limma(
     Raises
     ------
     ValueError
-        On NaN in *sub_df* or fewer than 2 batches.
+        If the batch labels are not whole numbers or do not match the number
+        of columns, or *sub_df* holds infinite values.
 
     Examples
     --------

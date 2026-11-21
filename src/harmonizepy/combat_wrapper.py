@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 
 from .combat import combat
+from .validation import batch_codes
 
 logger = logging.getLogger(__name__)
 
@@ -34,9 +35,10 @@ def adjust_combat(
     Parameters
     ----------
     sub_df : pd.DataFrame
-        Features x samples.  **Must have no missing values.**
+        Features x samples.  Missing cells are allowed and stay missing.
     batch_labels : array-like
-        Integer batch label per sample (length == ``sub_df.shape[1]``).
+        Batch label per sample, whole numbers (length ``sub_df.shape[1]``).
+        With a single batch, a copy of *sub_df* is returned.
     mode : {1, 2, 3, 4}
         1 = parametric, location + scale (default).
         2 = parametric, location only.
@@ -54,7 +56,8 @@ def adjust_combat(
     Raises
     ------
     ValueError
-        If *sub_df* contains NaN, has < 2 rows, or *mode* is invalid.
+        If *mode* is not 1 to 4, the batch labels are not whole numbers or do
+        not match the number of columns, or ``combat()`` rejects the input.
 
     Examples
     --------
@@ -70,7 +73,12 @@ def adjust_combat(
             f"Modes 1/2 are parametric; 3/4 are non-parametric."
         )
 
-    batch_labels = np.asarray(batch_labels, dtype=np.intp).ravel()
+    batch_labels = batch_codes(batch_labels)
+    if batch_labels.shape[0] != sub_df.shape[1]:
+        raise ValueError(
+            f"batch length ({batch_labels.shape[0]}) does not match the number of "
+            f"sample columns in data ({sub_df.shape[1]})."
+        )
     if len(np.unique(batch_labels)) < 2:
         logger.debug(
             "Single batch in sub-matrix (%d x %d), passing through",

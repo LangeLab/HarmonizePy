@@ -85,6 +85,11 @@ def splitting(
     >>> result.shape
     (3, 4)
     """
+    if algorithm not in ("ComBat", "limma"):
+        raise ValueError(f"algorithm must be 'ComBat' or 'limma', got {algorithm!r}.")
+    if algorithm == "ComBat" and (not isinstance(combat_mode, int) or combat_mode not in _MODE_MAP):
+        raise ValueError(f"combat_mode must be 1, 2, 3, or 4, got {combat_mode!r}.")
+
     batch_arr = np.asarray(batch_list)
     block_arr = np.asarray(block_list)
 

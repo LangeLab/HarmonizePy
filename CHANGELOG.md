@@ -12,6 +12,10 @@ All notable changes to this project are documented in this file. The format is b
 - A feature alone in its batch pattern keeps its raw values with both engines. ComBat could hang on such a row with a missing cell and return missing values; limma corrected it on its own batch means (#19).
 - `combat()` rejects an unknown `ref_batch`, and a reference batch with a single sample, before any other step.
 - Infinite values, such as log2 of zero, are rejected with the feature named. They made every output value missing.
+- `combat()`: a feature with no observed value stays missing and no longer makes every other value missing.
+- `combat()`, `adjust_combat()`, `remove_batch_effect()`, and `adjust_limma()` require batch labels that are whole numbers. `combat()` cast labels such as 0.2 and 0.9 to the same integer and treated them as one batch. The limma functions, which accepted text, missing, and infinite labels, now reject them too.
+- `remove_batch_effect()` logs how many features have fewer observed values than batches; they keep their raw values, as documented.
+- `splitting()` rejects an unknown algorithm or ComBat mode with a `ValueError`, and `adjust_combat()` checks the batch length before any shortcut.
 - A whole-number column with a blank cell loads, with the blank as missing. An integer column becomes floating point only when it has a blank, with every reader (#20).
 - Repeated features are removed only when both the name and all values repeat, and the removal is logged. Features with identical values under different names are kept, and a name repeated with different values raises a `ValueError`. `harmonize()` applies the same rule to a DataFrame passed directly (#21).
 - CLI: `--output-format csv` without `-o` writes `<data_stem>_corrected.csv`. A dry run writes no files, and `--dry-run` with `--log-file`, `--summary`, or `--json` is a usage error (#22).

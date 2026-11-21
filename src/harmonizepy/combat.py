@@ -36,7 +36,7 @@ from typing import Any, cast
 import numpy as np
 import numpy.typing as npt
 
-from .validation import validate_combat_input
+from .validation import batch_codes, validate_combat_input
 
 logger = logging.getLogger(__name__)
 
@@ -451,12 +451,15 @@ def combat(
       corrected as if it were absent.
     - A single feature, which has no other features to share a prior with.
 
+    A feature with no observed value is returned as missing and does not enter
+    the fit of the others.
+
     Parameters
     ----------
     data : ndarray, shape (n_features, n_samples)
         Expression / abundance matrix.  Per-cell NaN is allowed.
-    batch : ndarray, shape (n_samples,)
-        Integer batch labels, 0-indexed and contiguous (``0 .. n_batch-1``).
+    batch : array_like, shape (n_samples,)
+        Batch label per sample: whole numbers, one batch per distinct value.
     par_prior : bool
         ``True`` for parametric EB (modes 1/2).
         ``False`` for non-parametric EB (modes 3/4).
@@ -474,8 +477,9 @@ def combat(
     Raises
     ------
     ValueError
-        On wrong dimensionality, batch length mismatch, infinite values, or a
-        ``ref_batch`` that is not among the batch labels or has one sample.
+        On wrong dimensionality, batch length mismatch, batch labels that are
+        not whole numbers, infinite values, or a ``ref_batch`` that is not
+        among the batch labels or has one sample.
 
     Examples
     --------
@@ -488,7 +492,7 @@ def combat(
     (50, 12)
     """
     data = np.asarray(data, dtype=np.float64)
-    batch_int: npt.NDArray[np.intp] = np.asarray(batch, dtype=np.intp).ravel()
+    batch_int = batch_codes(batch)
 
     # ---- Input validation --------------------------------------------------
     validate_combat_input(data, batch_int)
@@ -506,6 +510,18 @@ def combat(
             )
 
     n_features = data.shape[0]
+
+    no_values = np.isnan(data).all(axis=1)
+    if no_values.any() and not no_values.all():
+        out = data.copy()
+        out[~no_values] = combat(
+            data[~no_values],
+            batch_int,
+            par_prior=par_prior,
+            mean_only=mean_only,
+            ref_batch=ref_batch,
+        )
+        return out
 
     # ---- Features the shared prior cannot use -------------------------------
     # In the parametric modes a feature whose variance the engine would floor

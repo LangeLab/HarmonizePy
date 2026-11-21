@@ -8,6 +8,7 @@ Validates:
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -250,3 +251,36 @@ class TestRLimmaConcordance:
             atol=1e-10,
             err_msg="Mismatch vs R limma::removeBatchEffect",
         )
+
+
+class TestLimmaInputs:
+    """Batch labels and rows limma cannot fit."""
+
+    @pytest.mark.parametrize("labels", [[0.2, 0.2, 0.9, 0.9], ["a", "a", "b", "b"]])
+    def test_labels_that_are_not_whole_numbers_raise(self, labels: list[object]) -> None:
+        """Fractional and text batch labels are rejected, as in ComBat.
+
+        Failure condition: limma accepts labels ComBat rejects.
+        """
+        data = np.random.default_rng(11).normal(size=(5, 4))
+        with pytest.raises(ValueError, match=r"batch labels must be whole numbers below 2\*\*53"):
+            remove_batch_effect(data, labels)
+
+    def test_row_with_fewer_values_than_batches_left_raw_and_logged(
+        self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A row with fewer observed values than batches keeps its values, and the log counts it.
+
+        Failure condition: the row is changed, or left raw without a log line.
+        """
+        # The command line turns off propagation on the package logger, and caplog
+        # only sees records that propagate to the root logger.
+        monkeypatch.setattr(logging.getLogger("harmonizepy"), "propagate", True)
+        rng = np.random.default_rng(12)
+        batch = np.repeat([0, 1, 2], 2)
+        data = rng.normal(5, 1, (4, 6))
+        data[3] = [1.0, np.nan, 2.0, np.nan, np.nan, np.nan]
+        with caplog.at_level(logging.INFO, logger="harmonizepy.limma_wrapper"):
+            out = remove_batch_effect(data, batch)
+        np.testing.assert_array_equal(out[3], data[3])
+        assert "1 feature(s) with fewer observed values than batches" in caplog.text

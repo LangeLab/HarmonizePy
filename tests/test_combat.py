@@ -858,3 +858,99 @@ def test_solver_stops_on_a_non_finite_change(
         _, delta = _it_sol(s_data, np.zeros(2), d_hat, 0.0, 1.0, 2.0, 1.0)
     assert np.isnan(delta[0])
     assert "stopped at iteration 1" in caplog.text
+
+
+class TestEngineInputs:
+    """Inputs that the engines must reject or set aside before fitting."""
+
+    def test_feature_without_values_leaves_others_unchanged(self) -> None:
+        """A feature with no observed value stays missing and does not change the others.
+
+        Failure condition: the missing feature enters the prior, and every output
+        value becomes missing.
+        """
+        rng = np.random.default_rng(8)
+        batch = np.repeat([0, 1], 6)
+        data = rng.normal(10, 1, (20, 12)) + np.repeat([0.0, 1.0], 6)
+        with_empty = np.vstack([data, np.full((1, 12), np.nan)])
+        out = combat(with_empty, batch)
+        np.testing.assert_array_equal(out[:20], combat(data, batch))
+        assert np.isnan(out[20]).all()
+
+    @pytest.mark.parametrize(
+        "labels",
+        [
+            [0.2, 0.2, 0.9, 0.9],
+            [0, 0, np.nan, 1],
+            ["a", "a", "b", "b"],
+            [1 + 2j, 1 + 2j, 2, 2],
+            [1e16, 1e16, 2e16, 2e16],
+        ],
+    )
+    def test_labels_that_are_not_whole_numbers_raise(self, labels: list[object]) -> None:
+        """Fractional, missing, or text batch labels are rejected.
+
+        Failure condition: 0.2 and 0.9 are cast to the same integer and treated as
+        one batch, so nothing is corrected; a complex label loses its imaginary part;
+        a float too large to be exact is rounded to a neighbouring batch.
+        """
+        data = np.random.default_rng(9).normal(size=(5, 4))
+        with pytest.raises(ValueError, match=r"batch labels must be whole numbers below 2\*\*53"):
+            combat(data, labels)
+
+    def test_whole_float_labels_match_integer_labels(self) -> None:
+        """Labels written as 0.0 and 1.0 give the same result as 0 and 1.
+
+        Failure condition: whole numbers stored as floats are rejected or mapped
+        differently.
+        """
+        data = np.random.default_rng(10).normal(size=(10, 6))
+        np.testing.assert_array_equal(
+            combat(data, [0.0, 0.0, 0.0, 1.0, 1.0, 1.0]), combat(data, [0, 0, 0, 1, 1, 1])
+        )
+
+    def test_error_lists_each_offending_label_once(self) -> None:
+        """The error names each offending label once, quoted.
+
+        Failure condition: the message repeats one label per sample.
+        """
+        data = np.random.default_rng(14).normal(size=(5, 4))
+        with pytest.raises(ValueError, match=r"found 0\.2, 0\.9\.$"):
+            combat(data, [0.2, 0.2, 0.9, 0.9])
+
+    @pytest.mark.parametrize("ref_batch", [None, 0])
+    @pytest.mark.parametrize("n_live", [1, 20])
+    def test_features_without_values_with_reference_and_few_rows(
+        self, ref_batch: int | None, n_live: int
+    ) -> None:
+        """Features without values stay missing with a reference batch and with one live row.
+
+        Failure condition: the set-aside breaks the reference batch or the single
+        feature rule, or an unestimable row next to it.
+        """
+        rng = np.random.default_rng(15)
+        batch = np.repeat([0, 1], 6)
+        live = rng.normal(10, 1, (n_live, 12)) + np.repeat([0.0, 1.0], 6)
+        constant = np.array([[5.0] * 6 + [6.0] * 6])
+        empty = np.full((2, 12), np.nan)
+        out = combat(np.vstack([live, constant, empty]), batch, ref_batch=ref_batch)
+        np.testing.assert_array_equal(out[:n_live], combat(live, batch, ref_batch=ref_batch))
+        np.testing.assert_array_equal(out[n_live], constant[0])
+        assert np.isnan(out[n_live + 1 :]).all()
+
+    def test_every_feature_without_values_returns_a_copy(self) -> None:
+        """A matrix with no observed value is returned unchanged.
+
+        Failure condition: the set-aside recurses on an empty matrix or raises.
+        """
+        empty = np.full((3, 4), np.nan)
+        assert np.isnan(combat(empty, [0, 0, 1, 1])).all()
+
+    def test_adjust_combat_checks_batch_length_first(self) -> None:
+        """``adjust_combat`` rejects a batch of the wrong length even with one batch label.
+
+        Failure condition: the single-batch shortcut returns a copy without the check.
+        """
+        frame = pd.DataFrame(np.ones((3, 4)), columns=list("abcd"))
+        with pytest.raises(ValueError, match="batch length"):
+            adjust_combat(frame, [0, 0])

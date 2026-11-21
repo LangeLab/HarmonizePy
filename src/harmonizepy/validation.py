@@ -166,31 +166,87 @@ def _description_columns(desc: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
 _MAX_FLOAT_LABEL = 2.0**53
 
 
+def _not_whole(values: npt.NDArray[np.float64]) -> npt.NDArray[np.bool_]:
+    """Mark labels that are missing, infinite, fractional, or too large to be exact.
+
+    Float labels must lie below 2**53 in magnitude, the range in which float64
+    holds every integer exactly.
+    """
+    bad: npt.NDArray[np.bool_] = (
+        ~np.isfinite(values) | (values != np.round(values)) | (np.abs(values) >= _MAX_FLOAT_LABEL)
+    )
+    return bad
+
+
+def _shown_labels(labels: Sequence[object]) -> str:
+    """Return up to five distinct labels, quoted, for an error message."""
+    distinct = list(dict.fromkeys(repr(label) for label in labels))
+    return ", ".join(distinct[:5]) + (", ..." if len(distinct) > 5 else "")
+
+
 def _integer_labels(batches: pd.Series) -> npt.NDArray[np.int64]:
-    """Return batch labels as integers, rejecting any label that is not a whole number.
+    """Return a description's batch labels as integers.
 
     Integer columns are used as they are. Other columns are read as numbers and
-    must hold whole numbers below 2**53 in magnitude, the range in which
-    float64 represents every integer exactly.
+    must hold whole numbers below 2**53 in magnitude.
 
     Raises
     ------
     ValueError
         If a label is missing, not numeric, not a whole number, or out of range,
-        naming the column and the first offending values.
+        naming the column and the offending values.
     """
     numeric = pd.to_numeric(batches, errors="coerce")
     if pd.api.types.is_signed_integer_dtype(numeric.dtype) and not numeric.isna().any():
         return numeric.to_numpy(dtype=np.int64)
     values = numeric.to_numpy(dtype=np.float64, na_value=np.nan)
-    bad = ~np.isfinite(values) | (values != np.round(values)) | (np.abs(values) >= _MAX_FLOAT_LABEL)
+    bad = _not_whole(values)
     if bad.any():
-        shown = [str(v) for v in batches[bad].tolist()[:5]]
         raise ValueError(
-            f"batch labels in column {batches.name!r} must be whole numbers; "
-            f"found {', '.join(shown)}."
+            f"batch labels in column {batches.name!r} must be whole numbers below 2**53 "
+            f"in magnitude; found {_shown_labels(batches[bad].tolist())}."
         )
     return values.astype(np.int64)
+
+
+def batch_codes(batch: npt.ArrayLike) -> npt.NDArray[np.intp]:
+    """Return engine batch labels as integers, rejecting labels that are not whole numbers.
+
+    Parameters
+    ----------
+    batch : array_like, shape (n_samples,)
+        One label per sample: integers of any width, booleans, or floats and
+        numeric strings with whole values below 2**53 in magnitude, such as 1.0.
+
+    Returns
+    -------
+    ndarray of intp, shape (n_samples,)
+        The labels as integers, in the input order.
+
+    Raises
+    ------
+    ValueError
+        If a label is text that is not a number, complex, missing, infinite,
+        fractional, or a float at least 2**53 in magnitude, naming the offending
+        labels.
+    """
+    labels = np.asarray(batch).ravel()
+    if labels.dtype.kind in "iub":
+        return labels.astype(np.intp)
+    if labels.dtype.kind == "c":
+        values = np.full(labels.shape, np.nan)
+    else:
+        try:
+            values = labels.astype(np.float64)
+        except (TypeError, ValueError):
+            values = np.full(labels.shape, np.nan)
+    bad = _not_whole(values)
+    if bad.any():
+        raise ValueError(
+            "batch labels must be whole numbers below 2**53 in magnitude; "
+            f"found {_shown_labels(labels[bad].tolist())}."
+        )
+    return values.astype(np.intp)
 
 
 def validate_combat_input(data: _Array, batch: npt.NDArray[np.integer[Any]]) -> None:
@@ -232,7 +288,7 @@ def validate_combat_input(data: _Array, batch: npt.NDArray[np.integer[Any]]) -> 
     _reject_infinite(data, range(data.shape[0]))
 
 
-def validate_limma_input(data: _Array, batch: _Array) -> None:
+def validate_limma_input(data: _Array, batch: npt.NDArray[np.integer[Any]]) -> None:
     """Check ndarray inputs for the limma engine.
 
     Parameters
