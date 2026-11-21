@@ -42,11 +42,22 @@ The following differences are intentional. None affect the corrected values for 
 
 ### Single-feature groups
 
-A feature with a batch-presence pattern that appears only once (singleton group) has no other features to share the ComBat EB prior with. R drops the feature entirely. HarmonizePy keeps it with its original (uncorrected) values.
+A feature with a batch-presence pattern that appears only once (singleton group) has no other features to share the ComBat EB prior with. R drops the feature entirely. HarmonizePy keeps it with its original (uncorrected) values, with ComBat and with limma.
 
 **When this occurs:** only when exactly 1 feature has a given batch-presence pattern and that pattern involves 2 or more batches. On the murine dataset (4753 features), this never occurs. On a medium synthetic dataset (5000 features), it affects roughly 32 of 4968 features.
 
 **Practical effect:** the affected features retain their original batch effects. They appear in the output and can be filtered downstream if needed. The correction of all other features is unaffected.
+
+### Constant features in ComBat
+
+A feature whose values do not vary inside a batch has zero variance there, and in the parametric modes it would set the empirical-Bayes prior for every other feature. `sva::ComBat` 3.60.0 leaves such rows out of the fit and returns them unadjusted, and so does HarmonizePy. The other features are corrected as if the constant row were absent.
+
+The two rules differ:
+
+- sva leaves out a row whose variance is exactly zero in any batch with two or more samples. HarmonizePy leaves out a row whose variance its engine would raise to the 1e-12 floor: a pooled within-batch variance below 1e-12 (with `ref_batch`, the variance in the reference batch), or a batch variance below 1e-12 of the pooled variance. Near-constant rows are therefore left out too.
+- sva's test ignores rows with a missing cell; with such a row, `sva::ComBat` stops with an error. HarmonizePy applies its rule to rows with missing cells.
+- In location-only mode (modes 2 and 4, or any batch with a single sample), HarmonizePy does not apply the batch rule, because that mode never divides by one batch's variance. A row that is constant in one batch only is corrected.
+- sva applies its rule in every mode. HarmonizePy applies it in the parametric modes only.
 
 ### All-NaN rows for unqualified features
 

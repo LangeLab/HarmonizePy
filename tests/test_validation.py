@@ -59,6 +59,17 @@ class TestValidateDataMatrix:
         with pytest.raises(ValueError, match="at least 2 sample columns"):
             validate_data_matrix(df)
 
+    def test_infinite_value_raises_naming_the_feature(self) -> None:
+        """An infinite value is rejected, and the message names its feature.
+
+        Failure condition: the matrix passes and the engine turns every value missing.
+        """
+        df = pd.DataFrame({"s1": [1.0, -np.inf], "s2": [2.0, 3.0]}, index=["p1", "p2"])
+        with pytest.raises(
+            ValueError, match=r"infinite values in 1 feature\(s\) \(first: \['p2'\]\)"
+        ):
+            validate_data_matrix(df)
+
 
 # ---------------------------------------------------------------------------
 # validate_description

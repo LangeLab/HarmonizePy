@@ -79,7 +79,8 @@ R selects rows by sorted integer affiliation index and columns by `which(block_l
 ### 2.3 Adjustment Per Sub-Matrix
 
 - Single-batch sub-df: both pass through raw values. Equivalent.
-- Single-feature sub-df: **R drops, Python pass-through** (KNOWN DIVERGENCE).
+- Single-feature sub-df: **R drops, Python pass-through** with either engine (KNOWN DIVERGENCE).
+- Constant feature (zero variance within a batch): both leave it out of the ComBat fit and return its raw values, with different rules. See section 5.
 - Multi-batch with per-cell NaN: both use per-feature computation (Beta.NA approach). Murine verified at max_rel 0.0003.
 - Multi-batch, no NaN: both use vectorized path. 185 tests pass.
 - **NaN position mismatch on ~1.5% of shared features** (medium dataset): affiliation logic matches R exactly, but output NaN positions differ on ~77/4968 features. Root cause is in ComBat engine's handling of mixed NaN patterns within a multi-feature sub-matrix. Non-NaN values match perfectly. Not observed on murine dataset. Documented as low-priority edge case.
@@ -112,7 +113,8 @@ R updates affiliation list in-place enabling chain rescues. Python pre-computes 
 
 ## 5. Feature Retention Policy: INTENTIONAL DIVERGENCE
 
-- **Single-feature group (1 feature, 2+ batches)**: R drops entirely. Python pass-through raw.
+- **Single-feature group (1 feature, 2+ batches)**: R drops entirely. Python pass-through raw, with ComBat and with limma.
+- **Constant feature in ComBat**: `sva::ComBat` 3.60.0 leaves out rows whose variance is exactly zero inside any batch with two or more samples, in every mode, and returns them raw. Its test uses `var()` without `na.rm`, so a row with a missing cell is never left out. Python leaves out, in the parametric modes only, a row whose variance the engine would raise to its 1e-12 floor: a pooled variance below 1e-12 (with `ref_batch`, the reference batch's variance), or, outside location-only mode, a batch variance below 1e-12 of the pooled variance. The rule covers rows with missing cells and near-constant rows; in location-only mode a row that is constant in one batch only is corrected, since that mode never divides by one batch's variance.
 - **Single-batch block (2+ features, 1 batch)**: Both pass-through raw.
 - **Feature with per-cell NaN**: R drops feature from output entirely. Python keeps as all-NaN row.
 - **Empty affiliation (no qualifying batches)**: R drops from rebuild. Python keeps as all-NaN.
@@ -179,7 +181,7 @@ The catastrophic blocked benchmark rows previously reported in markdown and JSON
 
 ### Affects Output Values
 
-1. **Single-feature groups**: R drops entirely. Python pass-through. Causes EB prior shift.
+1. **Single-feature groups**: R drops entirely. Python pass-through with either engine. Causes EB prior shift.
 2. **Per-cell NaN in output**: R drops feature from output. Python keeps as all-NaN row. Cosmetic; same data loss.
 3. **Empty affiliation**: R drops from output entirely. Python keeps as all-NaN.
 4. **Unique-removal chaining**: R updates in-place enabling chain rescues. Python uses static pre-computed set. R can rescue more singletons.

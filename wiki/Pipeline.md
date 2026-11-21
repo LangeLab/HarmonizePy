@@ -69,7 +69,7 @@ Sub-matrices may still contain per-cell NaN (random missing values within a qual
 
 Each sub-matrix is corrected independently by the selected algorithm (ComBat or limma). See [[Algorithms]] for details on how per-cell NaN is handled inside the engines.
 
-Single-feature groups are passed through without adjustment (ComBat requires multiple features for the EB prior). The feature retains its original values rather than being dropped.
+Single-feature groups are passed through without adjustment, with either engine. ComBat has no other feature to share the empirical-Bayes prior with, and limma would remove the feature's own batch means, true differences included. The feature retains its original values rather than being dropped.
 
 ### 8. Reassembly
 

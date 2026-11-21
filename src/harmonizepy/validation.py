@@ -6,6 +6,7 @@ consistent and the logic is not duplicated across modules.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
@@ -13,6 +14,20 @@ import numpy.typing as npt
 import pandas as pd
 
 _Array = npt.NDArray[np.floating[Any]]
+
+
+def _reject_infinite(
+    values: npt.NDArray[np.floating[Any]], names: Sequence[object] | pd.Index
+) -> None:
+    """Raise ``ValueError`` if any value is infinite, naming the first features."""
+    infinite_rows = np.flatnonzero(np.isinf(values).any(axis=1))
+    if infinite_rows.size:
+        shown = [str(names[i]) for i in infinite_rows[:5]]
+        raise ValueError(
+            f"data contains infinite values in {infinite_rows.size} feature(s) "
+            f"(first: {shown}). Replace them with NaN; log2 of zero, for example, "
+            "gives -inf."
+        )
 
 
 def validate_data_matrix(df: pd.DataFrame) -> None:
@@ -27,7 +42,7 @@ def validate_data_matrix(df: pd.DataFrame) -> None:
     ------
     ValueError
         If *df* has duplicate row indices, all-NaN rows, fewer than
-        2 columns, or non-numeric dtype.
+        2 columns, non-numeric dtype, or infinite values.
 
     Examples
     --------
@@ -55,6 +70,8 @@ def validate_data_matrix(df: pd.DataFrame) -> None:
             f"data must have at least 2 sample columns (got {df.shape[1]}). "
             f"Batch correction requires samples from multiple batches."
         )
+
+    _reject_infinite(df.to_numpy(dtype=np.float64, na_value=np.nan), df.index)
 
 
 def validate_description(desc: pd.DataFrame, data: pd.DataFrame) -> None:
@@ -124,7 +141,7 @@ def validate_combat_input(data: _Array, batch: npt.NDArray[np.integer[Any]]) -> 
     Raises
     ------
     ValueError
-        On wrong dimensionality or batch length mismatch.
+        On wrong dimensionality, batch length mismatch, or infinite values.
 
     Examples
     --------
@@ -144,6 +161,8 @@ def validate_combat_input(data: _Array, batch: npt.NDArray[np.integer[Any]]) -> 
             f"sample columns in data ({n_samples})."
         )
 
+    _reject_infinite(data, range(data.shape[0]))
+
 
 def validate_limma_input(data: _Array, batch: _Array) -> None:
     """Check ndarray inputs for the limma engine.
@@ -161,7 +180,7 @@ def validate_limma_input(data: _Array, batch: _Array) -> None:
     Raises
     ------
     ValueError
-        On wrong dimensionality or batch length mismatch.
+        On wrong dimensionality, batch length mismatch, or infinite values.
 
     Examples
     --------
@@ -180,6 +199,8 @@ def validate_limma_input(data: _Array, batch: _Array) -> None:
             f"batch length ({batch.shape[0]}) does not match the number of "
             f"sample columns in data ({n_samples})."
         )
+
+    _reject_infinite(data, range(data.shape[0]))
 
 
 _VALID_SORT_STRATEGIES: frozenset[str] = frozenset({"sparsity", "jaccard", "seriation"})

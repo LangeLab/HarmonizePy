@@ -63,7 +63,9 @@ def splitting(
     -------
     DataFrame
         Fully assembled corrected matrix. Features with empty affiliations
-        remain all-NaN to preserve completeness.
+        remain all-NaN to preserve completeness. A feature alone in its group,
+        or whose group spans a single batch, keeps its raw values with either
+        engine; the log counts both kinds.
 
     Raises
     ------
@@ -141,16 +143,16 @@ def splitting(
             ri = row_indices[0]
             sub_data = data_np[ri, col_indices]
             sub_batch = batch_arr[col_indices]
+            # A feature alone in its batch pattern keeps its raw values. A single batch
+            # has no batch effect to remove. With several batches, ComBat has no other
+            # feature to share a prior with, and limma would remove that one feature's
+            # batch means, true differences included; both engines leave it raw so the
+            # two give the same output for the same input.
             if len(np.unique(sub_batch)) < 2:
                 n_single_batch += 1
-                output[ri, target_col_indices] = sub_data
             else:
-                corrected = (
-                    remove_batch_effect(sub_data.reshape(1, -1), sub_batch)
-                    if algorithm == "limma"
-                    else combat(sub_data.reshape(1, -1), sub_batch, **_MODE_MAP[combat_mode])
-                )
-                output[ri, target_col_indices] = corrected.ravel()
+                n_single_feature += 1
+            output[ri, target_col_indices] = sub_data
             continue
 
         # General path: multiple features.

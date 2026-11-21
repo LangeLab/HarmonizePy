@@ -10,6 +10,7 @@ from typing import Any, cast
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from harmonizepy.affiliation import build_affiliation_list
 from harmonizepy.combat import combat as _combat
@@ -185,3 +186,26 @@ class TestSplittingIntegration:
         assert all(a == (1, 2) for a in affil[2:])
         result = splitting(affil, data, batch, block, algorithm="ComBat", combat_mode=2)
         assert result.shape == data.shape
+
+
+class TestSingleFeatureGroupRaw:
+    """A feature alone in its batch pattern keeps its raw values."""
+
+    @pytest.mark.parametrize("algorithm", ["ComBat", "limma"])
+    def test_single_feature_group_keeps_raw_values(self, algorithm: str) -> None:
+        """The one-feature group returns exactly its input values for both engines.
+
+        Failure condition: the feature is corrected, or set to missing, instead of
+        keeping its raw values.
+        """
+        from harmonizepy.splitting import splitting
+
+        rng = np.random.default_rng(11)
+        data = pd.DataFrame(rng.normal(10, 1, (3, 6)), columns=list("abcdef"))
+        # A missing cell checks that the row is copied with the cell still missing.
+        data.iloc[2, 0] = np.nan
+        batch = np.array([1, 1, 2, 2, 3, 3])
+        affil = [(1, 2), (1, 2), (1, 2, 3)]
+        out = splitting(affil, data, batch, batch, algorithm=algorithm, combat_mode=1)
+        # Exact equality: raw values are copied, so no tolerance applies.
+        np.testing.assert_array_equal(out.iloc[2].to_numpy(), data.iloc[2].to_numpy())

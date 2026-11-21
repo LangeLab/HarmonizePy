@@ -12,6 +12,7 @@ Algorithm: Johnson WE, Li C, Rabinovic A. Biostatistics 8(1):118-127, 2007.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -627,3 +628,233 @@ class TestRConcordance:
             atol=1e-6,
             err_msg=f"Mismatch vs R sva::ComBat mode {mode}",
         )
+
+
+class TestFeaturesLeftRaw:
+    """Features the shared prior cannot use keep their raw values and change nothing else.
+
+    A constant feature has zero variance inside each batch. If it entered the
+    empirical-Bayes prior, it would switch shrinkage off for every feature (#18).
+    """
+
+    @staticmethod
+    def _matrix(n_features: int = 500) -> tuple[np.ndarray, np.ndarray]:
+        rng = np.random.default_rng(1)
+        batch = np.array([0] * 6 + [1] * 6)
+        data = (
+            rng.normal(20, 2, (n_features, 1))
+            + rng.normal(0, 0.3, (n_features, 12))
+            + rng.normal(1, 0.5, (n_features, 1)) * (batch == 1)
+        )
+        return data, batch
+
+    # A constant, a constant that is not an exact binary fraction, and a constant
+    # with one-ulp noise, whose variance is far below the floor but not zero.
+    @pytest.mark.parametrize(
+        "low, high", [(18.0, 19.0), (0.1, 0.7), (0.1, float(np.nextafter(0.1, 1.0)))]
+    )
+    @pytest.mark.parametrize("mean_only", [False, True])
+    def test_constant_row_left_raw_and_others_unchanged(
+        self, low: float, high: float, mean_only: bool
+    ) -> None:
+        """A constant row keeps its values, and every other row is as if it were absent.
+
+        Failure condition: the constant row enters the prior and changes the other
+        rows, or is itself corrected.
+        """
+        data, batch = self._matrix()
+        constant = np.array([[low] * 6 + [high] * 6])
+        alone = combat(data, batch, mean_only=mean_only)
+        out = combat(np.vstack([data, constant]), batch, mean_only=mean_only)
+        # Exact equality: the other rows go through the same computation as without
+        # the constant row.
+        np.testing.assert_array_equal(out[:500], alone)
+        np.testing.assert_array_equal(out[500], constant[0])
+
+    def test_constant_row_with_missing_cells(self) -> None:
+        """The missing-value path leaves a constant row raw and the others unchanged.
+
+        Failure condition: the constant row, observed in four samples per batch,
+        enters the prior on the missing-value path.
+        """
+        data, batch = self._matrix()
+        data[0, 0] = np.nan
+        constant = np.array([[0.1] * 6 + [0.7] * 6])
+        constant[0, [0, 6]] = np.nan
+        alone = combat(data, batch)
+        out = combat(np.vstack([data, constant]), batch)
+        np.testing.assert_array_equal(out[:500], alone)
+        np.testing.assert_array_equal(out[500], constant[0])
+
+    def test_constant_reference_batch_left_raw(self) -> None:
+        """A row constant in the reference batch alone is left raw in mean-only mode.
+
+        Failure condition: the row's pooled variance, taken from the reference batch,
+        is zero and the row enters the prior.
+        """
+        data, batch = self._matrix()
+        row = np.array([[5.0] * 6 + [4.0, 6.0, 5.0, 4.5, 5.5, 5.2]])
+        alone = combat(data, batch, mean_only=True, ref_batch=0)
+        out = combat(np.vstack([data, row]), batch, mean_only=True, ref_batch=0)
+        np.testing.assert_array_equal(out[:500], alone)
+        np.testing.assert_array_equal(out[500], row[0])
+
+    def test_single_sample_batch_constant_elsewhere_is_corrected(self) -> None:
+        """With a one-sample batch, a batch with constant values does not block correction.
+
+        A one-sample batch forces location-only correction, which never divides by a
+        batch's variance, so only a zero pooled variance makes a row unestimable.
+
+        Failure condition: the row is left raw although the engine corrects it.
+        """
+        rng = np.random.default_rng(2)
+        batch = np.array([0, 0, 0, 1, 2, 2])
+        data = rng.normal(5, 1, (20, 6))
+        row = np.array([[5.0, 5.0, 5.0, 6.0, 1.0, 2.0]])
+        out = combat(np.vstack([data, row]), batch)
+        assert not np.array_equal(out[20], row[0])
+        assert np.isfinite(out[20]).all()
+
+    def test_sparse_row_with_spread_is_corrected(self) -> None:
+        """A row with two differing values in one batch and none elsewhere is corrected.
+
+        Failure condition: the row is left raw because it has few observations,
+        although its variance is positive.
+        """
+        rng = np.random.default_rng(3)
+        batch = np.repeat([0, 1, 2, 3], 2)
+        data = rng.normal(5, 1, (30, 8))
+        row = np.array([[1.0, 5.0] + [np.nan] * 6])
+        out = combat(np.vstack([data, row]), batch)
+        assert not np.array_equal(out[30, :2], row[0, :2])
+        assert np.isfinite(out[30, :2]).all()
+
+    def test_unknown_ref_batch_raises_when_every_row_is_constant(self) -> None:
+        """An unknown reference batch is rejected before any row is left raw.
+
+        Failure condition: the call returns the raw matrix without an error.
+        """
+        batch = np.array([0] * 6 + [1] * 6)
+        data = np.repeat([[1.0] * 6 + [2.0] * 6], 3, axis=0)
+        with pytest.raises(ValueError, match="ref_batch=99"):
+            combat(data, batch, ref_batch=99)
+
+    @pytest.mark.parametrize(
+        "row",
+        [
+            pytest.param([3.0 + 1e-9 * k for k in range(12)], id="spread-1e-9"),
+            pytest.param([1e-200 * (1.0 + 0.1 * (k % 10)) for k in range(12)], id="underflow"),
+        ],
+    )
+    def test_row_below_the_variance_floor_left_raw(self, row: list[float]) -> None:
+        """A row whose pooled variance is below the 1e-12 floor keeps its values.
+
+        Failure condition: the engine floors the variance and returns values that do
+        not come from the row, or the row changes the other rows.
+        """
+        data, batch = self._matrix()
+        alone = combat(data, batch)
+        out = combat(np.vstack([data, row]), batch)
+        np.testing.assert_array_equal(out[:500], alone)
+        np.testing.assert_array_equal(out[500], row)
+
+    def test_single_observed_value_is_corrected(self) -> None:
+        """A row with one observed value is corrected, since the engine gives it unit variance.
+
+        Failure condition: the row is left raw although the engine estimates it.
+        """
+        data, batch = self._matrix(50)
+        row = np.array([[7.0] + [np.nan] * 11])
+        out = combat(np.vstack([data, row]), batch)
+        assert np.isfinite(out[50, 0])
+        assert out[50, 0] != 7.0
+
+    def test_single_reference_value_mean_only_is_corrected(self) -> None:
+        """In mean-only mode, one reference value and a constant batch are still corrected.
+
+        Failure condition: the row is left raw although the engine estimates it.
+        """
+        data, batch = self._matrix(50)
+        row = np.array([[7.0] + [np.nan] * 5 + [3.0] * 6])
+        out = combat(np.vstack([data, row]), batch, mean_only=True, ref_batch=0)
+        assert np.isfinite(out[50, 6:]).all()
+        assert not np.array_equal(out[50, 6:], row[0, 6:])
+
+    def test_flag_matches_the_engine_floor_on_sparse_rows(self) -> None:
+        """On random sparse rows, a row is left raw exactly when its pooled variance is floored.
+
+        The pooled variance is recomputed here from its definition: the sample variance
+        of the residuals from the batch means over observed cells, 1.0 with at most one
+        observed value.
+
+        Failure condition: the flag and the engine disagree for some row.
+        """
+        from harmonizepy.combat import _VARIANCE_FLOOR, _unestimable_rows
+
+        rng = np.random.default_rng(6)
+        batch = np.repeat([0, 1, 2], 3)
+        data = rng.choice([1.0, 2.0, np.nan], size=(400, 9), p=[0.4, 0.2, 0.4])
+        flags = _unestimable_rows(data, batch, mean_only=True, ref_batch=None)
+        for row, flagged in zip(data, flags, strict=True):
+            means = {
+                b: np.nanmean(row[batch == b])
+                for b in range(3)
+                if (~np.isnan(row[batch == b])).any()
+            }
+            resid = np.array(
+                [v - means[b] for v, b in zip(row, batch, strict=True) if not np.isnan(v)]
+            )
+            var = 1.0 if resid.size <= 1 else float(resid @ resid) / (resid.size - 1)
+            assert flagged == (var < _VARIANCE_FLOOR)
+
+    def test_infinite_values_rejected(self) -> None:
+        """An infinite value, as log2 of zero gives, is rejected with the feature named.
+
+        Failure condition: the solver runs on the infinite row and every output value
+        becomes missing.
+        """
+        data, batch = self._matrix(50)
+        data[3, 0] = -np.inf
+        with pytest.raises(
+            ValueError, match=r"infinite values in 1 feature\(s\) \(first: \['3'\]\)"
+        ):
+            combat(data, batch)
+
+    def test_single_sample_reference_batch_rejected(self) -> None:
+        """A reference batch with one sample is rejected, since it has no variance to pool.
+
+        Failure condition: every row's pooled variance is zero and the output depends
+        on whether the data has a missing cell.
+        """
+        rng = np.random.default_rng(7)
+        batch = np.array([0, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2])
+        with pytest.raises(ValueError, match="single sample"):
+            combat(rng.normal(10, 1, (20, 12)), batch, mean_only=True, ref_batch=0)
+
+    def test_one_row_input_returned_raw(self) -> None:
+        """A single feature is returned raw, including a row with a missing cell.
+
+        Failure condition: the solver runs on one row and returns missing values.
+        """
+        row = np.array([[1.0, np.nan, 3.0, 4.0, 5.0, 6.0]])
+        out = combat(row, np.array([0, 0, 0, 1, 1, 1]))
+        np.testing.assert_array_equal(out, row)
+
+
+def test_solver_stops_on_a_non_finite_change(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The empirical-Bayes solver stops at the first iteration when its change is not finite.
+
+    Failure condition: the loop runs to its iteration limit, which by default takes
+    about a minute, on a missing scale estimate.
+    """
+    # The command line turns off propagation on the package logger, and caplog
+    # only sees records that propagate to the root logger.
+    monkeypatch.setattr(logging.getLogger("harmonizepy"), "propagate", True)
+    s_data = np.array([[0.1, -0.2, 0.3], [0.2, 0.1, -0.1]])
+    d_hat = np.array([np.nan, 1.0])
+    with caplog.at_level(logging.WARNING, logger="harmonizepy.combat"):
+        _, delta = _it_sol(s_data, np.zeros(2), d_hat, 0.0, 1.0, 2.0, 1.0)
+    assert np.isnan(delta[0])
+    assert "stopped at iteration 1" in caplog.text

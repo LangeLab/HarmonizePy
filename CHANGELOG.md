@@ -6,6 +6,13 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Fixed
+
+- ComBat, parametric modes: a feature whose variance the engine would raise to its 1e-12 floor, such as a feature that is constant inside a batch, no longer sets the empirical-Bayes prior for every other feature. It keeps its raw values, as `sva::ComBat` does for exactly constant rows, and the other features are corrected as if it were absent (#18).
+- A feature alone in its batch pattern keeps its raw values with both engines. ComBat could hang on such a row with a missing cell and return missing values; limma corrected it on its own batch means (#19).
+- `combat()` rejects an unknown `ref_batch`, and a reference batch with a single sample, before any other step.
+- Infinite values, such as log2 of zero, are rejected with the feature named. They made every output value missing.
+
 ## [0.3.2] - 2026-05-29
 
 ### Added

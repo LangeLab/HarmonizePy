@@ -40,6 +40,11 @@ from .validation import validate_combat_input
 
 logger = logging.getLogger(__name__)
 
+# Lower bound applied to the pooled variance and to the batch scale estimates,
+# so that a zero variance never divides. A feature whose variance falls below it
+# is not estimated from its data, so it is left raw instead (see combat()).
+_VARIANCE_FLOOR = 1e-12
+
 # ---------------------------------------------------------------------------
 # Type aliases
 # ---------------------------------------------------------------------------
@@ -199,6 +204,14 @@ def _it_sol(
         latest_g = g_curr
         latest_d = d_curr
 
+        # A non-finite change never falls below the threshold, so without this
+        # stop the loop would run to max_iter (about a minute) to the same result.
+        if not np.isfinite(change):
+            logger.warning(
+                "Solver stopped at iteration %d: the change is not finite", iteration + 1
+            )
+            break
+
         if change < conv:
             logger.debug("Converged in %d iterations (change=%.2e)", iteration + 1, change)
             break
@@ -349,6 +362,63 @@ def _get_cached_design(
     return design, xx_t, batches_ind, n_batch
 
 
+def _unestimable_rows(
+    data: _Array,
+    batch_int: npt.NDArray[np.intp],
+    *,
+    mean_only: bool,
+    ref_batch: int | None,
+) -> npt.NDArray[np.bool_]:
+    """Return the rows whose variance the engine would replace with the floor.
+
+    The pooled variance is computed as the engine computes it: the mean square
+    of the residuals from the batch means when ``data`` has no missing cell, and
+    their sample variance otherwise, where a row with at most one observed value
+    gets 1.0; with a reference batch, over that batch's columns only. A row
+    whose pooled variance is below ``_VARIANCE_FLOOR`` is unestimable. Outside
+    mean-only mode, so is a row with a batch of two or more observed values
+    whose variance is below ``_VARIANCE_FLOOR`` times the pooled variance,
+    which is the engine's batch scale estimate. Mean-only mode is in effect
+    when the caller asks for it or when any batch has a single sample, as in
+    the engines.
+    """
+    obs = ~np.isnan(data)
+    has_nan = not bool(obs.all())
+    batch_ids, batch_sizes = np.unique(batch_int, return_counts=True)
+    mean_only = mean_only or bool(np.any(batch_sizes < 2))
+
+    def pooled(ss: _Array, n_obs: npt.NDArray[np.intp], n_cols: int) -> _Array:
+        if has_nan:
+            return np.where(n_obs <= 1, 1.0, ss / np.maximum(n_obs - 1, 1))
+        return ss / n_cols
+
+    per_batch = {}
+    for batch_id, n_cols in zip(batch_ids, batch_sizes, strict=True):
+        cols = batch_int == batch_id
+        observed = obs[:, cols]
+        n_obs = observed.sum(axis=1)
+        mean_b = np.nansum(data[:, cols], axis=1) / np.maximum(n_obs, 1)
+        resid = np.where(observed, data[:, cols] - mean_b[:, np.newaxis], 0.0)
+        per_batch[batch_id] = (n_obs, (resid * resid).sum(axis=1), int(n_cols))
+
+    if ref_batch is None:
+        stats = list(per_batch.values())
+        ss_all = np.sum([ss for _, ss, _ in stats], axis=0)
+        n_all = np.sum([n_obs for n_obs, _, _ in stats], axis=0)
+        var_pooled = pooled(ss_all, n_all, data.shape[1])
+    else:
+        n_ref, ss_ref, n_ref_cols = per_batch[ref_batch]
+        var_pooled = pooled(ss_ref, n_ref, n_ref_cols)
+
+    unestimable = var_pooled < _VARIANCE_FLOOR
+    if not mean_only:
+        scale = np.maximum(var_pooled, _VARIANCE_FLOOR)
+        for n_obs, ss, _ in per_batch.values():
+            var_b = ss / np.maximum(n_obs - 1, 1)
+            unestimable |= (n_obs >= 2) & (var_b < _VARIANCE_FLOOR * scale)
+    return unestimable
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -368,6 +438,18 @@ def combat(
     OLS, variance, and mean computations (matching R ``sva::ComBat``
     v3.60.0's ``Beta.NA`` approach).  NaN stays in the same positions in
     the output.
+
+    Some features are returned with their raw values, and the run log counts
+    them:
+
+    - In the parametric modes, a feature whose variance the engine would raise
+      to the 1e-12 floor: a pooled within-batch variance below 1e-12 (with
+      ``ref_batch``, the reference batch's variance), or, outside mean-only
+      mode, a batch whose variance is below 1e-12 of the pooled variance.
+      Such a feature is not estimated from its data, and it would otherwise
+      set the empirical-Bayes prior for every other feature; the others are
+      corrected as if it were absent.
+    - A single feature, which has no other features to share a prior with.
 
     Parameters
     ----------
@@ -392,7 +474,8 @@ def combat(
     Raises
     ------
     ValueError
-        On wrong dimensionality or batch length mismatch.
+        On wrong dimensionality, batch length mismatch, infinite values, or a
+        ``ref_batch`` that is not among the batch labels or has one sample.
 
     Examples
     --------
@@ -410,14 +493,51 @@ def combat(
     # ---- Input validation --------------------------------------------------
     validate_combat_input(data, batch_int)
 
+    if ref_batch is not None:
+        labels = sorted(set(batch_int.tolist()))
+        if ref_batch not in labels:
+            raise ValueError(f"ref_batch={ref_batch!r} not found in batch labels {labels}")
+        # The pooled variance comes from the reference batch alone, and one sample
+        # has no variance to pool.
+        if int(np.sum(batch_int == ref_batch)) < 2:
+            raise ValueError(
+                f"ref_batch={ref_batch!r} has a single sample; a reference batch needs "
+                "at least two."
+            )
+
     n_features = data.shape[0]
+
+    # ---- Features the shared prior cannot use -------------------------------
+    # In the parametric modes a feature whose variance the engine would floor
+    # would set the prior for every feature. It is left raw, and the other
+    # features are corrected exactly as if it were absent.
+    if par_prior:
+        unestimable = _unestimable_rows(data, batch_int, mean_only=mean_only, ref_batch=ref_batch)
+        if unestimable.any():
+            logger.info(
+                "%d feature(s) with within-batch variance below the floor left uncorrected",
+                int(unestimable.sum()),
+            )
+            out = data.copy()
+            keep = ~unestimable
+            if keep.sum() >= 2:
+                out[keep] = combat(
+                    data[keep],
+                    batch_int,
+                    par_prior=par_prior,
+                    mean_only=mean_only,
+                    ref_batch=ref_batch,
+                )
+            return out
+
+    # A single feature has no shared prior to estimate from; it is returned raw.
+    if n_features < 2:
+        logger.debug("Single feature input, returning copy")
+        return data.copy()
 
     # ---- Dispatch ----------------------------------------------------------
     has_nan = np.isnan(data).any()
     if not has_nan:
-        if n_features < 2:
-            logger.debug("Single feature input, returning copy")
-            return data.copy()
         return _combat_dense(
             data,
             batch_int,
@@ -650,7 +770,7 @@ def _combat_nan(
         fitted = (design.T @ b_hat).T
         var_n = _row_var_nan_grouped(data - fitted, valid_row_groups)
 
-    var_pooled = np.maximum(var_n, 1e-12)
+    var_pooled = np.maximum(var_n, _VARIANCE_FLOOR)
     std_pooled = np.sqrt(var_pooled)
     stand_mean = grand_mean[:, np.newaxis]
     std_pooled_2d = std_pooled[:, np.newaxis]
@@ -722,7 +842,7 @@ def _combat_nan(
     # ---- Adjust data (only non-NaN entries) -------------------------------
     corrected = s_data.copy()
     for i, idx in enumerate(batches_ind):
-        sqrt_delta = np.sqrt(np.maximum(delta_star[i], 1e-12))[:, np.newaxis]
+        sqrt_delta = np.sqrt(np.maximum(delta_star[i], _VARIANCE_FLOOR))[:, np.newaxis]
         corrected[:, idx] = (corrected[:, idx] - gamma_star[i][:, np.newaxis]) / sqrt_delta
 
     corrected = corrected * std_pooled_2d + stand_mean
@@ -800,7 +920,7 @@ def _combat_dense(
         residuals = data.T - fitted
         var_pooled = (residuals**2).mean(axis=0)
 
-    var_pooled = np.maximum(var_pooled, 1e-12)
+    var_pooled = np.maximum(var_pooled, _VARIANCE_FLOOR)
     std_pooled = np.sqrt(var_pooled)
     stand_mean = grand_mean[:, np.newaxis]
     s_data = (data - stand_mean) / std_pooled[:, np.newaxis]
@@ -859,7 +979,7 @@ def _combat_dense(
     # ---- Adjust data -------------------------------------------------------
     corrected = s_data.copy()
     for i, idx in enumerate(batches_ind):
-        sqrt_delta = np.sqrt(np.maximum(delta_star[i], 1e-12))[:, np.newaxis]
+        sqrt_delta = np.sqrt(np.maximum(delta_star[i], _VARIANCE_FLOOR))[:, np.newaxis]
         corrected[:, idx] = (corrected[:, idx] - gamma_star[i][:, np.newaxis]) / sqrt_delta
 
     corrected = corrected * std_pooled[:, np.newaxis] + stand_mean

@@ -57,7 +57,6 @@ limma is:
 Use limma when:
 
 - Speed is important and the dataset is large
-- A single-feature correction is needed (ComBat's EB prior requires multiple features)
 - The data has already been variance-stabilized
 - You want a lightweight check before running full ComBat
 
