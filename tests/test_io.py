@@ -380,3 +380,39 @@ def test_repeated_sample_name_in_file_raises(tmp_path: Path, ext: str, sep: str)
     path.write_text(f"{header}\n" + sep.join(["p1", "1", "2", "3"]) + "\n")
     with pytest.raises(ValueError, match=r"duplicate sample names: \['s1'\]"):
         read_main_data(str(path))
+
+
+@pytest.mark.parametrize(
+    "name, fmt",
+    [
+        ("a.tsv", "tsv"),
+        ("a.TXT", "tsv"),
+        ("a.csv", "csv"),
+        ("a.CSV", "csv"),
+        ("a.pq", "parquet"),
+        ("a.parquet", "parquet"),
+        ("a.dat", "tsv"),
+        ("a", "tsv"),
+    ],
+)
+def test_format_from_suffix(name: str, fmt: str) -> None:
+    """The output format follows the suffix, case-insensitively, and is TSV otherwise.
+
+    Failure condition: the CLI and ``write_output`` disagree on a suffix's format.
+    """
+    from harmonizepy.io import format_from_suffix
+
+    assert format_from_suffix(name) == fmt
+
+
+@pytest.mark.parametrize("fmt, sep", [("tsv", "\t"), ("csv", ",")])
+def test_write_frame_writes_the_named_format(tmp_path: Path, fmt: str, sep: str) -> None:
+    """``write_frame`` writes the requested format whatever the suffix.
+
+    Failure condition: the suffix overrides the requested format.
+    """
+    from harmonizepy.io import write_frame
+
+    path = tmp_path / "out.dat"
+    write_frame(pd.DataFrame({"s1": [1.0], "s2": [2.0]}, index=["p1"]), str(path), fmt)
+    assert path.read_text().splitlines()[0].count(sep) == 2

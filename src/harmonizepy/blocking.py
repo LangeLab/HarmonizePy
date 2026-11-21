@@ -84,10 +84,10 @@ def build_block_list(
             f"because every feature would be in a single group."
         )
 
-    # Assign each unique batch to a block index (0-based), then +1 for 1-indexing
-    batch_to_block = {int(bid): i // block_size + 1 for i, bid in enumerate(unique_batches)}
-
-    block_arr = np.vectorize(batch_to_block.__getitem__)(batch_arr).astype(batch_arr.dtype)
+    _, first_index, inverse = np.unique(batch_arr, return_index=True, return_inverse=True)
+    rank_by_first_appearance = np.argsort(np.argsort(first_index, kind="stable"), kind="stable")
+    block_of_label = rank_by_first_appearance // block_size + 1
+    block_arr: npt.NDArray[np.integer] = block_of_label[inverse].astype(batch_arr.dtype)
 
     n_blocks = len(np.unique(block_arr))
     logger.debug(
@@ -96,7 +96,7 @@ def build_block_list(
         block_size,
         n_batches,
     )
-    return block_arr  # type: ignore[no-any-return]
+    return block_arr
 
 
 # ---------------------------------------------------------------------------
@@ -106,11 +106,4 @@ def build_block_list(
 
 def _unique_ordered(arr: npt.NDArray[np.integer]) -> list[int]:
     """Return unique values from *arr* in first-appearance order."""
-    seen: set[int] = set()
-    result: list[int] = []
-    for v in arr:
-        iv = int(v)
-        if iv not in seen:
-            seen.add(iv)
-            result.append(iv)
-    return result
+    return list(dict.fromkeys(int(v) for v in arr.tolist()))

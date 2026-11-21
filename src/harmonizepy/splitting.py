@@ -18,9 +18,9 @@ import numpy.typing as npt
 import pandas as pd
 
 from .affiliation import reduce_to_unique_groups
-from .combat import combat
-from .combat_wrapper import _MODE_MAP
+from .combat import COMBAT_MODES, combat
 from .limma_wrapper import remove_batch_effect
+from .validation import validate_combat_mode
 
 logger = logging.getLogger(__name__)
 
@@ -87,8 +87,8 @@ def splitting(
     """
     if algorithm not in ("ComBat", "limma"):
         raise ValueError(f"algorithm must be 'ComBat' or 'limma', got {algorithm!r}.")
-    if algorithm == "ComBat" and (not isinstance(combat_mode, int) or combat_mode not in _MODE_MAP):
-        raise ValueError(f"combat_mode must be 1, 2, 3, or 4, got {combat_mode!r}.")
+    if algorithm == "ComBat":
+        validate_combat_mode(combat_mode)
 
     batch_arr = np.asarray(batch_list)
     block_arr = np.asarray(block_list)
@@ -174,7 +174,7 @@ def splitting(
         if algorithm == "limma":
             corrected = remove_batch_effect(sub_data, sub_batch)
         else:
-            corrected = combat(sub_data, sub_batch, **_MODE_MAP[combat_mode])
+            corrected = combat(sub_data, sub_batch, **COMBAT_MODES[combat_mode])
 
         output[np.ix_(row_idx, target_col_indices)] = corrected
 

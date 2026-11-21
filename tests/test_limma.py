@@ -284,3 +284,16 @@ class TestLimmaInputs:
             out = remove_batch_effect(data, batch)
         np.testing.assert_array_equal(out[3], data[3])
         assert "1 feature(s) with fewer observed values than batches" in caplog.text
+
+
+def test_contrast_design_sums_to_zero() -> None:
+    """Each sum-to-zero batch column sums to zero over balanced batches, and the last batch is -1.
+
+    Failure condition: the contrast coding differs from R's ``contr.sum``.
+    """
+    from harmonizepy.limma_wrapper import _contrast_design
+
+    design, x_batch = _contrast_design(np.array([5, 5, 7, 7, 9, 9]))
+    np.testing.assert_array_equal(design[:, 0], np.ones(6))
+    np.testing.assert_array_equal(x_batch[:, 0], [1, 1, 0, 0, -1, -1])
+    np.testing.assert_array_equal(x_batch[:, 1], [0, 0, 1, 1, -1, -1])

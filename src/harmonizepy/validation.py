@@ -7,13 +7,14 @@ consistent and the logic is not duplicated across modules.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
-_Array = npt.NDArray[np.floating[Any]]
+if TYPE_CHECKING:
+    from .types import FloatArray
 
 
 def _reject_infinite(
@@ -256,82 +257,83 @@ def batch_codes(batch: npt.ArrayLike) -> npt.NDArray[np.intp]:
     return values.astype(np.intp)
 
 
-def validate_combat_input(data: _Array, batch: npt.NDArray[np.integer[Any]]) -> None:
-    """Check ndarray inputs for the ComBat engine.
+def validate_engine_input(data: FloatArray, batch: npt.NDArray[np.integer[Any]]) -> None:
+    """Check the matrix and batch labels passed to ``combat()`` or ``remove_batch_effect()``.
+
+    Missing cells are allowed: both engines fit each feature on its observed
+    cells and keep missing cells missing.
 
     Parameters
     ----------
     data : ndarray, shape (n_features, n_samples)
-        Features x samples matrix. Per-cell NaN is allowed and handled
-        inside ``combat()`` via per-feature computations that omit only
-        the NaN observations for the feature being fitted. NaN positions
-        are preserved in the output.
+        Features x samples matrix.
     batch : ndarray, shape (n_samples,)
-        Integer batch labels; length must equal the number of samples.
+        Integer batch labels, as ``batch_codes`` returns them.
 
     Raises
     ------
     ValueError
-        On wrong dimensionality, batch length mismatch, or infinite values.
+        If *data* is not 2-D, *batch* does not have one label per sample, or
+        *data* holds infinite values.
 
     Examples
     --------
     >>> import numpy as np
-    >>> from harmonizepy.validation import validate_combat_input
-    >>> data = np.ones((5, 4))
-    >>> validate_combat_input(data, np.array([0, 0, 1, 1]))  # no error
+    >>> from harmonizepy.validation import validate_engine_input
+    >>> validate_engine_input(np.ones((5, 4)), np.array([0, 0, 1, 1]))
     """
     if data.ndim != 2:
         raise ValueError(f"data must be a 2-D array (features x samples), got {data.ndim}-D.")
-
-    _, n_samples = data.shape
-
+    n_samples = data.shape[1]
     if batch.shape[0] != n_samples:
         raise ValueError(
             f"batch length ({batch.shape[0]}) does not match the number of "
             f"sample columns in data ({n_samples})."
         )
-
     _reject_infinite(data, range(data.shape[0]))
 
 
-def validate_limma_input(data: _Array, batch: npt.NDArray[np.integer[Any]]) -> None:
-    """Check ndarray inputs for the limma engine.
+def validate_combat_mode(mode: object) -> None:
+    """Check that *mode* is one of the ComBat modes, an integer from 1 to 4.
 
-    Parameters
-    ----------
-    data : ndarray, shape (n_features, n_samples)
-        Features x samples matrix. Per-cell NaN is allowed and handled
-        inside ``remove_batch_effect()`` via per-feature fits that omit
-        only the NaN observations for the feature being fitted. NaN
-        positions are preserved in the output.
-    batch : ndarray, shape (n_samples,)
-        Integer batch labels; length must equal the number of samples.
+    Modes 1 and 2 are parametric, 3 and 4 non-parametric; 1 and 3 adjust
+    location and scale, 2 and 4 location only. NumPy integers are accepted;
+    booleans and floats are not, even when they compare equal to a mode.
 
     Raises
     ------
     ValueError
-        On wrong dimensionality, batch length mismatch, or infinite values.
-
-    Examples
-    --------
-    >>> import numpy as np
-    >>> from harmonizepy.validation import validate_limma_input
-    >>> data = np.ones((5, 4))
-    >>> validate_limma_input(data, np.array([0, 0, 1, 1]))  # no error
+        If *mode* is not an integer from 1 to 4.
     """
-    if data.ndim != 2:
-        raise ValueError(f"data must be a 2-D array (features x samples), got {data.ndim}-D.")
-
-    _, n_samples = data.shape
-
-    if batch.shape[0] != n_samples:
+    is_integer = isinstance(mode, (int, np.integer)) and not isinstance(mode, (bool, np.bool_))
+    if not is_integer or mode not in (1, 2, 3, 4):
         raise ValueError(
-            f"batch length ({batch.shape[0]}) does not match the number of "
-            f"sample columns in data ({n_samples})."
+            f"combat_mode must be 1, 2, 3, or 4, got {mode!r}. "
+            "Modes 1/2 are parametric; 3/4 are non-parametric. "
+            "Modes 1/3 adjust location+scale; 2/4 adjust location only."
         )
 
-    _reject_infinite(data, range(data.shape[0]))
+
+def validate_ref_batch(batch: npt.NDArray[np.integer[Any]], ref_batch: int | None) -> None:
+    """Check that a reference batch is one of the labels and has at least two samples.
+
+    The pooled variance comes from the reference batch alone, so a single
+    sample leaves nothing to pool.
+
+    Raises
+    ------
+    ValueError
+        If *ref_batch* is not among the labels, or labels a single sample.
+    """
+    if ref_batch is None:
+        return
+    labels = sorted(set(batch.tolist()))
+    if ref_batch not in labels:
+        raise ValueError(f"ref_batch={ref_batch!r} not found in batch labels {labels}")
+    if int(np.sum(batch == ref_batch)) < 2:
+        raise ValueError(
+            f"ref_batch={ref_batch!r} has a single sample; a reference batch needs at least two."
+        )
 
 
 def sample_batch_map(desc: pd.DataFrame) -> dict[str, int]:
@@ -368,7 +370,7 @@ def sample_batch_map(desc: pd.DataFrame) -> dict[str, int]:
 _VALID_SORT_STRATEGIES: frozenset[str] = frozenset({"sparsity", "jaccard", "seriation"})
 
 
-def _validate_core_args(
+def validate_core_args(
     algorithm: str,
     combat_mode: int,
     needed_values: int | None,
@@ -376,15 +378,20 @@ def _validate_core_args(
     block_size: int | None = None,
     unique_removal: bool = True,
 ) -> None:
-    """Validate core parameter constraints shared by HarmonizeConfig and harmonize()."""
+    """Check the arguments shared by ``HarmonizeConfig`` and ``harmonize()``.
+
+    Raises
+    ------
+    ValueError
+        On an unknown algorithm, ComBat mode, or sort strategy, a
+        ``needed_values`` below 1, or a block size that is not an integer of at
+        least 2.
+    TypeError
+        If *unique_removal* is not a bool.
+    """
     if algorithm not in ("ComBat", "limma"):
         raise ValueError(f"algorithm must be 'ComBat' or 'limma', got {algorithm!r}.")
-    if combat_mode not in (1, 2, 3, 4):
-        raise ValueError(
-            f"combat_mode must be 1, 2, 3, or 4, got {combat_mode}. "
-            f"Modes 1/2 are parametric; 3/4 are non-parametric. "
-            f"Modes 1/3 adjust location+scale; 2/4 adjust location only."
-        )
+    validate_combat_mode(combat_mode)
     if needed_values is not None and needed_values < 1:
         raise ValueError(
             f"needed_values must be >= 1 or None, got {needed_values}. "
@@ -452,7 +459,7 @@ def validate_harmonize_args(
     >>> validate_harmonize_args("ComBat", 1, 2, sort_strategy="sparsity",
     ...                         block_size=2, n_batches=4)  # no error
     """
-    _validate_core_args(
+    validate_core_args(
         algorithm, combat_mode, needed_values, sort_strategy, block_size, unique_removal
     )
     if n_batches is not None and block_size is not None and block_size >= n_batches:

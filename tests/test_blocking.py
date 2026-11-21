@@ -292,3 +292,12 @@ def test_block_count_logged_for_non_contiguous_labels(caplog: pytest.LogCaptureF
     with caplog.at_level(logging.DEBUG, logger="harmonizepy.blocking"):
         build_block_list(np.array([1, 1, 2, 2, 3, 3, 1, 1]), block_size=2)
     assert "Built 2 blocks" in caplog.text
+
+
+def test_float_labels_are_blocked_by_first_appearance() -> None:
+    """Float batch labels are grouped by first appearance, like integers.
+
+    Failure condition: a label that is not a whole number raises ``KeyError``.
+    """
+    blocks = build_block_list(np.array([0.2, 0.2, 0.7, 1.0, 2.0, 0.7]), block_size=2)
+    np.testing.assert_array_equal(blocks, [1, 1, 1, 2, 2, 1])

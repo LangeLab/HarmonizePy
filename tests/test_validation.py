@@ -14,11 +14,12 @@ import pytest
 
 from harmonizepy.validation import (
     sample_batch_map,
-    validate_combat_input,
+    validate_combat_mode,
     validate_data_matrix,
     validate_description,
+    validate_engine_input,
     validate_harmonize_args,
-    validate_limma_input,
+    validate_ref_batch,
 )
 
 # ---------------------------------------------------------------------------
@@ -112,112 +113,49 @@ class TestValidateDescription:
 
 
 # ---------------------------------------------------------------------------
-# validate_combat_input
+# validate_engine_input
 # ---------------------------------------------------------------------------
 
 
-class TestValidateCombatInput:
-    def test_valid(self) -> None:
-        """Valid combat input passes without error.
+class TestValidateEngineInput:
+    """The matrix and label checks shared by ``combat()`` and ``remove_batch_effect()``."""
+
+    def test_valid_input_passes(self) -> None:
+        """A 2-D matrix with one label per sample passes.
 
         Failure condition: a valid array-batch pair is rejected.
         """
-        data = np.ones((5, 4), dtype=np.float64)
-        batch = np.array([0, 0, 1, 1], dtype=np.intp)
-        validate_combat_input(data, batch)  # no error
+        validate_engine_input(np.ones((5, 4)), np.array([0, 0, 1, 1]))
 
-    def test_contains_nan_passes(self) -> None:
-        """NaN in data does NOT raise ValueError.
+    def test_missing_cells_pass(self) -> None:
+        """Missing cells pass; the engines fit each feature on its observed cells.
 
-        Failure condition: the validator rejects NaN input
-        (per-cell NaN is handled by combat() via row-dropping,
-        matching R sva::ComBat's na.omit).
+        Failure condition: the validator rejects a matrix with a missing cell.
         """
-        data = np.array([[1.0, np.nan], [3.0, 4.0]])
-        batch = np.array([0, 1], dtype=np.intp)
-        validate_combat_input(data, batch)  # should not raise
+        validate_engine_input(np.array([[1.0, np.nan], [3.0, 4.0]]), np.array([0, 1]))
 
-    def test_no_min_feature_check(self) -> None:
-        """validate_combat_input does NOT reject n_features < 2.
+    def test_single_feature_passes(self) -> None:
+        """A single feature passes; the engines decide how to handle it.
 
-        Failure condition: the validator rejects input with < 2 features
-        (combat() handles this internally via NaN row dropping or
-        pass-through).
-
-        Per-cell NaN may reduce clean features below 2; the validator
-        must let the engine decide.
+        Failure condition: the validator rejects a one-row matrix.
         """
-        data = np.ones((1, 4), dtype=np.float64)
-        batch = np.array([0, 0, 1, 1], dtype=np.intp)
-        validate_combat_input(data, batch)  # should not raise
+        validate_engine_input(np.ones((1, 4)), np.array([0, 0, 1, 1]))
 
-    def test_one_dimensional(self) -> None:
-        """1-D input raises ValueError.
+    def test_one_dimensional_raises(self) -> None:
+        """A 1-D array raises ``ValueError``.
 
         Failure condition: a flat array is not rejected as 2-D required.
         """
-        data = np.array([1.0, 2.0, 3.0, 4.0])
-        batch = np.array([0, 0, 1, 1], dtype=np.intp)
         with pytest.raises(ValueError, match="2-D"):
-            validate_combat_input(data, batch)
+            validate_engine_input(np.array([1.0, 2.0, 3.0, 4.0]), np.array([0, 0, 1, 1]))
 
-    def test_batch_length_mismatch(self) -> None:
-        """Mismatched batch length raises ValueError.
+    def test_batch_length_mismatch_raises(self) -> None:
+        """A batch with the wrong number of labels raises ``ValueError``.
 
-        Failure condition: batch labels do not match the sample dimension
-        and the mismatch is not detected.
+        Failure condition: the mismatch between labels and samples is not detected.
         """
-        data = np.ones((3, 5), dtype=np.float64)
-        batch = np.array([0, 0, 1], dtype=np.intp)
         with pytest.raises(ValueError, match="batch length"):
-            validate_combat_input(data, batch)
-
-
-# ---------------------------------------------------------------------------
-# validate_limma_input
-# ---------------------------------------------------------------------------
-
-
-class TestValidateLimmaInput:
-    def test_valid(self) -> None:
-        """Valid limma input passes without error.
-
-        Failure condition: a valid array-batch pair is rejected.
-        """
-        data = np.ones((5, 4), dtype=np.float64)
-        batch = np.array([0, 0, 1, 1])
-        validate_limma_input(data, batch)  # no error
-
-    def test_contains_nan_passes(self) -> None:
-        """NaN in data does NOT raise ValueError.
-
-        Failure condition: the validator rejects NaN input
-        (per-cell NaN is handled by the engine via row-dropping,
-        matching R sva::ComBat's na.omit).
-        """
-        data = np.array([[1.0, np.nan], [3.0, 4.0]])
-        batch = np.array([0, 1])
-        validate_limma_input(data, batch)  # should not raise
-
-    def test_one_dimensional(self) -> None:
-        """1-D input raises ValueError.
-
-        Failure condition: a flat array is not rejected.
-        """
-        data = np.array([1.0, 2.0, 3.0])
-        batch = np.array([0, 1, 1])
-        with pytest.raises(ValueError, match="2-D"):
-            validate_limma_input(data, batch)
-
-    def test_batch_length_mismatch(self) -> None:
-        """Mismatched batch length raises ValueError.
-
-        Failure condition: batch-sample mismatch is not detected.
-        """
-        data = np.ones((3, 5), dtype=np.float64)
-        batch = np.array([0, 0, 1])
-        with pytest.raises(ValueError, match="batch length"):
-            validate_limma_input(data, batch)
+            validate_engine_input(np.ones((3, 5)), np.array([0, 0, 1]))
 
 
 # ---------------------------------------------------------------------------
@@ -432,3 +370,47 @@ def test_duplicate_sample_names_raise() -> None:
     df = pd.DataFrame([[1.0, 2.0, 3.0]], columns=["s1", "s1", "s2"])
     with pytest.raises(ValueError, match="duplicate sample names"):
         validate_data_matrix(df)
+
+
+class TestSharedValidators:
+    """Checks used by several entry points."""
+
+    @pytest.mark.parametrize("mode", [1, 4, np.int64(3), np.int32(2)])
+    def test_integer_modes_accepted(self, mode: object) -> None:
+        """Python and NumPy integers from 1 to 4 are ComBat modes.
+
+        Failure condition: a NumPy integer from a config file or array is rejected.
+        """
+        validate_combat_mode(mode)
+
+    @pytest.mark.parametrize("mode", [True, np.True_, 1.0, np.float32(4.0), "1", [1], 0, 5])
+    def test_other_modes_rejected(self, mode: object) -> None:
+        """Booleans, floats, strings, lists, and integers outside 1 to 4 are rejected.
+
+        Failure condition: ``True`` or ``1.0`` is accepted because it compares equal to 1.
+        """
+        with pytest.raises(ValueError, match="combat_mode must be 1, 2, 3, or 4"):
+            validate_combat_mode(mode)
+
+    def test_harmonize_config_rejects_boolean_mode(self) -> None:
+        """``HarmonizeConfig`` applies the same mode rule.
+
+        Failure condition: the config accepts a mode the engine wrapper rejects.
+        """
+        from harmonizepy import HarmonizeConfig
+
+        with pytest.raises(ValueError, match="combat_mode"):
+            HarmonizeConfig(combat_mode=True)
+
+    def test_reference_batch_must_exist_and_have_two_samples(self) -> None:
+        """A reference batch must be a label with at least two samples; ``None`` passes.
+
+        Failure condition: an unknown or single-sample reference batch is accepted.
+        """
+        batch = np.array([0, 0, 1, 2, 2])
+        validate_ref_batch(batch, None)
+        validate_ref_batch(batch, 0)
+        with pytest.raises(ValueError, match="not found"):
+            validate_ref_batch(batch, 9)
+        with pytest.raises(ValueError, match="single sample"):
+            validate_ref_batch(batch, 1)

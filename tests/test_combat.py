@@ -21,11 +21,11 @@ import pytest
 
 from harmonizepy.combat import (
     _beta_na_grouped_batch_design,
-    _group_valid_rows,
     _int_eprior,
     _it_sol,
     _row_var_nan_grouped,
     combat,
+    group_valid_rows,
 )
 from harmonizepy.combat_wrapper import adjust_combat
 
@@ -391,7 +391,7 @@ class TestEdgeCases:
             dtype=np.float64,
         )
 
-        valid_row_groups = _group_valid_rows(data)
+        valid_row_groups = group_valid_rows(data)
         expected_var = _row_var_nan_grouped_reference(data)
         result_var = _row_var_nan_grouped(data, valid_row_groups)
 
@@ -422,7 +422,7 @@ class TestEdgeCases:
             dtype=np.float64,
         )
 
-        valid_row_groups = _group_valid_rows(data)
+        valid_row_groups = group_valid_rows(data)
 
         expected = _beta_na_grouped_reference(data, design)
         result = _beta_na_grouped_batch_design(data, design, valid_row_groups)

@@ -13,6 +13,7 @@ combines both responsibilities.
 from __future__ import annotations
 
 import logging
+from collections import Counter
 
 import numpy as np
 import numpy.typing as npt
@@ -251,13 +252,7 @@ def remove_unique_combinations(
     """
     result = list(affiliation_list)
 
-    # Count how many features share each non-empty affiliation
-    counts: dict[tuple[int, ...], int] = {}
-    for affil in result:
-        if affil:
-            counts[affil] = counts.get(affil, 0) + 1
-
-    # Collect the non-unique (shared) patterns used as rescue targets
+    counts = Counter(affil for affil in result if affil)
     non_unique = {affil for affil, cnt in counts.items() if cnt > 1}
 
     if not non_unique:

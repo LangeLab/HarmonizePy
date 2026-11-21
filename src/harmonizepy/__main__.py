@@ -22,10 +22,8 @@ from collections.abc import Sequence
 from importlib.metadata import version
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
-import pandas as pd
-
 from .core import harmonize, plan_affiliations, prepare_inputs, resolve_needed_values
-from .io import read_description, read_main_data
+from .io import format_from_suffix, read_description, read_main_data, write_frame
 from .validation import sample_batch_map
 
 # ---------------------------------------------------------------------------
@@ -40,15 +38,6 @@ _FILE_LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 _RUN_ERRORS = (ValueError, TypeError, KeyError, ImportError, OSError)
 
 _FORMATS = ("tsv", "csv", "parquet")
-
-# Map file extensions to output formats. Anything unrecognised falls back to tsv.
-_EXT_TO_FMT: dict[str, str] = {
-    ".tsv": "tsv",
-    ".txt": "tsv",
-    ".csv": "csv",
-    ".parquet": "parquet",
-    ".pq": "parquet",
-}
 
 # Config keys that map directly to CLI flag destinations
 _VALID_CONFIG_KEYS: frozenset[str] = frozenset(
@@ -334,7 +323,7 @@ def _infer_format(path: str, fmt_arg: str | None) -> str:
     """Determine write format from the explicit flag, then from file extension, then tsv."""
     if fmt_arg is not None:
         return fmt_arg
-    return _EXT_TO_FMT.get(Path(path).suffix.lower(), "tsv")
+    return format_from_suffix(path)
 
 
 def _resolve_log_path(output_path: str) -> str:
@@ -396,20 +385,6 @@ def _load_config(path: str) -> dict[str, object]:
 # ---------------------------------------------------------------------------
 # I/O helpers
 # ---------------------------------------------------------------------------
-
-
-def _write_result(df: pd.DataFrame, path: str, fmt: str) -> None:
-    """Write *df* in the requested format."""
-    if fmt == "csv":
-        df.to_csv(path)
-    elif fmt == "parquet":
-        from .io import _HAVE_PYARROW
-
-        if not _HAVE_PYARROW:
-            raise ImportError("Parquet output requires pyarrow: pip install harmonizepy[io]")
-        df.to_parquet(path, index=True, engine="pyarrow")
-    else:
-        df.to_csv(path, sep="\t")
 
 
 def _build_summary_dict(
@@ -716,7 +691,7 @@ def _run_correction(args: argparse.Namespace, output_path: str, output_fmt: str)
         sys.exit(1)
 
     try:
-        _write_result(result, output_path, output_fmt)
+        write_frame(result, output_path, output_fmt)
     except _RUN_ERRORS as exc:
         print(f"ERROR writing output to '{output_path}': {exc}", file=sys.stderr)
         sys.exit(1)

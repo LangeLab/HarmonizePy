@@ -27,6 +27,10 @@ All notable changes to this project are documented in this file. The format is b
 - CLI: the run summary records the `needed_values` the run used; a malformed YAML config and reading or writing errors give an error message instead of a traceback; log lines are no longer repeated when `main()` runs more than once in a process, and `main()` leaves the package logger as it found it.
 - The log reports the number of features unique removal moved and the number of blocks correctly.
 - Parquet files are read without the deprecated `engine="auto"` option.
+- `combat_mode` must be an integer from 1 to 4 in `harmonize()`, `HarmonizeConfig`, `adjust_combat()`, and `splitting()`, with one error message. `True` and `1.0` were accepted by some of these and rejected by others.
+- `build_block_list()` accepts float batch labels; it raised a `KeyError` for labels that were not whole numbers.
+- The ComBat log line reports location-only correction when a one-sample batch forces it.
+
 
 ## [0.3.2] - 2026-05-29
 

@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
-from .validation import _validate_core_args
+import numpy as np
+import numpy.typing as npt
+
+from .validation import validate_core_args
+
+FloatArray = npt.NDArray[np.floating[Any]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,7 +65,7 @@ class HarmonizeConfig:
     unique_removal: bool = True
 
     def __post_init__(self) -> None:
-        _validate_core_args(
+        validate_core_args(
             self.algorithm,
             self.combat_mode,
             self.needed_values,

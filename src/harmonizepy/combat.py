@@ -31,12 +31,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, cast
 
 import numpy as np
 import numpy.typing as npt
 
-from .validation import batch_codes, validate_combat_input
+from .types import FloatArray
+from .validation import batch_codes, validate_engine_input, validate_ref_batch
 
 logger = logging.getLogger(__name__)
 
@@ -48,12 +48,16 @@ _VARIANCE_FLOOR = 1e-12
 # ---------------------------------------------------------------------------
 # Type aliases
 # ---------------------------------------------------------------------------
-_Array = npt.NDArray[np.floating[Any]]
 
 
 @dataclass(frozen=True)
-class _ValidRowGroups:
-    """Grouped row indices for a shared valid-observation mask layout."""
+class ValidRowGroups:
+    """Rows grouped by their pattern of observed cells.
+
+    ``valid_masks`` marks the observed cells of every row; each entry of
+    ``row_groups`` holds the indices of rows with the same pattern, in order of
+    first appearance.
+    """
 
     valid_masks: npt.NDArray[np.bool_]
     row_groups: tuple[npt.NDArray[np.intp], ...]
@@ -63,8 +67,17 @@ class _ValidRowGroups:
 class _GroupedBatchDesignLayouts:
     """Precomputed reduced one-hot layouts for grouped Beta.NA."""
 
-    reduced_designs: tuple[_Array | None, ...]
-    counts: tuple[_Array | None, ...]
+    reduced_designs: tuple[FloatArray | None, ...]
+    counts: tuple[FloatArray | None, ...]
+
+
+# Keyword arguments of combat() for each ComBat mode of HarmonizR and the CLI.
+COMBAT_MODES: dict[int, dict[str, bool]] = {
+    1: {"par_prior": True, "mean_only": False},
+    2: {"par_prior": True, "mean_only": True},
+    3: {"par_prior": False, "mean_only": False},
+    4: {"par_prior": False, "mean_only": True},
+}
 
 
 # ---------------------------------------------------------------------------
@@ -72,22 +85,18 @@ class _GroupedBatchDesignLayouts:
 # ---------------------------------------------------------------------------
 
 
-def _aprior(gamma_hat: _Array) -> float:
-    """Hyper-prior *a* for the inverse-gamma on delta (scale effect)."""
-    m = float(gamma_hat.mean())
-    s2 = float(gamma_hat.var(ddof=1))
-    if s2 <= 0.0 or np.isnan(s2):
-        return 1.0  # flat prior when variance cannot be estimated
-    return float((2.0 * s2 + m * m) / s2)
+def _hyper_priors(delta_hat: FloatArray) -> tuple[float, float]:
+    """Return the hyper-priors *a* and *b* of the inverse-gamma prior on one batch's scale.
 
-
-def _bprior(gamma_hat: _Array) -> float:
-    """Hyper-prior *b* for the inverse-gamma on delta (scale effect)."""
-    m = float(gamma_hat.mean())
-    s2 = float(gamma_hat.var(ddof=1))
+    Method-of-moments estimates from the mean and variance of the batch's
+    scale estimates; both are 1.0 (a flat prior) when that variance is zero or
+    undefined.
+    """
+    m = float(delta_hat.mean())
+    s2 = float(delta_hat.var(ddof=1))
     if s2 <= 0.0 or np.isnan(s2):
-        return 1.0  # flat prior when variance cannot be estimated
-    return float((m * s2 + m**3) / s2)
+        return 1.0, 1.0
+    return float((2.0 * s2 + m * m) / s2), float((m * s2 + m**3) / s2)
 
 
 # ---------------------------------------------------------------------------
@@ -95,9 +104,13 @@ def _bprior(gamma_hat: _Array) -> float:
 # ---------------------------------------------------------------------------
 
 
-def _postmean(g_bar: Any, d_star: Any, t2_n: Any, t2_n_g_hat: Any) -> _Array:
-    """Posterior mean of the additive batch effect (gamma)."""
-    return (t2_n_g_hat + d_star * g_bar) / (t2_n + d_star)  # type: ignore[no-any-return]
+def _postmean_unit_scale(g_bar: float, t2: float, g_hat: FloatArray) -> FloatArray:
+    """Posterior mean of the location effect with unit scale and n = 1.
+
+    This is R ``sva``'s ``postmean`` as location-only mode calls it.
+    """
+    posterior: FloatArray = (t2 * g_hat + g_bar) / (t2 + 1.0)
+    return posterior
 
 
 # ---------------------------------------------------------------------------
@@ -106,16 +119,16 @@ def _postmean(g_bar: Any, d_star: Any, t2_n: Any, t2_n_g_hat: Any) -> _Array:
 
 
 def _it_sol(
-    s_data: _Array,
-    g_hat: _Array,
-    d_hat: _Array,
+    s_data: FloatArray,
+    g_hat: FloatArray,
+    d_hat: FloatArray,
     g_bar: float,
     t2: float,
     a: float,
     b: float,
     conv: float = 1e-4,
     max_iter: int = 1_000_000,
-) -> tuple[_Array, _Array]:
+) -> tuple[FloatArray, FloatArray]:
     """Iterative EB solver for one batch (parametric path).
 
     NaN-safe: per-gene statistics are computed on non-NaN entries,
@@ -239,10 +252,10 @@ def _it_sol(
 
 
 def _int_eprior(
-    s_data: _Array,
-    g_hat: _Array,
-    d_hat: _Array,
-) -> tuple[_Array, _Array]:
+    s_data: FloatArray,
+    g_hat: FloatArray,
+    d_hat: FloatArray,
+) -> tuple[FloatArray, FloatArray]:
     """Monte-Carlo integration for non-parametric EB estimation (one batch).
 
     NaN-safe: each gene uses only its non-NaN entries for the likelihood,
@@ -267,7 +280,7 @@ def _int_eprior(
     if n_genes <= 1:
         return g_star, d_star
 
-    d = np.maximum(d_hat, 1e-12)
+    d = np.maximum(d_hat, _VARIANCE_FLOOR)
     not_nan = ~np.isnan(s_data)
     n_per_gene = not_nan.sum(axis=1).astype(np.float64)
     sum_x = np.nansum(s_data, axis=1)
@@ -323,47 +336,43 @@ def _int_eprior(
 # Design matrix
 # ---------------------------------------------------------------------------
 
-_design_cache: dict[tuple[int, ...], tuple[_Array, _Array, list[npt.NDArray[np.intp]], int]] = {}
+_design_cache: dict[
+    tuple[int, bytes], tuple[FloatArray, FloatArray, list[npt.NDArray[np.intp]]]
+] = {}
 
 
-def _make_design(batch: npt.NDArray[np.intp], n_batch: int) -> _Array:
+def _make_design(batch: npt.NDArray[np.intp], n_batch: int) -> FloatArray:
     """One-hot batch design matrix, shape (n_batch, n_samples)."""
     n_samples = len(batch)
     design = np.zeros((n_batch, n_samples), dtype=np.float64)
     for i in range(n_batch):
         design[i, batch == i] = 1.0
-    return design  # np.float64 array satisfies _Array (NDArray[floating[Any]])
+    return design
 
 
 def _get_cached_design(
     batch_int: npt.NDArray[np.intp], n_batch: int
-) -> tuple[_Array, _Array, list[npt.NDArray[np.intp]], int]:
-    """Return cached design matrix and XXT, or compute and cache.
+) -> tuple[FloatArray, FloatArray, list[npt.NDArray[np.intp]]]:
+    """Return the one-hot design, its Gram matrix, and the column indices of each batch.
 
-    When consecutive affiliation groups share the same batch layout,
-    this avoids recomputing the one-hot design matrix and its XXT
-    decomposition for every group.
+    Consecutive groups often share a batch layout, so results are cached by the
+    layout; the cache holds at most 64 layouts and is cleared when full.
     """
-    key = tuple(batch_int.tolist())
-    if key in _design_cache:
-        design, xx_t, batches_ind, cached_n_batch = _design_cache[key]
-        if cached_n_batch == n_batch:
-            return design, xx_t, batches_ind, n_batch
+    key = (n_batch, batch_int.tobytes())
+    cached = _design_cache.get(key)
+    if cached is not None:
+        return cached
 
     design = _make_design(batch_int, n_batch)
-    xx_t = design @ design.T
-    batches_ind = [np.where(batch_int == i)[0] for i in range(n_batch)]
-
-    # Keep cache bounded to avoid unbounded memory growth
+    layout = (design, design @ design.T, [np.where(batch_int == i)[0] for i in range(n_batch)])
     if len(_design_cache) > 64:
         _design_cache.clear()
-    _design_cache[key] = (design, xx_t, batches_ind, n_batch)
-
-    return design, xx_t, batches_ind, n_batch
+    _design_cache[key] = layout
+    return layout
 
 
 def _unestimable_rows(
-    data: _Array,
+    data: FloatArray,
     batch_int: npt.NDArray[np.intp],
     *,
     mean_only: bool,
@@ -387,7 +396,7 @@ def _unestimable_rows(
     batch_ids, batch_sizes = np.unique(batch_int, return_counts=True)
     mean_only = mean_only or bool(np.any(batch_sizes < 2))
 
-    def pooled(ss: _Array, n_obs: npt.NDArray[np.intp], n_cols: int) -> _Array:
+    def pooled(ss: FloatArray, n_obs: npt.NDArray[np.intp], n_cols: int) -> FloatArray:
         if has_nan:
             return np.where(n_obs <= 1, 1.0, ss / np.maximum(n_obs - 1, 1))
         return ss / n_cols
@@ -425,13 +434,13 @@ def _unestimable_rows(
 
 
 def combat(
-    data: _Array,
+    data: FloatArray,
     batch: npt.ArrayLike,
     *,
     par_prior: bool = True,
     mean_only: bool = False,
     ref_batch: int | None = None,
-) -> _Array:
+) -> FloatArray:
     """Apply ComBat batch-effect correction.
 
     Per-cell NaN is handled per-feature by omitting NaN observations from
@@ -494,27 +503,32 @@ def combat(
     data = np.asarray(data, dtype=np.float64)
     batch_int = batch_codes(batch)
 
-    # ---- Input validation --------------------------------------------------
-    validate_combat_input(data, batch_int)
+    validate_engine_input(data, batch_int)
+    validate_ref_batch(batch_int, ref_batch)
+    return _combat_validated(
+        data, batch_int, par_prior=par_prior, mean_only=mean_only, ref_batch=ref_batch
+    )
 
-    if ref_batch is not None:
-        labels = sorted(set(batch_int.tolist()))
-        if ref_batch not in labels:
-            raise ValueError(f"ref_batch={ref_batch!r} not found in batch labels {labels}")
-        # The pooled variance comes from the reference batch alone, and one sample
-        # has no variance to pool.
-        if int(np.sum(batch_int == ref_batch)) < 2:
-            raise ValueError(
-                f"ref_batch={ref_batch!r} has a single sample; a reference batch needs "
-                "at least two."
-            )
 
-    n_features = data.shape[0]
+def _combat_validated(
+    data: FloatArray,
+    batch_int: npt.NDArray[np.intp],
+    *,
+    par_prior: bool,
+    mean_only: bool,
+    ref_batch: int | None,
+) -> FloatArray:
+    """Set aside the features ComBat cannot fit, then run the dense or missing-value path.
 
+    Features with no observed value stay missing, and in the parametric modes
+    features whose variance the engine would floor keep their raw values; the
+    rest are corrected as if those features were absent. A single remaining
+    feature, or a matrix with no observed value, is returned as given.
+    """
     no_values = np.isnan(data).all(axis=1)
     if no_values.any() and not no_values.all():
         out = data.copy()
-        out[~no_values] = combat(
+        out[~no_values] = _combat_validated(
             data[~no_values],
             batch_int,
             par_prior=par_prior,
@@ -523,10 +537,6 @@ def combat(
         )
         return out
 
-    # ---- Features the shared prior cannot use -------------------------------
-    # In the parametric modes a feature whose variance the engine would floor
-    # would set the prior for every feature. It is left raw, and the other
-    # features are corrected exactly as if it were absent.
     if par_prior:
         unestimable = _unestimable_rows(data, batch_int, mean_only=mean_only, ref_batch=ref_batch)
         if unestimable.any():
@@ -537,7 +547,7 @@ def combat(
             out = data.copy()
             keep = ~unestimable
             if keep.sum() >= 2:
-                out[keep] = combat(
+                out[keep] = _combat_validated(
                     data[keep],
                     batch_int,
                     par_prior=par_prior,
@@ -546,35 +556,20 @@ def combat(
                 )
             return out
 
-    # A single feature has no shared prior to estimate from; it is returned raw.
-    if n_features < 2:
+    if data.shape[0] < 2:
         logger.debug("Single feature input, returning copy")
         return data.copy()
 
-    # ---- Dispatch ----------------------------------------------------------
-    has_nan = np.isnan(data).any()
-    if not has_nan:
+    missing = np.isnan(data)
+    if not missing.any():
         return _combat_dense(
-            data,
-            batch_int,
-            par_prior=par_prior,
-            mean_only=mean_only,
-            ref_batch=ref_batch,
+            data, batch_int, par_prior=par_prior, mean_only=mean_only, ref_batch=ref_batch
         )
-
-    # All-NaN data: return copy immediately (nothing to adjust)
-    if np.isnan(data).all():
+    if missing.all():
         logger.debug("All-NaN input, returning copy")
         return data.copy()
-
-    # Per-cell NaN present: use per-feature NaN-safe path (matches R
-    # sva::ComBat v3.60.0 Beta.NA approach).
     return _combat_nan(
-        data,
-        batch_int,
-        par_prior=par_prior,
-        mean_only=mean_only,
-        ref_batch=ref_batch,
+        data, batch_int, par_prior=par_prior, mean_only=mean_only, ref_batch=ref_batch
     )
 
 
@@ -583,14 +578,14 @@ def combat(
 # ---------------------------------------------------------------------------
 
 
-def _group_valid_rows(data: _Array) -> _ValidRowGroups:
-    """Group row indices by identical non-NaN masks."""
+def group_valid_rows(data: FloatArray) -> ValidRowGroups:
+    """Group row indices by their pattern of observed cells, in order of first appearance."""
     valid_masks = ~np.isnan(data)
     packed_masks = np.packbits(valid_masks, axis=1)
     grouped_rows: dict[bytes, list[int]] = {}
     for row_index in range(data.shape[0]):
         grouped_rows.setdefault(packed_masks[row_index].tobytes(), []).append(row_index)
-    return _ValidRowGroups(
+    return ValidRowGroups(
         valid_masks=valid_masks,
         row_groups=tuple(
             np.asarray(row_indices, dtype=np.intp) for row_indices in grouped_rows.values()
@@ -599,15 +594,15 @@ def _group_valid_rows(data: _Array) -> _ValidRowGroups:
 
 
 def _prepare_grouped_batch_design_layouts(
-    design: _Array,
-    valid_row_groups: _ValidRowGroups,
+    design: FloatArray,
+    valid_row_groups: ValidRowGroups,
 ) -> _GroupedBatchDesignLayouts:
     """Precompute reduced one-hot designs and counts for each valid-mask group."""
     if valid_row_groups.valid_masks.shape[1] != design.shape[1]:
         raise ValueError("valid_row_groups width does not match design")
 
-    reduced_designs: list[_Array | None] = []
-    counts: list[_Array | None] = []
+    reduced_designs: list[FloatArray | None] = []
+    counts: list[FloatArray | None] = []
     for row_indexer in valid_row_groups.row_groups:
         valid = valid_row_groups.valid_masks[row_indexer[0]]
         if not valid.any():
@@ -626,11 +621,11 @@ def _prepare_grouped_batch_design_layouts(
 
 
 def _beta_na_grouped_batch_design(
-    data: _Array,
-    design: _Array,
-    valid_row_groups: _ValidRowGroups,
+    data: FloatArray,
+    design: FloatArray,
+    valid_row_groups: ValidRowGroups,
     grouped_design_layouts: _GroupedBatchDesignLayouts | None = None,
-) -> _Array:
+) -> FloatArray:
     """Grouped Beta.NA specialized for the one-hot batch design.
 
     `_combat_nan()` always uses the cached one-hot batch design from
@@ -674,9 +669,9 @@ def _beta_na_grouped_batch_design(
 
 
 def _row_var_nan_grouped(
-    data: _Array,
-    valid_row_groups: _ValidRowGroups | None = None,
-) -> _Array:
+    data: FloatArray,
+    valid_row_groups: ValidRowGroups | None = None,
+) -> FloatArray:
     """Row-wise sample variance grouped by identical valid-observation masks.
 
     For a fixed validity mask, rows share the same reduced submatrix.
@@ -686,7 +681,7 @@ def _row_var_nan_grouped(
     n_features, _ = data.shape
     variances = np.empty(n_features, dtype=np.float64)
 
-    groups = valid_row_groups or _group_valid_rows(data)
+    groups = valid_row_groups or group_valid_rows(data)
     if groups.valid_masks.shape != data.shape:
         raise ValueError("valid_row_groups shape does not match data")
 
@@ -711,296 +706,217 @@ def _row_var_nan_grouped(
 # ---------------------------------------------------------------------------
 
 
-def _combat_nan(
-    data: _Array,
-    batch_int: npt.NDArray[np.intp],
-    *,
-    par_prior: bool = True,
-    mean_only: bool = False,
-    ref_batch: int | None = None,
-) -> _Array:
-    """ComBat correction with per-feature NaN handling.
+@dataclass(frozen=True)
+class _BatchLayout:
+    """Batches of one ComBat fit, relabelled 0 to n_batch - 1."""
 
-    For each feature independently, NaN observations are omitted from OLS,
-    variance, and mean computations.  NaN positions are preserved in the
-    output.  This matches R sva::ComBat v3.60.0's ``Beta.NA`` approach.
+    batch_idx: npt.NDArray[np.intp]
+    n_batch: int
+    ref_idx: int | None
+    design: FloatArray
+    xx_t: FloatArray
+    batches_ind: list[npt.NDArray[np.intp]]
+    batch_sizes: FloatArray
+    mean_only: bool
+
+
+def _batch_layout(
+    batch_int: npt.NDArray[np.intp], ref_batch: int | None, *, mean_only: bool
+) -> _BatchLayout:
+    """Relabel the batches, build the design, and settle location-only mode.
+
+    Location-only mode is used when the caller asks for it or when any batch
+    has a single sample, which has no variance of its own.
     """
-    n_features, n_samples = data.shape
-
-    unique_batches = np.unique(batch_int)
-    n_batch = len(unique_batches)
-    if n_batch < 2:
-        logger.debug("Single batch input, returning copy")
-        return data.copy()
-
-    logger.info(
-        "ComBat (NaN-safe) %s, %s: %d features x %d samples across %d batches",
-        "parametric" if par_prior else "non-parametric",
-        "location+scale" if not mean_only else "location only",
-        n_features,
-        n_samples,
-        n_batch,
-    )
-
-    # Remap batch labels to 0..n_batch-1
-    label_map = {old: new for new, old in enumerate(unique_batches)}
-    batch_int = np.array([label_map[b] for b in batch_int], dtype=np.intp)
-    if ref_batch is not None:
-        if ref_batch not in label_map:
-            raise ValueError(
-                f"ref_batch={ref_batch!r} not found in batch labels {sorted(label_map.keys())}"
-            )
-        ref_idx = label_map[ref_batch]
-    else:
-        ref_idx = None
-
-    design, _, batches_ind, _ = _get_cached_design(batch_int, n_batch)
+    labels, batch_idx = np.unique(batch_int, return_inverse=True)
+    batch_idx = batch_idx.astype(np.intp)
+    n_batch = len(labels)
+    ref_idx = None if ref_batch is None else int(np.flatnonzero(labels == ref_batch)[0])
+    if ref_idx is not None:
+        logger.debug("Reference batch: original %s -> remapped %d", ref_batch, ref_idx)
+    design, xx_t, batches_ind = _get_cached_design(batch_idx, n_batch)
     batch_sizes = np.array([len(b) for b in batches_ind], dtype=np.float64)
-
     if not mean_only and np.any(batch_sizes < 2):
         logger.debug("Forcing mean_only=True: batch with < 2 samples detected")
         mean_only = True
-
-    valid_row_groups = _group_valid_rows(data)
-    grouped_design_layouts = _prepare_grouped_batch_design_layouts(design, valid_row_groups)
-
-    # ---- Per-feature B.hat (Beta.NA) ---------------------------------------
-    b_hat = _beta_na_grouped_batch_design(
-        data,
-        design,
-        valid_row_groups,
-        grouped_design_layouts,
+    return _BatchLayout(
+        batch_idx, n_batch, ref_idx, design, xx_t, batches_ind, batch_sizes, mean_only
     )
 
-    # ---- Grand mean and pooled variance (per-feature, NaN-safe) ------------
-    # NOTE: R sva::ComBat uses DIFFERENT formulas:
-    #   No NaN: mean(residuals^2)
-    #   Has NaN: rowVars(residuals, na.rm=TRUE)  (sample variance, ddof=1)
-    if ref_idx is not None:
-        grand_mean = b_hat[ref_idx]
-        ref_cols = batches_ind[ref_idx]
-        fitted_ref = (design[:, ref_cols].T @ b_hat).T
-        var_n = _row_var_nan_grouped(data[:, ref_cols] - fitted_ref)
-    else:
-        grand_mean = (batch_sizes / n_samples) @ b_hat
-        fitted = (design.T @ b_hat).T
-        var_n = _row_var_nan_grouped(data - fitted, valid_row_groups)
 
-    var_pooled = np.maximum(var_n, _VARIANCE_FLOOR)
-    std_pooled = np.sqrt(var_pooled)
-    stand_mean = grand_mean[:, np.newaxis]
-    std_pooled_2d = std_pooled[:, np.newaxis]
+def _estimate_batch_effects(
+    s_data: FloatArray,
+    gamma_hat: FloatArray,
+    delta_hat: FloatArray,
+    layout: _BatchLayout,
+    *,
+    par_prior: bool,
+) -> tuple[FloatArray, FloatArray]:
+    """Shrink the per-batch location and scale estimates with the empirical-Bayes prior.
 
-    # ---- Standardise (per-feature, NaN-safe) -------------------------------
-    s_data = (data - stand_mean) / std_pooled_2d
-
-    # ---- Per-feature gamma.hat (Beta.NA) -----------------------------------
-    gamma_hat = _beta_na_grouped_batch_design(
-        s_data,
-        design,
-        valid_row_groups,
-        grouped_design_layouts,
-    )
-
-    # ---- delta.hat (per-batch, per-feature, NaN-safe) ----------------------
-    if mean_only:
-        delta_hat = np.ones_like(gamma_hat)
-    else:
-        delta_hat = np.empty_like(gamma_hat)
-        for b in range(n_batch):
-            idx = batches_ind[b]
-            delta_hat[b] = _row_var_nan_grouped(s_data[:, idx])
-
-    # ---- EB prior (same as dense path) ------------------------------------
+    Parametric modes use the normal and inverse-gamma priors (the iterative
+    solver, or the closed-form posterior mean in location-only mode);
+    non-parametric modes use the likelihood-weighted average over features.
+    The reference batch, if any, gets location 0 and scale 1.
+    """
     gamma_bar = gamma_hat.mean(axis=1)
     t2 = gamma_hat.var(axis=1, ddof=1)
-
-    if par_prior and not mean_only:
-        a_prior = np.array([_aprior(delta_hat[i]) for i in range(n_batch)])
-        b_prior = np.array([_bprior(delta_hat[i]) for i in range(n_batch)])
+    if par_prior and not layout.mean_only:
+        priors = [_hyper_priors(delta_hat[i]) for i in range(layout.n_batch)]
     else:
-        a_prior = np.ones(n_batch)
-        b_prior = np.ones(n_batch)
+        priors = [(1.0, 1.0)] * layout.n_batch
 
-    # ---- Solve for batch effects (NaN-safe solvers) -----------------------
     gamma_star = np.empty_like(gamma_hat)
     delta_star = np.empty_like(gamma_hat)
-
-    for i, idx in enumerate(batches_ind):
-        batch_s_data = s_data[:, idx]
-        if par_prior:
-            if mean_only:
-                # R's postmean gets n=1 for mean_only mode
-                t2_n = t2[i] * 1.0
-                t2_n_g_hat = t2_n * gamma_hat[i]
-                gamma_star[i] = _postmean(gamma_bar[i], 1.0, t2_n, t2_n_g_hat)
-                delta_star[i] = 1.0
-            else:
-                gamma_star[i], delta_star[i] = _it_sol(
-                    batch_s_data,
-                    gamma_hat[i],
-                    delta_hat[i],
-                    gamma_bar[i],
-                    t2[i],
-                    a_prior[i],
-                    b_prior[i],
-                )
+    for i, idx in enumerate(layout.batches_ind):
+        if par_prior and layout.mean_only:
+            gamma_star[i] = _postmean_unit_scale(gamma_bar[i], t2[i], gamma_hat[i])
+            delta_star[i] = 1.0
+        elif par_prior:
+            a_prior, b_prior = priors[i]
+            gamma_star[i], delta_star[i] = _it_sol(
+                s_data[:, idx], gamma_hat[i], delta_hat[i], gamma_bar[i], t2[i], a_prior, b_prior
+            )
         else:
-            d_hat_i = np.ones_like(delta_hat[i]) if mean_only else delta_hat[i]
-            g_s, d_s = _int_eprior(batch_s_data, gamma_hat[i], d_hat_i)
-            gamma_star[i] = g_s
-            delta_star[i] = d_s if not mean_only else np.ones_like(g_s)
+            gamma_star[i], d_star = _int_eprior(s_data[:, idx], gamma_hat[i], delta_hat[i])
+            delta_star[i] = 1.0 if layout.mean_only else d_star
 
-    if ref_idx is not None:
-        gamma_star[ref_idx] = 0.0
-        delta_star[ref_idx] = 1.0
+    if layout.ref_idx is not None:
+        gamma_star[layout.ref_idx] = 0.0
+        delta_star[layout.ref_idx] = 1.0
+    return gamma_star, delta_star
 
-    # ---- Adjust data (only non-NaN entries) -------------------------------
-    corrected = s_data.copy()
-    for i, idx in enumerate(batches_ind):
+
+def _adjust(
+    s_data: FloatArray,
+    data: FloatArray,
+    gamma_star: FloatArray,
+    delta_star: FloatArray,
+    std_pooled: FloatArray,
+    stand_mean: FloatArray,
+    layout: _BatchLayout,
+) -> FloatArray:
+    """Remove the batch effects from the standardised data and return to the data scale.
+
+    ``s_data`` is overwritten. Reference-batch columns are returned as given.
+    """
+    for i, idx in enumerate(layout.batches_ind):
         sqrt_delta = np.sqrt(np.maximum(delta_star[i], _VARIANCE_FLOOR))[:, np.newaxis]
-        corrected[:, idx] = (corrected[:, idx] - gamma_star[i][:, np.newaxis]) / sqrt_delta
+        s_data[:, idx] = (s_data[:, idx] - gamma_star[i][:, np.newaxis]) / sqrt_delta
+    s_data *= std_pooled[:, np.newaxis]
+    s_data += stand_mean
+    if layout.ref_idx is not None:
+        ref_cols = layout.batches_ind[layout.ref_idx]
+        s_data[:, ref_cols] = data[:, ref_cols]
+    return s_data
 
-    corrected = corrected * std_pooled_2d + stand_mean
 
-    if ref_idx is not None:
-        corrected[:, batches_ind[ref_idx]] = data[:, batches_ind[ref_idx]]
+def _log_fit(data: FloatArray, layout: _BatchLayout, *, par_prior: bool, label: str) -> None:
+    logger.info(
+        "%s %s, %s: %d features x %d samples across %d batches",
+        label,
+        "parametric" if par_prior else "non-parametric",
+        "location+scale" if not layout.mean_only else "location only",
+        data.shape[0],
+        data.shape[1],
+        layout.n_batch,
+    )
 
-    return cast(_Array, corrected)
 
-
-def _combat_dense(
-    data: _Array,
+def _combat_nan(
+    data: FloatArray,
     batch_int: npt.NDArray[np.intp],
     *,
     par_prior: bool = True,
     mean_only: bool = False,
     ref_batch: int | None = None,
-) -> _Array:
-    """Dense (NaN-free) ComBat correction.  See ``combat()`` for docs."""
-    n_features, n_samples = data.shape
+) -> FloatArray:
+    """ComBat correction with per-feature handling of missing cells.
 
-    unique_batches = np.unique(batch_int)
-    n_batch = len(unique_batches)
-    if n_batch < 2:
+    Each feature's batch means and variances use its observed cells only
+    (R ``sva::ComBat`` 3.60.0's ``Beta.NA``). The pooled variance is the sample
+    variance of the residuals (``rowVars(..., na.rm = TRUE)`` in sva), not the
+    mean square the dense path uses; sva switches formula the same way.
+    Missing cells stay missing.
+    """
+    if len(np.unique(batch_int)) < 2:
         logger.debug("Single batch input, returning copy")
         return data.copy()
+    layout = _batch_layout(batch_int, ref_batch, mean_only=mean_only)
+    _log_fit(data, layout, par_prior=par_prior, label="ComBat (NaN-safe)")
 
-    mod_label = "parametric" if par_prior else "non-parametric"
-    scale_label = "location+scale" if not mean_only else "location only"
-    logger.info(
-        "ComBat %s, %s: %d features x %d samples across %d batches",
-        mod_label,
-        scale_label,
-        n_features,
-        n_samples,
-        n_batch,
-    )
+    valid_row_groups = group_valid_rows(data)
+    grouped_layouts = _prepare_grouped_batch_design_layouts(layout.design, valid_row_groups)
+    b_hat = _beta_na_grouped_batch_design(data, layout.design, valid_row_groups, grouped_layouts)
 
-    # Remap batch labels to 0..n_batch-1
-    label_map = {old: new for new, old in enumerate(unique_batches)}
-    batch_int = np.array([label_map[b] for b in batch_int], dtype=np.intp)
-
-    if ref_batch is not None:
-        if ref_batch not in label_map:
-            raise ValueError(
-                f"ref_batch={ref_batch!r} not found in batch labels {sorted(label_map.keys())}"
-            )
-        ref_idx = label_map[ref_batch]
-        logger.debug("Reference batch: original %s -> remapped %d", ref_batch, ref_idx)
+    if layout.ref_idx is not None:
+        grand_mean = b_hat[layout.ref_idx]
+        ref_cols = layout.batches_ind[layout.ref_idx]
+        fitted_ref = (layout.design[:, ref_cols].T @ b_hat).T
+        var_n = _row_var_nan_grouped(data[:, ref_cols] - fitted_ref)
     else:
-        ref_idx = None
+        grand_mean = (layout.batch_sizes / data.shape[1]) @ b_hat
+        fitted = (layout.design.T @ b_hat).T
+        var_n = _row_var_nan_grouped(data - fitted, valid_row_groups)
 
-    design, xx_t, batches_ind, _ = _get_cached_design(batch_int, n_batch)
-    batch_sizes = np.array([len(b) for b in batches_ind], dtype=np.float64)
-
-    if not mean_only and np.any(batch_sizes < 2):
-        logger.debug("Forcing mean_only=True: batch with < 2 samples detected")
-        mean_only = True
-
-    # ---- Standardise -------------------------------------------------------
-    B_hat = np.linalg.solve(xx_t, design @ data.T)  # noqa: N806
-
-    if ref_idx is not None:
-        grand_mean = B_hat[ref_idx]
-    else:
-        grand_mean = (batch_sizes / n_samples) @ B_hat
-
-    if ref_idx is not None:
-        ref_cols = batches_ind[ref_idx]
-        fitted = design[:, ref_cols].T @ B_hat
-        residuals = data[:, ref_cols].T - fitted
-        var_pooled = (residuals**2).mean(axis=0)
-    else:
-        fitted = design.T @ B_hat
-        residuals = data.T - fitted
-        var_pooled = (residuals**2).mean(axis=0)
-
-    var_pooled = np.maximum(var_pooled, _VARIANCE_FLOOR)
-    std_pooled = np.sqrt(var_pooled)
+    std_pooled = np.sqrt(np.maximum(var_n, _VARIANCE_FLOOR))
     stand_mean = grand_mean[:, np.newaxis]
     s_data = (data - stand_mean) / std_pooled[:, np.newaxis]
 
-    # ---- Estimate batch effects --------------------------------------------
-    gamma_hat = np.linalg.solve(xx_t, design @ s_data.T)
+    gamma_hat = _beta_na_grouped_batch_design(
+        s_data, layout.design, valid_row_groups, grouped_layouts
+    )
+    delta_hat = np.ones_like(gamma_hat)
+    if not layout.mean_only:
+        for b, idx in enumerate(layout.batches_ind):
+            delta_hat[b] = _row_var_nan_grouped(s_data[:, idx])
 
-    if mean_only:
-        delta_hat = np.ones_like(gamma_hat)
+    gamma_star, delta_star = _estimate_batch_effects(
+        s_data, gamma_hat, delta_hat, layout, par_prior=par_prior
+    )
+    return _adjust(s_data, data, gamma_star, delta_star, std_pooled, stand_mean, layout)
+
+
+def _combat_dense(
+    data: FloatArray,
+    batch_int: npt.NDArray[np.intp],
+    *,
+    par_prior: bool = True,
+    mean_only: bool = False,
+    ref_batch: int | None = None,
+) -> FloatArray:
+    """ComBat correction of a matrix without missing cells.
+
+    The pooled variance is the mean square of the residuals from the batch
+    means, as in R ``sva::ComBat`` for complete data. See ``combat()``.
+    """
+    if len(np.unique(batch_int)) < 2:
+        logger.debug("Single batch input, returning copy")
+        return data.copy()
+    layout = _batch_layout(batch_int, ref_batch, mean_only=mean_only)
+    _log_fit(data, layout, par_prior=par_prior, label="ComBat")
+
+    b_hat = np.linalg.solve(layout.xx_t, layout.design @ data.T)
+    if layout.ref_idx is not None:
+        grand_mean = b_hat[layout.ref_idx]
+        ref_cols = layout.batches_ind[layout.ref_idx]
+        residuals = data[:, ref_cols].T - layout.design[:, ref_cols].T @ b_hat
     else:
-        delta_hat = np.empty_like(gamma_hat)
-        for i, idx in enumerate(batches_ind):
+        grand_mean = (layout.batch_sizes / data.shape[1]) @ b_hat
+        residuals = data.T - layout.design.T @ b_hat
+    var_pooled = (residuals**2).mean(axis=0)
+
+    std_pooled = np.sqrt(np.maximum(var_pooled, _VARIANCE_FLOOR))
+    stand_mean = grand_mean[:, np.newaxis]
+    s_data = (data - stand_mean) / std_pooled[:, np.newaxis]
+
+    gamma_hat = np.linalg.solve(layout.xx_t, layout.design @ s_data.T)
+    delta_hat = np.ones_like(gamma_hat)
+    if not layout.mean_only:
+        for i, idx in enumerate(layout.batches_ind):
             delta_hat[i] = s_data[:, idx].var(axis=1, ddof=1)
 
-    gamma_bar = gamma_hat.mean(axis=1)
-    t2 = gamma_hat.var(axis=1, ddof=1)
-
-    if par_prior and not mean_only:
-        a_prior = np.array([_aprior(delta_hat[i]) for i in range(n_batch)])
-        b_prior = np.array([_bprior(delta_hat[i]) for i in range(n_batch)])
-    else:
-        a_prior = np.ones(n_batch)
-        b_prior = np.ones(n_batch)
-
-    gamma_star = np.empty_like(gamma_hat)
-    delta_star = np.empty_like(gamma_hat)
-
-    for i, idx in enumerate(batches_ind):
-        batch_s_data = s_data[:, idx]
-        if par_prior:
-            if mean_only:
-                t2_n = t2[i] * 1.0
-                t2_n_g_hat = t2_n * gamma_hat[i]
-                gamma_star[i] = _postmean(gamma_bar[i], 1.0, t2_n, t2_n_g_hat)
-                delta_star[i] = 1.0
-            else:
-                gamma_star[i], delta_star[i] = _it_sol(
-                    batch_s_data,
-                    gamma_hat[i],
-                    delta_hat[i],
-                    gamma_bar[i],
-                    t2[i],
-                    a_prior[i],
-                    b_prior[i],
-                )
-        else:
-            d_hat_i = np.ones_like(delta_hat[i]) if mean_only else delta_hat[i]
-            g_star_i, d_star_i = _int_eprior(batch_s_data, gamma_hat[i], d_hat_i)
-            gamma_star[i] = g_star_i
-            delta_star[i] = d_star_i if not mean_only else 1.0
-
-    if ref_idx is not None:
-        gamma_star[ref_idx] = 0.0
-        delta_star[ref_idx] = 1.0
-
-    # ---- Adjust data -------------------------------------------------------
-    corrected = s_data.copy()
-    for i, idx in enumerate(batches_ind):
-        sqrt_delta = np.sqrt(np.maximum(delta_star[i], _VARIANCE_FLOOR))[:, np.newaxis]
-        corrected[:, idx] = (corrected[:, idx] - gamma_star[i][:, np.newaxis]) / sqrt_delta
-
-    corrected = corrected * std_pooled[:, np.newaxis] + stand_mean
-
-    if ref_idx is not None:
-        corrected[:, batches_ind[ref_idx]] = data[:, batches_ind[ref_idx]]
-
-    return corrected  # type: ignore[no-any-return]
+    gamma_star, delta_star = _estimate_batch_effects(
+        s_data, gamma_hat, delta_hat, layout, par_prior=par_prior
+    )
+    return _adjust(s_data, data, gamma_star, delta_star, std_pooled, stand_mean, layout)

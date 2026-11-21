@@ -11,17 +11,10 @@ import logging
 import numpy as np
 import pandas as pd
 
-from .combat import combat
-from .validation import batch_codes
+from .combat import COMBAT_MODES, combat
+from .validation import batch_codes, validate_combat_mode
 
 logger = logging.getLogger(__name__)
-
-_MODE_MAP: dict[int, dict[str, bool]] = {
-    1: {"par_prior": True, "mean_only": False},
-    2: {"par_prior": True, "mean_only": True},
-    3: {"par_prior": False, "mean_only": False},
-    4: {"par_prior": False, "mean_only": True},
-}
 
 
 def adjust_combat(
@@ -67,11 +60,7 @@ def adjust_combat(
     ...                     "s3": [5.0, 6.0], "s4": [7.0, 8.0]})
     >>> corrected = adjust_combat(df, [0, 0, 1, 1], mode=2)
     """
-    if mode not in _MODE_MAP:
-        raise ValueError(
-            f"combat_mode must be 1, 2, 3, or 4, got {mode}. "
-            f"Modes 1/2 are parametric; 3/4 are non-parametric."
-        )
+    validate_combat_mode(mode)
 
     batch_labels = batch_codes(batch_labels)
     if batch_labels.shape[0] != sub_df.shape[1]:
@@ -97,7 +86,7 @@ def adjust_combat(
         sub_df.to_numpy(dtype=np.float64),
         batch_labels,
         ref_batch=ref_batch,
-        **_MODE_MAP[mode],
+        **COMBAT_MODES[mode],
     )
 
     return pd.DataFrame(corrected, index=sub_df.index, columns=sub_df.columns)

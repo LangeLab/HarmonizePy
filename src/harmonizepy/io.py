@@ -53,6 +53,21 @@ def _reject_repeated_sample_names(path: str, sep: str) -> None:
         )
 
 
+# Output format for each file suffix; any other suffix writes TSV.
+_FORMAT_BY_SUFFIX: dict[str, str] = {
+    ".tsv": "tsv",
+    ".txt": "tsv",
+    ".csv": "csv",
+    ".parquet": "parquet",
+    ".pq": "parquet",
+}
+
+
+def format_from_suffix(path: str) -> str:
+    """Return ``"tsv"``, ``"csv"``, or ``"parquet"`` from the suffix of *path*; TSV otherwise."""
+    return _FORMAT_BY_SUFFIX.get(Path(path).suffix.lower(), "tsv")
+
+
 def _use_pyarrow_csv(path: str, sep: str) -> bool:
     """Return ``True`` if pyarrow engine should be used for this CSV/TSV file.
 
@@ -60,6 +75,15 @@ def _use_pyarrow_csv(path: str, sep: str) -> bool:
     (where it is typically faster) and slower for very wide files.
     """
     return bool(_HAVE_PYARROW and _count_columns(path, sep) <= _WIDE_COLUMN_THRESHOLD)
+
+
+def _read_delimited(path: str, sep: str, *, index_col: int | None) -> pd.DataFrame:
+    """Read a delimited file, with the pyarrow engine for files up to the column threshold."""
+    if _use_pyarrow_csv(path, sep):
+        return pd.read_csv(
+            path, sep=sep, index_col=index_col, engine="pyarrow", dtype_backend="pyarrow"
+        )
+    return pd.read_csv(path, sep=sep, index_col=index_col)
 
 
 def _convert_pyarrow_dtypes(df: pd.DataFrame) -> pd.DataFrame:
@@ -214,18 +238,10 @@ def read_main_data(path: str) -> pd.DataFrame:
         if not _HAVE_PYARROW:
             raise ImportError("Parquet reading requires pyarrow: pip install harmonizepy[io]")
         df = pd.read_parquet(path)
-    elif ext == ".csv":
-        _reject_repeated_sample_names(path, ",")
-        if _HAVE_PYARROW and _count_columns(path, ",") <= _WIDE_COLUMN_THRESHOLD:
-            df = pd.read_csv(path, sep=",", index_col=0, engine="pyarrow", dtype_backend="pyarrow")
-        else:
-            df = pd.read_csv(path, sep=",", index_col=0)
     else:
-        _reject_repeated_sample_names(path, "\t")
-        if _HAVE_PYARROW and _count_columns(path, "\t") <= _WIDE_COLUMN_THRESHOLD:
-            df = pd.read_csv(path, sep="\t", index_col=0, engine="pyarrow", dtype_backend="pyarrow")
-        else:
-            df = pd.read_csv(path, sep="\t", index_col=0)
+        sep = "," if ext == ".csv" else "\t"
+        _reject_repeated_sample_names(path, sep)
+        df = _read_delimited(path, sep, index_col=0)
 
     df = _convert_pyarrow_dtypes(df)
 
@@ -271,11 +287,7 @@ def read_description(path: str) -> pd.DataFrame:
     >>> from harmonizepy.io import read_description
     >>> desc = read_description("batch.csv")  # doctest: +SKIP
     """
-    if _use_pyarrow_csv(path, ","):
-        desc = pd.read_csv(path, engine="pyarrow", dtype_backend="pyarrow")
-    else:
-        desc = pd.read_csv(path)
-    desc = _convert_pyarrow_dtypes(desc)
+    desc = _convert_pyarrow_dtypes(_read_delimited(path, ",", index_col=None))
 
     logger.debug(
         "Read description: %d samples, %d columns from %s", desc.shape[0], desc.shape[1], path
@@ -313,14 +325,26 @@ def write_output(df: pd.DataFrame, path: str) -> None:
     >>> df = pd.DataFrame({"s1": [1.0, 2.0]}, index=["f1", "f2"])
     >>> write_output(df, "/tmp/out.tsv")  # doctest: +SKIP
     """
-    ext = Path(path).suffix.lower()
-    if ext in (".parquet", ".pq"):
+    write_frame(df, path, format_from_suffix(path))
+
+    logger.debug("Wrote output: %d features x %d samples to %s", df.shape[0], df.shape[1], path)
+
+
+def write_frame(df: pd.DataFrame, path: str, fmt: str) -> None:
+    """Write *df* to *path* as ``"tsv"``, ``"csv"``, or ``"parquet"``, with the index.
+
+    Raises
+    ------
+    ImportError
+        If *fmt* is ``"parquet"`` and ``pyarrow`` is not installed.
+    OSError
+        If *path* is not writable.
+    """
+    if fmt == "parquet":
         if not _HAVE_PYARROW:
             raise ImportError("Parquet output requires pyarrow: pip install harmonizepy[io]")
         df.to_parquet(path, index=True, engine="pyarrow")
-    elif ext == ".csv":
+    elif fmt == "csv":
         df.to_csv(path)
     else:
         df.to_csv(path, sep="\t")
-
-    logger.debug("Wrote output: %d features x %d samples to %s", df.shape[0], df.shape[1], path)
