@@ -17,7 +17,8 @@ All notable changes to this project are documented in this file. The format is b
 - The per-group ComBat log line is at DEBUG level; the run's INFO lines report the number of groups.
 - CSV and TSV files are read with pandas' C parser on the calling thread, at every width; pyarrow's reader, which started a thread pool, is no longer used. Parquet is read without reader threads. The `io` extra is needed for Parquet only.
 - `pytest` also runs the examples in the docstrings, so CI checks them with the rest of the suite.
-- ComBat's non-parametric modes (3 and 4) compute the prior in smaller blocks, which keeps them in the CPU cache for large groups and lowers their peak memory.
+- ComBat's non-parametric modes (3 and 4) compute the prior in blocks sized to stay in the CPU cache, which speeds up large groups and lowers their peak memory; a small group is done in one block. Corrected values change by rounding only.
+- ComBat's checks for features to leave raw take a few array operations per group whatever the number of batches, so runs with many small groups are not slowed by them.
 
 ### Fixed
 

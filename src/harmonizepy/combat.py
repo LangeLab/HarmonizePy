@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
@@ -40,10 +41,14 @@ logger = logging.getLogger(__name__)
 # zero variance never divides; features below it are left raw by combat().
 _VARIANCE_FLOOR = 1e-12
 
-# Target features per block of the non-parametric prior. A block holds one row
-# per target and one column per feature; 16 rows took about half the time of
-# 64 at 32000 features and the same at 8000, with identical output.
-_EPRIOR_BLOCK_ROWS = 16
+# Size of a block of the non-parametric prior, which holds one row per target
+# feature and one column per feature. A block of 2**16 cells (512 KiB) stays in
+# the CPU cache; at 32000 features, 16 rows took about half the time of 64. The
+# block never has fewer than 16 rows, so a small group is done in one block.
+# Rows are computed independently; the block size changes the output only by
+# rounding in the matrix product.
+_EPRIOR_BLOCK_CELLS = 2**16
+_EPRIOR_MIN_BLOCK_ROWS = 16
 
 # ---------------------------------------------------------------------------
 # Grouping records
@@ -322,7 +327,8 @@ def _int_eprior(
     Each feature's estimate is the average of the other features' estimates,
     weighted by the likelihood of its observed cells under each of them
     (R ``sva:::int.eprior``). The computation is deterministic: a weighted sum
-    over features, in blocks of ``_EPRIOR_BLOCK_ROWS`` target rows.
+    over features, in blocks of target rows of at most ``_EPRIOR_BLOCK_CELLS``
+    cells, or ``_EPRIOR_MIN_BLOCK_ROWS`` rows if more.
 
     The log-likelihood of target *i* under support *j* is written as
     ``-(SS_i + n_i (m_i - g_j)^2) / (2 d_j) - n_i log(2 pi d_j) / 2``, with
@@ -359,18 +365,26 @@ def _int_eprior(
 
     d = np.maximum(d_hat, _VARIANCE_FLOOR)
     observed = ~np.isnan(s_data)
-    n_obs = observed.sum(axis=1).astype(np.float64)
-    mean = np.nansum(s_data, axis=1) / np.maximum(n_obs, 1.0)
-    resid = np.where(observed, s_data - mean[:, np.newaxis], 0.0)
+    if observed.all():
+        n_obs = np.full(n_features, float(s_data.shape[1]))
+        mean = s_data.sum(axis=1) / s_data.shape[1]
+        resid = s_data - mean[:, np.newaxis]
+    else:
+        n_obs = observed.sum(axis=1).astype(np.float64)
+        mean = np.nansum(s_data, axis=1) / np.maximum(n_obs, 1.0)
+        resid = np.where(observed, s_data - mean[:, np.newaxis], 0.0)
     sum_sq = (resid * resid).sum(axis=1)
     half_inv_d = 0.5 / d
     half_log_two_pi_d = 0.5 * np.log(2.0 * np.pi * d)
     support = np.column_stack([g_hat, d, np.ones(n_features)])
     targets = np.flatnonzero(n_obs >= 1.0)
-    buffer = np.empty((_EPRIOR_BLOCK_ROWS, n_features))
+    block_rows = min(
+        max(targets.size, 1), max(_EPRIOR_MIN_BLOCK_ROWS, _EPRIOR_BLOCK_CELLS // n_features)
+    )
+    buffer = np.empty((block_rows, n_features))
 
-    for start in range(0, targets.size, _EPRIOR_BLOCK_ROWS):
-        rows = targets[start : start + _EPRIOR_BLOCK_ROWS]
+    for start in range(0, targets.size, block_rows):
+        rows = targets[start : start + block_rows]
         log_lh = buffer[: rows.size]
         np.subtract(mean[rows, np.newaxis], g_hat[np.newaxis, :], out=log_lh)
         np.square(log_lh, out=log_lh)
@@ -450,6 +464,35 @@ def _design_cache_bytes() -> int:
     )
 
 
+@dataclass(frozen=True)
+class _BatchColumns:
+    """The columns of each batch, made contiguous by one stable sort.
+
+    ``sum`` reduces each batch's columns to one column and ``expand`` repeats a
+    per-batch column over that batch's columns, so per-batch statistics take a
+    few array operations whatever the number of batches.
+    """
+
+    ids: npt.NDArray[np.intp]
+    sizes: npt.NDArray[np.intp]
+    order: npt.NDArray[np.intp]
+    starts: npt.NDArray[np.intp]
+
+    @classmethod
+    def of(cls, batch_int: npt.NDArray[np.intp]) -> _BatchColumns:
+        ids, sizes = np.unique(batch_int, return_counts=True)
+        starts = np.concatenate(([0], np.cumsum(sizes)[:-1])).astype(np.intp)
+        return cls(ids, sizes, np.argsort(batch_int, kind="stable"), starts)
+
+    def sum(self, values: npt.NDArray[Any]) -> npt.NDArray[Any]:
+        """Sum the columns of each batch of ``values``, whose columns are in ``order``."""
+        return np.add.reduceat(values, self.starts, axis=1)
+
+    def expand(self, per_batch: FloatArray) -> FloatArray:
+        """Repeat each batch's column over that batch's columns, in ``order``."""
+        return np.repeat(per_batch, self.sizes, axis=1)
+
+
 def _unestimable_rows(
     data: FloatArray,
     batch_int: npt.NDArray[np.intp],
@@ -471,46 +514,35 @@ def _unestimable_rows(
     the engines; the non-parametric modes pass ``mean_only=True`` to check the
     pooled variance only.
     """
-    obs = ~np.isnan(data)
+    layout = _BatchColumns.of(batch_int)
+    mean_only = mean_only or bool(np.any(layout.sizes < 2))
+    x = data[:, layout.order]
+    obs = ~np.isnan(x)
     has_nan = not bool(obs.all())
-    batch_ids, batch_sizes = np.unique(batch_int, return_counts=True)
-    mean_only = mean_only or bool(np.any(batch_sizes < 2))
-
-    def pooled(ss: FloatArray, n_obs: npt.NDArray[np.intp], n_cols: int) -> FloatArray:
-        if has_nan:
-            return np.where(n_obs <= 1, 1.0, ss / np.maximum(n_obs - 1, 1))
-        return ss / n_cols
-
-    per_batch = {}
-    for batch_id, n_cols in zip(batch_ids, batch_sizes, strict=True):
-        cols = np.flatnonzero(batch_int == batch_id)
-        block = data[:, cols]
-        if has_nan:
-            observed = obs[:, cols]
-            n_obs = observed.sum(axis=1)
-            mean_b = np.nansum(block, axis=1) / np.maximum(n_obs, 1)
-            resid = np.where(observed, block - mean_b[:, np.newaxis], 0.0)
-        else:
-            n_obs = np.full(data.shape[0], cols.size)
-            mean_b = np.sum(block, axis=1) / max(cols.size, 1)
-            resid = block - mean_b[:, np.newaxis]
-        per_batch[batch_id] = (n_obs, (resid * resid).sum(axis=1), int(n_cols))
+    if has_nan:
+        n_obs = layout.sum(obs.astype(np.intp))
+        means = layout.sum(np.where(obs, x, 0.0)) / np.maximum(n_obs, 1)
+        resid = np.where(obs, x - layout.expand(means), 0.0)
+    else:
+        n_obs = np.broadcast_to(layout.sizes, (x.shape[0], layout.sizes.size))
+        resid = x - layout.expand(layout.sum(x) / layout.sizes)
+    ss = layout.sum(resid * resid)
 
     if ref_batch is None:
-        stats = list(per_batch.values())
-        ss_all = np.sum([ss for _, ss, _ in stats], axis=0)
-        n_all = np.sum([n_obs for n_obs, _, _ in stats], axis=0)
-        var_pooled = pooled(ss_all, n_all, data.shape[1])
+        ss_pooled, n_pooled, n_cols = ss.sum(axis=1), n_obs.sum(axis=1), data.shape[1]
     else:
-        n_ref, ss_ref, n_ref_cols = per_batch[ref_batch]
-        var_pooled = pooled(ss_ref, n_ref, n_ref_cols)
+        ref = int(np.searchsorted(layout.ids, ref_batch))
+        ss_pooled, n_pooled, n_cols = ss[:, ref], n_obs[:, ref], int(layout.sizes[ref])
+    if has_nan:
+        var_pooled = np.where(n_pooled <= 1, 1.0, ss_pooled / np.maximum(n_pooled - 1, 1))
+    else:
+        var_pooled = ss_pooled / n_cols
 
     unestimable = var_pooled < _VARIANCE_FLOOR
     if not mean_only:
-        scale = np.maximum(var_pooled, _VARIANCE_FLOOR)
-        for n_obs, ss, _ in per_batch.values():
-            var_b = ss / np.maximum(n_obs - 1, 1)
-            unestimable |= (n_obs >= 2) & (var_b < _VARIANCE_FLOOR * scale)
+        scale = np.maximum(var_pooled, _VARIANCE_FLOOR)[:, np.newaxis]
+        var_b = ss / np.maximum(n_obs - 1, 1)
+        unestimable |= ((n_obs >= 2) & (var_b < _VARIANCE_FLOOR * scale)).any(axis=1)
     return unestimable
 
 
@@ -690,9 +722,10 @@ def _combat_validated(
         )
         return out, reasons
 
-    observed_batches = np.stack(
-        [(~np.isnan(data[:, batch_int == b])).any(axis=1) for b in np.unique(batch_int)]
-    ).sum(axis=0)
+    columns = _BatchColumns.of(batch_int)
+    observed_batches = (columns.sum((~np.isnan(data[:, columns.order])).astype(np.intp)) > 0).sum(
+        axis=1
+    )
     one_batch = observed_batches < 2
     if one_batch.all():
         reasons[:] = "single_batch"
