@@ -19,6 +19,7 @@ This release fixes the inputs found to give wrong values, hang, or fail without 
 
 - **Correction report.** `harmonize(..., return_report=True)` returns a `HarmonizeResult` of the corrected matrix and a table with one row per feature: whether it was corrected or kept raw and why, the batches of its group, its group size, whether unique removal cropped it, and how many repeats of it were removed. The CLI writes the same table with `--report PATH`. The matrix is the same with or without the report (#28).
 - **Input-scale warning.** `harmonize()` and the dry run warn with `InputScaleWarning` when the values look untransformed (non-negative with a 95th percentile above 100) or look like proportions, and name the transform to apply. The check is a heuristic and can be silenced by category (#25).
+- **Releases.** Pushing a `vX.Y.Z` tag publishes a GitHub release once `main`'s CI has passed on the tagged commit: the wheel and sdist that CI built and smoke-tested, their SHA-256 checksums with an attestation, and this file's section as the notes.
 
 ### Changed
 

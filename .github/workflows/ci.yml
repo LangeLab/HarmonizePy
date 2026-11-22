@@ -40,6 +40,33 @@ jobs:
       - name: Mypy
         run: uv run mypy src/
 
+  package:
+    name: Package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: true
+          cache-suffix: package
+
+      - name: Build, check, and smoke-test the wheel and sdist
+        run: bash .github/scripts/release.sh package "$RUNNER_TEMP/dist"
+
+      # The release workflow publishes these files from main's CI run on the tagged commit.
+      - name: Keep the tested packages
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: release-dist
+          path: ${{ runner.temp }}/dist/*
+          if-no-files-found: error
+          retention-days: 90
+
   test:
     name: Test ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
