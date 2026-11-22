@@ -469,6 +469,7 @@ _STATUS_BY_REASON = {
     "alone_in_pattern": "raw_alone_in_pattern",
     "zero_variance": "raw_zero_variance",
     "too_few_features": "raw_too_few_features",
+    "too_few_values": "raw_too_few_values",
 }
 
 
@@ -487,7 +488,9 @@ def correction_report(
       batch); ``raw_alone_in_pattern`` (no other feature shares its
       affiliation); ``raw_zero_variance`` (ComBat: variance too small to
       estimate); ``raw_too_few_features`` (ComBat: fewer than two
-      features left in its group to form a prior); or
+      features left in its group to form a prior); ``raw_too_few_values``
+      (limma: no more values than batches, so the fit leaves no residual);
+      or
       ``missing_no_usable_batch`` (no batch, or with ``block`` no block, with
       enough values; the row is all missing).
     - ``batches_used``: the batch labels of the feature's group,

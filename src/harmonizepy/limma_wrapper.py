@@ -67,9 +67,9 @@ def remove_batch_effect(
         Batch-corrected data.  NaN positions from input are preserved.  A
         feature is fitted on the batches it has values in, with sum-to-zero
         contrasts over those batches, so a batch it lacks does not shift its
-        level. A feature with values in one batch only, or missing a batch with
-        no more values than observed batches, keeps its raw values; the log
-        counts both.
+        level. A feature with values in one batch only, or with no more values
+        than batches it is observed in, keeps its raw values: its fit would
+        leave no residual and collapse it to one level. The log counts both.
 
     Raises
     ------
@@ -87,35 +87,49 @@ def remove_batch_effect(
     >>> corrected.shape
     (20, 8)
     """
+    corrected, _ = _remove_batch_effect_with_reasons(data, batch)
+    return corrected
+
+
+def _remove_batch_effect_with_reasons(
+    data: FloatArray, batch: npt.ArrayLike
+) -> tuple[FloatArray, npt.NDArray[np.str_]]:
+    """Validate and correct as ``remove_batch_effect()`` does, and return why each feature was left raw.
+
+    The reason is an empty string for a corrected feature, otherwise
+    ``"no_values"``, ``"single_batch"``, or ``"too_few_values"`` (no more values
+    than batches it is observed in).
+    """
     data = np.asarray(data, dtype=np.float64)
     batch_int = batch_codes(batch)
-
     validate_engine_input(data, batch_int)
 
-    has_nan = np.isnan(data).any()
-    if not has_nan:
+    if not np.isnan(data).any():
         return _remove_batch_effect_dense(data, batch_int)
-
     if np.isnan(data).all():
         logger.debug("All-NaN input, returning copy")
-        return data.copy()
-
+        return data.copy(), np.full(data.shape[0], "no_values", dtype="<U16")
     return _remove_batch_effect_nan(data, batch_int)
 
 
-def _remove_batch_effect_nan(data: FloatArray, batch: npt.NDArray[np.intp]) -> FloatArray:
+def _remove_batch_effect_nan(
+    data: FloatArray, batch: npt.NDArray[np.intp]
+) -> tuple[FloatArray, npt.NDArray[np.str_]]:
     """limma correction fitted on each feature's observed cells.
 
     Features that share a pattern of observed cells are fitted together, with
     contrasts over the batches they are observed in. A feature with values in
-    one batch only keeps its raw values, as does a feature missing a batch whose
-    values do not outnumber its observed batches, since its fit would leave no
-    residual and collapse its values to one level.
+    one batch only keeps its raw values, as does a feature whose values do not
+    outnumber its observed batches, since its fit would leave no residual and
+    collapse its values to one level. Returns the matrix and the reasons of
+    ``_remove_batch_effect_with_reasons``.
     """
+    reasons = np.full(data.shape[0], "", dtype="<U16")
     n_batch = len(np.unique(batch))
     if n_batch < 2:
         logger.debug("Single batch input, returning copy")
-        return data.copy()
+        reasons[:] = "single_batch"
+        return data.copy(), reasons
     design, x_batch = _contrast_design(batch)
 
     corrected = data.copy()
@@ -126,15 +140,18 @@ def _remove_batch_effect_nan(data: FloatArray, batch: npt.NDArray[np.intp]) -> F
         observed_batches = np.unique(batch[valid])
         if observed_batches.size == 0:
             n_no_values += len(row_indices)
+            reasons[row_indices] = "no_values"
+            continue
+        if observed_batches.size < 2:
+            n_single_batch += len(row_indices)
+            reasons[row_indices] = "single_batch"
+            continue
+        if valid.sum() <= observed_batches.size:
+            n_no_residual += len(row_indices)
+            reasons[row_indices] = "too_few_values"
             continue
         if observed_batches.size == n_batch:
             group_design, group_x = design[valid, :], x_batch[valid, :]
-        elif observed_batches.size < 2:
-            n_single_batch += len(row_indices)
-            continue
-        elif valid.sum() <= observed_batches.size:
-            n_no_residual += len(row_indices)
-            continue
         else:
             group_design, group_x = _contrast_design(batch[valid])
         valid_idx = np.flatnonzero(valid)
@@ -147,28 +164,34 @@ def _remove_batch_effect_nan(data: FloatArray, batch: npt.NDArray[np.intp]) -> F
 
     if n_single_batch or n_no_residual:
         logger.info(
-            "%d feature(s) left uncorrected: %d with values in a single batch, %d missing a "
-            "batch with no more values than observed batches",
+            "%d feature(s) left uncorrected: %d with values in a single batch, %d with no "
+            "more values than observed batches",
             n_single_batch + n_no_residual,
             n_single_batch,
             n_no_residual,
         )
     if n_no_values:
         logger.debug("%d feature(s) with no value stay missing", n_no_values)
-    return corrected
+    return corrected, reasons
 
 
-def _remove_batch_effect_dense(data: FloatArray, batch: npt.NDArray[np.intp]) -> FloatArray:
+def _remove_batch_effect_dense(
+    data: FloatArray, batch: npt.NDArray[np.intp]
+) -> tuple[FloatArray, npt.NDArray[np.str_]]:
     """limma correction of a matrix without missing cells. See ``remove_batch_effect``."""
-    if len(np.unique(batch)) < 2:
+    n_batch = len(np.unique(batch))
+    if n_batch < 2:
         logger.debug("Single batch input, returning copy")
-        return data.copy()
+        return data.copy(), np.full(data.shape[0], "single_batch", dtype="<U16")
+    if data.shape[1] <= n_batch:
+        logger.info("%d feature(s) left uncorrected: no more values than batches", data.shape[0])
+        return data.copy(), np.full(data.shape[0], "too_few_values", dtype="<U16")
     design, x_batch = _contrast_design(batch)
     beta = np.linalg.lstsq(design, data.T, rcond=None)[0].T
     # Coefficients overflow to NaN only for values near the float64 limit; they
     # are then treated as no batch effect.
     corrected: FloatArray = data - np.nan_to_num(beta[:, 1:], nan=0.0) @ x_batch.T
-    return corrected
+    return corrected, np.full(data.shape[0], "", dtype="<U16")
 
 
 def adjust_limma(

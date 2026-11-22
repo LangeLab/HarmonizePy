@@ -293,7 +293,7 @@ class TestLimmaInputs:
         with caplog.at_level(logging.INFO, logger="harmonizepy.limma_wrapper"):
             out = remove_batch_effect(data, np.repeat([0, 1, 2], 2))
         np.testing.assert_array_equal(out[3], data[3])
-        assert "1 missing a batch with no more values than observed batches" in caplog.text
+        assert "1 with no more values than observed batches" in caplog.text
 
     def test_feature_observed_in_one_batch_is_left_raw(self) -> None:
         """A feature with values in a single batch has no batch effect to remove.
@@ -336,3 +336,46 @@ def test_log_counts_a_feature_with_no_value_apart_from_single_batch(
         out = remove_batch_effect(data, batch)
     assert "1 feature(s) left uncorrected: 1 with values in a single batch" in caplog.text
     assert np.isnan(out[0]).all()
+
+
+def test_feature_with_one_value_per_batch_is_left_raw() -> None:
+    """A feature present in every batch with one value each keeps its values.
+
+    Failure condition: the fit leaves no residual and every value comes back as
+    the mean of the batch means.
+    """
+    rng = np.random.default_rng(12)
+    batch = np.repeat([0, 1, 2], 2)
+    data = rng.normal(5, 1, (4, 6))
+    data[3] = [10.0, np.nan, 11.0, np.nan, 12.0, np.nan]
+    out = remove_batch_effect(data, batch)
+    np.testing.assert_array_equal(out[3], data[3])
+
+
+def test_complete_matrix_with_one_sample_per_batch_is_left_raw() -> None:
+    """Without missing cells, one sample per batch leaves no residual, so nothing is corrected.
+
+    Failure condition: every feature collapses to a constant row.
+    """
+    data = np.random.default_rng(13).normal(5, 1, (5, 3))
+    np.testing.assert_array_equal(remove_batch_effect(data, np.array([0, 1, 2])), data)
+
+
+def test_report_names_limma_features_with_too_few_values() -> None:
+    """harmonize() with limma reports a feature with one value per batch as raw.
+
+    Failure condition: the report says ``corrected`` for a feature the fit collapsed.
+    """
+    from harmonizepy import harmonize
+
+    rng = np.random.default_rng(14)
+    samples = [f"s{i}" for i in range(6)]
+    data = pd.DataFrame(
+        rng.normal(5, 1, (6, 6)), index=[f"f{i}" for i in range(6)], columns=samples
+    )
+    data.iloc[:2, [1, 3, 5]] = np.nan
+    desc = pd.DataFrame({"ID": samples, "sample": range(6), "batch": [1, 1, 2, 2, 3, 3]})
+    out, report = harmonize(data, desc, algorithm="limma", needed_values=1, return_report=True)
+    assert (report.loc[["f0", "f1"], "status"] == "raw_too_few_values").all()
+    pd.testing.assert_frame_equal(out.loc[["f0", "f1"]], data.loc[["f0", "f1"]])
+    assert (report.loc[["f2", "f3", "f4", "f5"], "status"] == "corrected").all()

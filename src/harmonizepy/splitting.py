@@ -15,7 +15,7 @@ import pandas as pd
 
 from .affiliation import reduce_to_unique_groups
 from .combat import COMBAT_MODES, _combat_with_reasons
-from .limma_wrapper import remove_batch_effect
+from .limma_wrapper import _remove_batch_effect_with_reasons
 from .validation import validate_combat_mode
 
 logger = logging.getLogger(__name__)
@@ -206,7 +206,7 @@ def _correct_groups(
             continue
 
         if algorithm == "limma":
-            corrected = remove_batch_effect(sub_data, sub_batch)
+            corrected, reasons[row_idx] = _remove_batch_effect_with_reasons(sub_data, sub_batch)
         else:
             corrected, reasons[row_idx] = _combat_with_reasons(
                 sub_data, sub_batch, **COMBAT_MODES[combat_mode]
