@@ -1260,3 +1260,74 @@ def test_dry_run_reports_untransformed_input(
         warnings.simplefilter("always")
         main([str(data_path), str(desc_path), "--dry-run"])
     assert any("look untransformed" in str(w.message) for w in caught)
+
+
+class TestCLIOutputSafety:
+    """No output file may overwrite an input or another output, and config values are checked."""
+
+    @pytest.mark.parametrize("flag", ["-o", "--summary", "--log-file", "--report"])
+    def test_output_naming_the_data_file_is_refused(self, tmp_path: Path, flag: str) -> None:
+        """Any output named like the data file is a usage error, and the file is untouched.
+
+        Failure condition: ``-o`` or ``--summary`` overwrites the data file, or
+        ``--log-file`` truncates it before it is read.
+        """
+        data, desc = _small_inputs(tmp_path)
+        before = Path(data).read_bytes()
+        argv = [data, desc, "-q", flag, data]
+        if flag != "-o":
+            argv += ["-o", str(tmp_path / "out.tsv")]
+        with pytest.raises(SystemExit) as excinfo:
+            main(argv)
+        assert excinfo.value.code == 2
+        assert Path(data).read_bytes() == before
+
+    def test_two_outputs_naming_one_file_are_refused(self, tmp_path: Path) -> None:
+        """The summary and the report cannot be the same file.
+
+        Failure condition: the report silently replaces the summary.
+        """
+        data, desc = _small_inputs(tmp_path)
+        same = str(tmp_path / "same.json")
+        with pytest.raises(SystemExit) as excinfo:
+            main([data, desc, "--no-log", "-q", "--summary", same, "--report", same])
+        assert excinfo.value.code == 2
+
+    @pytest.mark.parametrize(
+        ("key", "value"),
+        [
+            ("output_format", "xlsx"),
+            ("combat_mode", 9),
+            ("needed_values", 2.5),
+            ("unique_removal", "no"),
+            ("block", True),
+        ],
+    )
+    def test_invalid_config_value_is_a_usage_error(
+        self, tmp_path: Path, key: str, value: object
+    ) -> None:
+        """A config value the matching flag would reject exits with code 2.
+
+        Failure condition: ``output_format: xlsx`` writes TSV and exits 0, or a bad
+        mode exits 1 after reading the inputs.
+        """
+        data, desc = _small_inputs(tmp_path)
+        config = tmp_path / "run.json"
+        config.write_text(json.dumps({key: value}), encoding="utf-8")
+        with pytest.raises(SystemExit) as excinfo:
+            main([data, desc, "--no-log", "-q", "--config", str(config)])
+        assert excinfo.value.code == 2
+
+    def test_dry_run_refuses_a_flag_that_repeats_the_config(self, tmp_path: Path) -> None:
+        """``--summary`` typed on the command line conflicts with a dry run even when
+        the config file holds the same value.
+
+        Failure condition: the flag is accepted because its value equals the config's.
+        """
+        data, desc = _small_inputs(tmp_path)
+        summary = str(tmp_path / "s.json")
+        config = tmp_path / "run.json"
+        config.write_text(json.dumps({"summary": summary}), encoding="utf-8")
+        with pytest.raises(SystemExit) as excinfo:
+            main([data, desc, "--dry-run", "--config", str(config), "--summary", summary])
+        assert excinfo.value.code == 2

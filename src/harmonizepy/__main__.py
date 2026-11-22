@@ -538,11 +538,15 @@ def main(argv: Sequence[str] | None = None) -> None:
         _unknown = set(_cfg) - _VALID_CONFIG_KEYS
         if _unknown:
             parser.error(f"Unknown config key(s): {', '.join(sorted(_unknown))}")
-        parser.set_defaults(**{k: v for k, v in _cfg.items() if k in _VALID_CONFIG_KEYS})
+        _cfg = _check_config_values(parser, _cfg)
+        given = parser.parse_args(argv)
+        parser.set_defaults(**_cfg)
     else:
         _cfg = {}
 
     args = parser.parse_args(argv)
+    if not _cfg:
+        given = args
 
     output_path = _resolve_output_path(args.data, args.output, args.output_format)
     output_fmt = _infer_format(output_path, args.output_format)
@@ -554,20 +558,12 @@ def main(argv: Sequence[str] | None = None) -> None:
             ("--json", "json_output"),
             ("--report", "report"),
         ):
-            value = getattr(args, key)
-            if value and not (key in _cfg and _cfg[key] == value):
+            if getattr(given, key):
                 parser.error(f"{flag} cannot be used with --dry-run")
-    elif args.report is not None:
-        if not args.report:
+    else:
+        if args.report is not None and not args.report:
             parser.error("--report needs a file path")
-        report_target = Path(args.report).resolve()
-        for name, other in (
-            ("the output", output_path),
-            ("the data file", args.data),
-            ("the description file", args.description),
-        ):
-            if report_target == Path(other).resolve():
-                parser.error(f"--report would overwrite {name}: '{args.report}'")
+        _check_output_paths(parser, args, output_path)
 
     if not Path(args.data).is_file():
         parser.error(f"data file not found: '{args.data}'")
@@ -586,6 +582,64 @@ def main(argv: Sequence[str] | None = None) -> None:
         _detach_logging(handlers)
         package_logger.setLevel(saved_level)
         package_logger.propagate = saved_propagate
+
+
+def _check_config_values(
+    parser: argparse.ArgumentParser, cfg: dict[str, object]
+) -> dict[str, object]:
+    """Return the config values checked and converted as the matching flags would be.
+
+    A value must have the flag's type and lie in its choices; an on/off flag
+    needs a boolean, and a path a string. A value that fails is a usage error
+    (exit code 2), as the same value given as a flag is.
+    """
+    actions = {action.dest: action for action in parser._actions}
+    checked: dict[str, object] = {}
+    for key, value in cfg.items():
+        action = actions[key]
+        if isinstance(action, argparse.BooleanOptionalAction):
+            if not isinstance(value, bool):
+                parser.error(f"config key '{key}' must be true or false, got {value!r}")
+        elif action.type is int:
+            if isinstance(value, str) and value.strip().lstrip("-").isdigit():
+                value = int(value)
+            if not isinstance(value, int) or isinstance(value, bool):
+                parser.error(f"config key '{key}' must be a whole number, got {value!r}")
+        elif value is not None and not isinstance(value, str):
+            parser.error(f"config key '{key}' must be a string, got {value!r}")
+        if action.choices is not None and value not in action.choices:
+            choices = ", ".join(str(c) for c in action.choices)
+            parser.error(f"config key '{key}' must be one of {choices}, got {value!r}")
+        checked[key] = value
+    return checked
+
+
+def _check_output_paths(
+    parser: argparse.ArgumentParser, args: argparse.Namespace, output_path: str
+) -> None:
+    """Refuse a run whose output files would overwrite an input or each other.
+
+    Covers the corrected matrix, the summary, the report, and the log file;
+    paths are compared after resolving them, so ``./data.tsv`` and ``data.tsv``
+    are the same file. A refusal is a usage error (exit code 2).
+    """
+    outputs = [("-o", output_path)]
+    if args.summary:
+        outputs.append(("--summary", args.summary))
+    if args.report:
+        outputs.append(("--report", args.report))
+    if not args.no_log:
+        outputs.append(("--log-file", args.log_file or _resolve_log_path(output_path)))
+    inputs = (("the data file", args.data), ("the description file", args.description))
+    seen: dict[Path, str] = {}
+    for flag, path in outputs:
+        target = Path(path).resolve()
+        for name, other in inputs:
+            if target == Path(other).resolve():
+                parser.error(f"{flag} would overwrite {name}: '{path}'")
+        if target in seen:
+            parser.error(f"{seen[target]} and {flag} name the same file: '{path}'")
+        seen[target] = flag
 
 
 def _configure_logging(args: argparse.Namespace, output_path: str) -> list[logging.Handler]:
