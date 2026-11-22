@@ -18,6 +18,7 @@ from harmonizepy.core import harmonize
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 _has_small = (FIXTURE_DIR / "small_combat_mode1.tsv").exists()
 _has_medium = (FIXTURE_DIR / "medium_harmonizr_combat_mode1.tsv").exists()
+_has_small_input = (FIXTURE_DIR / "small_input.tsv").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -121,15 +122,10 @@ class TestMediumPipeline:
             index_col=0,
         )
         assert result.shape == expected.shape
-
-        assert (
-            result.isna().sum(axis=1).value_counts().to_dict()
-            == expected.isna().sum(axis=1).value_counts().to_dict()
-        )
-
-        common = result.index.intersection(expected.index)
-        r = result.loc[common]
-        e = expected.loc[common]
+        assert set(result.index) == set(expected.index)
+        r = result.loc[expected.index, expected.columns]
+        e = expected
+        pd.testing.assert_frame_equal(r.isna(), e.isna())
         mask = r.notna() & e.notna()
         np.testing.assert_allclose(
             r.values[mask.values],
@@ -145,30 +141,35 @@ class TestMediumPipeline:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(not _has_small, reason="R fixtures not generated")
+@pytest.mark.skipif(not _has_small_input, reason="small input fixture missing")
 class TestDataFrameInput:
     def test_dataframe_input(self):
-        """DataFrame input must produce identical results to file-path input.
+        """DataFrame input gives exactly the result of file-path input.
 
         Failure condition: the internal code path for DataFrames differs
         from the file-path path (e.g. index handling, dtype casting).
-
-        Tolerances: rtol=1e-4/atol=1e-6 match the R concordance tolerance.
         """
         data = pd.read_csv(FIXTURE_DIR / "small_input.tsv", sep="\t", index_col=0)
         desc = pd.read_csv(FIXTURE_DIR / "small_batch.csv")
-        result = harmonize(data, desc, algorithm="ComBat", combat_mode=1)
-        expected = pd.read_csv(
-            FIXTURE_DIR / "small_combat_mode1.tsv",
-            sep="\t",
-            index_col=0,
+        from_frame = harmonize(data, desc, algorithm="ComBat", combat_mode=1)
+        from_path = harmonize(
+            str(FIXTURE_DIR / "small_input.tsv"),
+            str(FIXTURE_DIR / "small_batch.csv"),
+            algorithm="ComBat",
+            combat_mode=1,
         )
-        np.testing.assert_allclose(
-            result.values,
-            expected.values,
-            rtol=1e-4,
-            atol=1e-6,
-        )
+        pd.testing.assert_frame_equal(from_frame, from_path)
+
+    @pytest.mark.parametrize("sort", ["sparsity", "jaccard", "seriation"])
+    def test_sort_without_block_changes_nothing(self, sort):
+        """Sorting without blocking gives exactly the unsorted output.
+
+        Failure condition: the sort order leaks into the groups or the column
+        order although no block is formed.
+        """
+        data = pd.read_csv(FIXTURE_DIR / "small_input.tsv", sep="\t", index_col=0)
+        desc = pd.read_csv(FIXTURE_DIR / "small_batch.csv")
+        pd.testing.assert_frame_equal(harmonize(data, desc, sort=sort), harmonize(data, desc))
 
     def test_output_file(self, tmp_path):
         """output_file must write a TSV that matches the in-memory result.
@@ -620,12 +621,11 @@ class TestChainRescueRConcordance:
             combat_mode=1,
             unique_removal=True,
         )
-        shared_idx = result.index.intersection(expected.index)
-        shared_cols = result.columns.intersection(expected.columns)
-        r = result.loc[shared_idx, shared_cols].values
-        e = expected.loc[shared_idx, shared_cols].values
+        assert set(result.index) == set(expected.index), "Rows differ from R"
+        r = result.loc[expected.index, expected.columns].values
+        e = expected.values
         nan_mask = np.isnan(e)
-        assert np.isnan(r[nan_mask]).all(), "Expected NaN where R has NaN"
+        np.testing.assert_array_equal(np.isnan(r), nan_mask, "Missing cells differ from R")
         valid = ~nan_mask
         if valid.any():
             np.testing.assert_allclose(
@@ -646,12 +646,11 @@ class TestChainRescueRConcordance:
             combat_mode=1,
             unique_removal=False,
         )
-        shared_idx = result.index.intersection(expected.index)
-        shared_cols = result.columns.intersection(expected.columns)
-        r = result.loc[shared_idx, shared_cols].values
-        e = expected.loc[shared_idx, shared_cols].values
+        assert set(result.index) == set(expected.index), "Rows differ from R"
+        r = result.loc[expected.index, expected.columns].values
+        e = expected.values
         nan_mask = np.isnan(e)
-        assert np.isnan(r[nan_mask]).all(), "Expected NaN where R has NaN"
+        np.testing.assert_array_equal(np.isnan(r), nan_mask, "Missing cells differ from R")
         valid = ~nan_mask
         if valid.any():
             np.testing.assert_allclose(
@@ -683,10 +682,13 @@ class TestCombinedStressRConcordance:
     def test_combined_stress_vs_r(self):
         """Full stress test: sparsity sort + block=2 + ur=True + per-cell NaN.
 
-        Non-NaN values on matching cells must agree with R. NaN positions
-        may differ on a small fraction of features (documented edge case
-        with sort+block+ur+per-cell NaN combined). The test reports the
-        number of diverging features but only fails if a majority diverge.
+        Every row R returns is returned, and values agree with R on features
+        whose missing cells match. The sort order and the unique-removal rule
+        differ from R, so up to 20 of the 50 features may differ in their
+        missing cells.
+
+        Failure condition: a row is dropped, values diverge, or more features
+        differ in their missing cells than the known differences explain.
         """
         expected = pd.read_csv(FIXTURE_DIR / "combined_stress_output.tsv", sep="\t", index_col=0)
         result = harmonize(
@@ -721,7 +723,8 @@ class TestCombinedStressRConcordance:
                     err_msg=f"Combined stress mismatch on {len(match_idx)} NaN-matching features",
                 )
 
-        # Log mismatch count (must be a small fraction)
-        assert mismatch_count < total / 2, (
-            f"Too many NaN position mismatches: {mismatch_count}/{total}"
-        )
+        # 20 of the 50 features differ in their missing cells, from the sort-order
+        # and unique-removal differences listed in the parity document; more
+        # would be a new difference.
+        assert set(result.index) == set(expected.index), "Rows differ from R"
+        assert mismatch_count <= 20, f"Missing cells differ on {mismatch_count}/{total} features"
