@@ -2045,3 +2045,47 @@ class TestUniqueRemovalRConcordance:
         assert len(result) == len(expected), (
             f"Python ur=False: {len(result)}, R ur=False: {len(expected)}"
         )
+
+
+@pytest.mark.skipif(
+    not _fixture_exists("percell_nan_combat_mode1.tsv"),
+    reason="Per-cell NaN R fixtures not generated (run generate_edgecase_fixtures.R)",
+)
+class TestPerCellNaNRConcordance:
+    """Per-cell missing cells inside qualifying groups vs R HarmonizR 1.10.0.
+
+    30 features x 9 samples in 3 batches of 3; the first 10 features miss one
+    sample per batch and keep two values in each, so every feature stays in
+    one group and is fitted on its observed cells (sva's Beta.NA).
+    """
+
+    @pytest.mark.parametrize(
+        ("algorithm", "mode", "fixture"),
+        [
+            ("ComBat", 1, "percell_nan_combat_mode1.tsv"),
+            ("ComBat", 2, "percell_nan_combat_mode2.tsv"),
+            ("ComBat", 3, "percell_nan_combat_mode3.tsv"),
+            ("ComBat", 4, "percell_nan_combat_mode4.tsv"),
+            ("limma", 1, "percell_nan_limma.tsv"),
+        ],
+    )
+    def test_matches_harmonizr(self, algorithm, mode, fixture):
+        """Rows, columns, missing cells, and values match the HarmonizR output.
+
+        Failure condition: a feature with a missing cell is dropped, emptied,
+        or corrected differently from R, or a missing cell is filled.
+
+        Tolerances: rtol 1e-4 for mode 1, whose solver stops at a 1e-4
+        convergence threshold; 1e-8 for the closed-form and non-parametric
+        modes and limma.
+        """
+        data = _load_tsv_df("percell_nan_input.tsv")
+        desc = pd.read_csv(FIXTURE_DIR / "percell_nan_batch.csv")
+        expected = _load_tsv_df(fixture)
+
+        result = harmonize(data, desc, algorithm=algorithm, combat_mode=mode)
+
+        assert result.index.tolist() == expected.index.tolist()
+        assert result.columns.tolist() == expected.columns.tolist()
+        rtol = 1e-4 if (algorithm, mode) == ("ComBat", 1) else 1e-8
+        _concordance_check(result, expected, rtol=rtol, atol=1e-8, label=fixture)
