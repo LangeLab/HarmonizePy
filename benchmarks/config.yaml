@@ -134,7 +134,7 @@ scenario_matrix:
 r_cache:
   cores_variants: [1, 16]        # both cached; each is an independent cache entry
   default_cores: 1               # which variant --with-r / --with-r-cores uses by default
-  timeout_s: 300                 # per-scenario hard limit inside R withTimeout()
+  timeout_s: 1800                # per-scenario hard limit inside R withTimeout(); dia ComBat 3 and 4 need over 300 s
   # Note: withTimeout() comes from the R.utils package. benchmark_r.R must
   # load R.utils before the scenario loop.
 

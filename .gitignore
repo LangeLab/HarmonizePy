@@ -54,3 +54,5 @@ renv/sandbox/
 *.swo
 *~
 .DS_Store
+
+*.svg

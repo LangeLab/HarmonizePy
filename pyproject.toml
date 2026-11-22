@@ -55,6 +55,11 @@ dev = [
     "ty>=0.0.72",
     "pandas-stubs>=2.0",
 ]
+# uv sync --group figures -> the benchmark figures (python -m benchmarks.figures)
+figures = [
+    "matplotlib>=3.8",
+    "pillow>=10.0",
+]
 
 [build-system]
 requires = ["hatchling>=1.25"]
