@@ -429,7 +429,11 @@ def plan_affiliations(
 
     cropped = np.zeros(n_features, dtype=np.bool_)
     if unique_removal:
-        new_list = remove_unique_combinations(affiliation_list)
+        batches_per_block = {
+            int(blk): int(np.unique(sorted_batches[block_list == blk]).size)
+            for blk in np.unique(block_list)
+        }
+        new_list = remove_unique_combinations(affiliation_list, batches_per_block)
         cropped = np.array(
             [old != new for old, new in zip(affiliation_list, new_list, strict=True)],
             dtype=np.bool_,

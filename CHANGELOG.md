@@ -36,6 +36,7 @@ This release fixes the inputs found to give wrong values, hang, or fail without 
 - **Features left raw.** A feature alone in its batch pattern keeps its raw values with both engines. ComBat could hang on such a row with a missing cell, and limma corrected it on its own batch means (#19).
 - **Unique removal.**
   - Between equally long targets, the one more features hold wins, then the smallest; the choice depended on the order of the rows, so reordering them could change the groups and the corrected values.
+  - A feature is never moved into an affiliation that spans a single batch: such a group is left raw, so the move only emptied the feature's other values.
 - **Engine input.** `combat()` keeps a feature with no value missing instead of making every value missing. Infinite values are rejected with the feature named. All four engine functions require whole-number batch labels; `combat()` merged labels such as 0.2 and 0.9 into one batch. An unknown `ref_batch`, a one-sample reference batch, an unknown algorithm, and a `combat_mode` other than an integer from 1 to 4 are rejected with one message each.
 - **Input files.**
   - A whole-number column with a blank cell loads, with the blank as missing (#20).

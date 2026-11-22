@@ -342,3 +342,46 @@ class TestTieOrder:
         for seed in range(10):
             shuffled = harmonize(data.sample(frac=1.0, random_state=seed), desc)
             pd.testing.assert_frame_equal(shuffled.loc[expected.index], expected, rtol=1e-12)
+
+
+class TestOneBatchTargets:
+    """A crop never lands in an affiliation that spans a single batch."""
+
+    def test_one_batch_target_is_refused(self) -> None:
+        """A feature is not moved into a pattern of one batch.
+
+        Failure condition: the feature loses its other batches and is still left raw.
+        """
+        assert remove_unique_combinations([(2,), (2,), (2, 3)]) == [(2,), (2,), (2, 3)]
+
+    def test_one_block_of_two_batches_is_a_target(self) -> None:
+        """With blocking, a single block that holds two batches is still a target.
+
+        Failure condition: blocks are counted as batches and the crop is refused.
+        """
+        result = remove_unique_combinations([(2,), (2,), (2, 3)], {2: 2, 3: 1})
+        assert result == [(2,), (2,), (2,)]
+
+    def test_harmonize_keeps_the_feature_whole(self) -> None:
+        """Proteins A and B measured in batch 2 only, C in batches 2 and 3: C keeps
+        its batch 3 values and is reported alone in its pattern.
+
+        Failure condition: C is cropped to batch 2, its batch 3 values are emptied,
+        and it still comes out raw.
+        """
+        import numpy as np
+        import pandas as pd
+
+        from harmonizepy import harmonize
+
+        samples = [f"s{i}" for i in range(9)]
+        batch = np.repeat([1, 2, 3], 3)
+        rng = np.random.default_rng(5)
+        data = pd.DataFrame(np.nan, index=["A", "B", "C"], columns=samples)
+        data.loc[["A", "B"], np.array(samples)[batch == 2]] = rng.normal(10, 1, (2, 3))
+        data.loc["C", np.array(samples)[batch >= 2]] = rng.normal(12, 1, 6)
+        desc = pd.DataFrame({"ID": samples, "sample": range(1, 10), "batch": batch})
+        out, report = harmonize(data, desc, return_report=True)
+        pd.testing.assert_series_equal(out.loc["C"], data.loc["C"])
+        assert report.loc["C", "status"] == "raw_alone_in_pattern"
+        assert not report.loc["C", "cropped"]

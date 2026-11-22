@@ -114,6 +114,8 @@ The two rules differ in which patterns a feature can be moved to:
 - HarmonizR walks the features in order and updates the list in place. A feature whose pattern is its own can move to the pattern of any other feature, including one that is itself unique, and a rescued feature can become the target of a later one.
 - HarmonizePy takes as targets only the patterns that at least two features share before the step, and moves each unique feature to the longest such pattern inside its own. A feature with no shared pattern inside its own is left unchanged and keeps its raw values.
 
+HarmonizePy also never moves a feature into a pattern that spans a single batch, whose group is left raw anyway; HarmonizR does.
+
 For example, `(1,2,3,4), (1,2), (5,6), (5,6)` becomes `(1,2), (1,2), (5,6), (5,6)` in HarmonizR and stays unchanged in HarmonizePy. On 3003 random pattern lists, 2845 gave a different result. The `chain_rescue` fixtures cover both `ur=True` and `ur=False`. The rule is not changed to match R: no measurement shows that one gives better corrections than the other.
 
 ---

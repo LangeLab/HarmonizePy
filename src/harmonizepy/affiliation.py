@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 from collections import Counter
+from collections.abc import Mapping
 
 import numpy as np
 import numpy.typing as npt
@@ -193,6 +194,7 @@ def reduce_to_unique_groups(
 
 def remove_unique_combinations(
     affiliation_list: list[tuple[int, ...]],
+    batches_per_block: Mapping[int, int] | None = None,
 ) -> list[tuple[int, ...]]:
     """Move each feature with an affiliation of its own into a shared one.
 
@@ -203,7 +205,9 @@ def remove_unique_combinations(
     the values in the dropped blocks but is corrected with others. Among
     equally long candidates, the one shared by the most features wins, since
     its group gives the stronger prior; a remaining tie goes to the smallest
-    tuple. The choice does not depend on the order of the rows. A feature with
+    tuple. The choice does not depend on the order of the rows. An affiliation
+    that spans a single batch is never a target: its group is left raw, so
+    the move would only discard the feature's other values. A feature with
     no shared subset, and empty affiliations, are
     left unchanged. This is the counterpart of HarmonizR's ``ur`` option,
     with a narrower rule: HarmonizR also moves a feature to a pattern that
@@ -213,6 +217,10 @@ def remove_unique_combinations(
     ----------
     affiliation_list : list of tuple of int
         One affiliation per feature, as ``build_affiliation_list`` returns.
+    batches_per_block : mapping of int to int or None
+        The number of batches in each block, to tell which affiliations span a
+        single batch. ``None`` counts each block as one batch, which is exact
+        without blocking.
 
     Returns
     -------
@@ -236,7 +244,13 @@ def remove_unique_combinations(
         logger.debug("No shared patterns available for rescue")
         return result
 
-    ordered = sorted(non_unique, key=lambda pattern: (-counts[pattern], pattern))
+    def n_batches(pattern: tuple[int, ...]) -> int:
+        if batches_per_block is None:
+            return len(pattern)
+        return sum(batches_per_block.get(block, 1) for block in pattern)
+
+    eligible = [pattern for pattern in non_unique if n_batches(pattern) >= 2]
+    ordered = sorted(eligible, key=lambda pattern: (-counts[pattern], pattern))
     targets = [(pattern, frozenset(pattern)) for pattern in ordered]
     rescued = 0
     for i, affil in enumerate(result):
