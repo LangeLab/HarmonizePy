@@ -209,18 +209,28 @@ def _seriation_order(presence: npt.NDArray[np.bool_]) -> npt.NDArray[np.intp]:
 
     Batches are the observations and features the variables; the presence
     matrix is centred per feature and not scaled, as ``prcomp(scale = FALSE)``
-    does. The sign is fixed so that the batch with the largest absolute score
-    is positive. With two batches or fewer the input order is returned. R
-    HarmonizR's seriation uses ``seriation::seriate``, which gives a different
-    order in general.
+    does. The component is the leading eigenvector of the batches' Gram matrix,
+    which is computed exactly in integers, so the order does not depend on the
+    order of the features. Scores are rounded to 12 decimals of the unit
+    eigenvector before ordering, so batches whose scores differ only by
+    rounding tie, and ties keep the input order. The sign is fixed so that the
+    first batch with the largest absolute score is positive. When the two
+    largest eigenvalues are equal the component is not unique, and the one the
+    eigensolver returns for that exact matrix is used. With two batches or
+    fewer the input order is returned. R HarmonizR's seriation uses
+    ``seriation::seriate``, which gives a different order in general.
     """
-    centred = presence.T.astype(np.float64)
-    n_batches = centred.shape[0]
+    n_batches = presence.shape[1]
     if n_batches <= 2:
         return np.arange(n_batches, dtype=np.intp)
-    centred -= centred.mean(axis=0)
-    left, singular, _ = np.linalg.svd(centred, full_matrices=False)
-    pc1 = left[:, 0] * singular[0]
-    if pc1[np.argmax(np.abs(pc1))] < 0:
-        pc1 = -pc1
-    return np.argsort(pc1, kind="stable")
+    counts = presence.astype(np.int64)
+    # n_batches times the centred presence, kept in integers so the Gram
+    # matrix below is exact and identical for any order of the features.
+    scaled = n_batches * counts - counts.sum(axis=1, keepdims=True)
+    gram = (scaled.T @ scaled).astype(np.float64)
+    _, vectors = np.linalg.eigh(gram)
+    scores = np.round(vectors[:, -1], 12)
+    largest = int(np.argmax(np.abs(scores)))
+    if scores[largest] < 0:
+        scores = -scores
+    return np.argsort(scores, kind="stable")

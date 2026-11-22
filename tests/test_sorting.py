@@ -23,6 +23,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from harmonizepy import harmonize
 from harmonizepy.blocking import _unique_ordered
 from harmonizepy.sorting import (
     _build_presence_matrix,
@@ -468,10 +469,10 @@ class TestOrderingFunctions:
         np.testing.assert_array_equal(np.sort(order), [0, 1, 2, 3])
 
     def test_seriation_order_anchors_pc1_sign(self):
-        """_seriation_order anchors the PC1 sign deterministically.
+        """_seriation_order fixes the PC1 sign and keeps tied batches in input order.
 
-        Failure condition: the SVD sign flips and reverses the order for the
-        same presence matrix across runs or platforms.
+        Failure condition: the sign flips and reverses the order, or batches 1
+        and 2, whose scores are equal, are ordered by rounding noise.
         """
         presence = np.array(
             [
@@ -484,16 +485,12 @@ class TestOrderingFunctions:
             dtype=np.bool_,
         )
 
-        centered = presence.T.astype(np.float64)
-        centered -= centered.mean(axis=0)
-        u, s, _vt = np.linalg.svd(centered, full_matrices=False)
-        raw_pc1 = u[:, 0] * s[0]
-
-        assert raw_pc1[np.argmax(np.abs(raw_pc1))] < 0
-
+        # PC1 scores are proportional to (-2, 1, 1): batch 0 has the largest
+        # magnitude and is made positive, so it moves last, and the tie
+        # between batches 1 and 2 keeps their input order.
         order = _seriation_order(presence)
 
-        np.testing.assert_array_equal(order, np.argsort(-raw_pc1, kind="stable"))
+        np.testing.assert_array_equal(order, [1, 2, 0])
 
     def test_column_order_groups_by_batch(self):
         """_column_order appends indices in the requested batch order.
@@ -623,3 +620,60 @@ class TestJaccardDegenerateCases:
         df.iloc[:, 3:6] = np.nan
         _, sb, _ = sort_batches(df, batch, "jaccard", needed_values=2)
         assert sb[0] != 2
+
+
+class TestRowOrderInvariance:
+    """The batch order, and so the corrected matrix, does not depend on row order."""
+
+    @staticmethod
+    def _sparse_frame(seed: int, n_features: int) -> tuple[pd.DataFrame, pd.DataFrame]:
+        rng = np.random.default_rng(seed)
+        samples = [f"s{i}" for i in range(10)]
+        values = rng.normal(10, 2, (n_features, 10))
+        values[rng.random(values.shape) < 0.4] = np.nan
+        data = pd.DataFrame(values, index=[f"f{i}" for i in range(n_features)], columns=samples)
+        desc = pd.DataFrame(
+            {"ID": samples, "sample": range(1, 11), "batch": np.repeat(np.arange(1, 6), 2)}
+        )
+        return data, desc
+
+    def test_seriation_with_tied_scores(self) -> None:
+        """Two row orders of one matrix give the same seriation order.
+
+        The matrix has two batches whose PC1 scores are equal in magnitude and
+        three near zero, with needed_values=1.
+
+        Failure condition: the sign is chosen by rounding noise, so the order
+        reverses when the rows are shuffled.
+        """
+        rng = np.random.default_rng(1)
+        n_features = int(rng.integers(4, 9))
+        values = rng.normal(10, 2, (n_features, 10))
+        values[rng.random(values.shape) < 0.4] = np.nan
+        perm = rng.permutation(n_features)
+        data = pd.DataFrame(values, columns=[f"s{i}" for i in range(10)])
+        batches = np.repeat(np.arange(1, 6), 2)
+
+        _, first, _ = sort_batches(data, batches, "seriation", needed_values=1)
+        _, second, _ = sort_batches(data.iloc[perm], batches, "seriation", needed_values=1)
+
+        np.testing.assert_array_equal(first, second)
+
+    @pytest.mark.parametrize("strategy", ["sparsity", "jaccard", "seriation"])
+    def test_harmonize_output_ignores_row_order(self, strategy: str) -> None:
+        """harmonize() with a sort and block=2 gives the same matrix for shuffled rows.
+
+        Failure condition: the batch order changes with the row order, so the
+        blocks, and with them the missing cells, change.
+        """
+        for seed in range(25):
+            data, desc = self._sparse_frame(seed, n_features=8)
+            perm = np.random.default_rng(seed + 100).permutation(len(data))
+            settings = {"sort": strategy, "block": 2, "combat_mode": 4, "unique_removal": False}
+
+            first = harmonize(data, desc, **settings)
+            second = harmonize(data.iloc[perm], desc, **settings).loc[data.index]
+
+            np.testing.assert_array_equal(first.isna().to_numpy(), second.isna().to_numpy())
+            # Rows are fitted in a different order, so values may differ by rounding.
+            np.testing.assert_allclose(first.to_numpy(), second.to_numpy(), rtol=1e-10, atol=1e-10)
