@@ -218,7 +218,7 @@ def _correct_groups(
     if n_uncorrected > 0:
         logger.info(
             "%d feature(s) passed through without correction "
-            "(%d single-batch groups, %d single-feature groups)",
+            "(%d in single-batch groups, %d alone in their pattern)",
             n_uncorrected,
             n_single_batch,
             n_single_feature,

@@ -119,11 +119,14 @@ def _remove_batch_effect_nan(data: FloatArray, batch: npt.NDArray[np.intp]) -> F
     design, x_batch = _contrast_design(batch)
 
     corrected = data.copy()
-    n_single_batch = n_no_residual = 0
+    n_single_batch = n_no_residual = n_no_values = 0
     groups = group_valid_rows(data)
     for row_indices in groups.row_groups:
         valid = groups.valid_masks[row_indices[0]]
         observed_batches = np.unique(batch[valid])
+        if observed_batches.size == 0:
+            n_no_values += len(row_indices)
+            continue
         if observed_batches.size == n_batch:
             group_design, group_x = design[valid, :], x_batch[valid, :]
         elif observed_batches.size < 2:
@@ -150,6 +153,8 @@ def _remove_batch_effect_nan(data: FloatArray, batch: npt.NDArray[np.intp]) -> F
             n_single_batch,
             n_no_residual,
         )
+    if n_no_values:
+        logger.debug("%d feature(s) with no value stay missing", n_no_values)
     return corrected
 
 

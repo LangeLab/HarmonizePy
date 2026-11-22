@@ -316,3 +316,23 @@ def test_contrast_design_sums_to_zero() -> None:
     np.testing.assert_array_equal(design[:, 0], np.ones(6))
     np.testing.assert_array_equal(x_batch[:, 0], [1, 1, 0, 0, -1, -1])
     np.testing.assert_array_equal(x_batch[:, 1], [0, 0, 1, 1, -1, -1])
+
+
+def test_log_counts_a_feature_with_no_value_apart_from_single_batch(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A feature with no value is not counted as having values in a single batch.
+
+    Failure condition: the log reports two single-batch features where one has no
+    value at all.
+    """
+    monkeypatch.setattr(logging.getLogger("harmonizepy"), "propagate", True)
+    rng = np.random.default_rng(8)
+    batch = np.repeat([0, 1, 2], 3)
+    data = rng.normal(10, 1, (6, 9))
+    data[0] = np.nan
+    data[1, batch > 0] = np.nan
+    with caplog.at_level(logging.INFO, logger="harmonizepy.limma_wrapper"):
+        out = remove_batch_effect(data, batch)
+    assert "1 feature(s) left uncorrected: 1 with values in a single batch" in caplog.text
+    assert np.isnan(out[0]).all()
