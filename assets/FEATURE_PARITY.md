@@ -109,14 +109,13 @@ Sorting changes the output only together with blocking. The orders are not chang
 
 ## 4. Unique-Removal Algorithm: MINOR DIVERGENCE
 
-The two rules differ in which patterns a feature can be moved to:
+Both move a feature whose pattern is its own into the longest pattern of another feature that lies inside its own, including a pattern held by a single feature, which then keeps it. They differ in three ways:
 
-- HarmonizR walks the features in order and updates the list in place. A feature whose pattern is its own can move to the pattern of any other feature, including one that is itself unique, and a rescued feature can become the target of a later one.
-- HarmonizePy takes as targets only the patterns that at least two features share before the step, and moves each unique feature to the longest such pattern inside its own. A feature with no shared pattern inside its own is left unchanged and keeps its raw values.
+- HarmonizR walks the features in row order and takes the first of equally long candidates. HarmonizePy takes the features longest pattern first, and among equally long candidates the one more features hold, then the smallest, so the result does not depend on the row order.
+- With no candidate, HarmonizR empties the feature's pattern, and the feature comes out missing. HarmonizePy leaves it unchanged, with its raw values.
+- HarmonizePy never moves a feature into a pattern that spans a single batch, whose group is left raw anyway; HarmonizR does.
 
-HarmonizePy also never moves a feature into a pattern that spans a single batch, whose group is left raw anyway; HarmonizR does.
-
-For example, `(1,2,3,4), (1,2), (5,6), (5,6)` becomes `(1,2), (1,2), (5,6), (5,6)` in HarmonizR and stays unchanged in HarmonizePy. On 3003 random pattern lists, 2845 gave a different result. The `chain_rescue` fixtures cover both `ur=True` and `ur=False`. The rule is not changed to match R: no measurement shows that one gives better corrections than the other.
+For example, `(1,2,3,4), (1,2), (5,6), (5,6)` becomes `(1,2), (1,2), (5,6), (5,6)` in both. A known-truth simulation with 20 batches put the error of the corrected values at about 0.2 under either rule, against 0.44 to 0.78 for a rule that takes only patterns two features share; HarmonizR's emptying removed 40 to 130 of 2000 features per run. The `chain_rescue` fixtures cover both `ur=True` and `ur=False`.
 
 ---
 
@@ -201,7 +200,7 @@ Tolerance of the R concordance tests per scenario; `--` means no R fixture.
 1. **Single-feature groups**: R drops entirely. Python pass-through with either engine. Causes EB prior shift.
 2. **Features returned missing**: in some modes R returns features entirely missing although the input has values (section 2.3). Python corrects them.
 3. **Empty affiliation**: R drops from output entirely. Python keeps as all-NaN.
-4. **Unique-removal targets**: R moves a unique feature to any other feature's pattern and updates the list in place. Python moves it only to a pattern that two or more features share before the step. R rescues more singletons; see section 4.
+4. **Unique-removal order and empty targets**: R takes features in row order and empties a feature with no target; Python takes them longest pattern first, keeps such a feature raw, and never targets a one-batch pattern; see section 4.
 5. **Jaccard sort**: pair-first-then-chain vs nearest-neighbour chain. Different orderings for 3+ batches.
 6. **Seriation sort**: `seriation::seriate` vs SVD/PC1 projection. Different orderings.
 7. **Sparsity sort**: R counts missing cells per batch; Python counts the features present with at least `needed_values` values. Orders agreed in 11 of 200 cases.

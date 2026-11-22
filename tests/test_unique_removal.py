@@ -2,16 +2,16 @@
 
 Sections
 --------
-1. TestSingletonRescue: singletons are cropped to nearest shared pattern
+1. TestSingletonRescue: singletons move into another feature's pattern
 2. TestNonSingletonUnchanged: non-singleton and empty tuples are not modified
 3. TestMinimalCropping: fewest batches removed (greedy largest-first)
 4. TestEdgeCases: all unique, single feature, already shared
-5. TestFindBestCrop: _find_best_crop
+5. TestTieOrder, TestOneBatchTargets, TestWideTargets: the target rule
 """
 
 from __future__ import annotations
 
-from harmonizepy.affiliation import _find_best_crop, remove_unique_combinations
+from harmonizepy.affiliation import remove_unique_combinations
 
 # ---------------------------------------------------------------------------
 # 1. TestSingletonRescue
@@ -227,48 +227,6 @@ class TestEdgeCases:
 
 # ---------------------------------------------------------------------------
 # 5. TestFindBestCrop
-# ---------------------------------------------------------------------------
-
-
-class TestFindBestCrop:
-    def test_finds_largest_matching_subset(self):
-        """Returns the largest matching subset of the input set.
-
-        Failure condition: a non-maximal subset is returned.
-        """
-        non_unique: set[tuple[int, ...]] = {(1, 2, 3), (1, 2)}
-        best = _find_best_crop(frozenset({1, 2, 3, 4}), [(p, frozenset(p)) for p in non_unique])
-        assert best == (1, 2, 3)
-
-    def test_returns_none_when_no_match(self):
-        """Returns None when no subset matches.
-
-        Failure condition: a non-existent match is returned.
-        """
-        non_unique: set[tuple[int, ...]] = {(5, 6)}
-        best = _find_best_crop(frozenset({1, 2}), [(p, frozenset(p)) for p in non_unique])
-        assert best is None
-
-    def test_single_element_subset(self):
-        """A single-element subset can be a valid match.
-
-        Failure condition: single-element subsets are skipped.
-        """
-        non_unique: set[tuple[int, ...]] = {(3,)}
-        best = _find_best_crop(frozenset({1, 2, 3}), [(p, frozenset(p)) for p in non_unique])
-        assert best == (3,)
-
-    def test_exact_match_not_searched(self):
-        """Only strict subsets are searched, not the input itself.
-
-        Failure condition: the input itself is returned when it
-        is already a non-unique pattern.
-        """
-        non_unique: set[tuple[int, ...]] = {(1, 2, 3), (1, 2)}
-        best = _find_best_crop(frozenset({1, 2, 3}), [(p, frozenset(p)) for p in non_unique])
-        assert best == (1, 2)
-
-
 class TestTieOrder:
     """Equally long candidates are chosen by a rule that ignores row order."""
 
@@ -385,3 +343,44 @@ class TestOneBatchTargets:
         pd.testing.assert_series_equal(out.loc["C"], data.loc["C"])
         assert report.loc["C", "status"] == "raw_alone_in_pattern"
         assert not report.loc["C", "cropped"]
+
+
+class TestWideTargets:
+    """A feature may move into the pattern of a single other feature, as in HarmonizR."""
+
+    def test_harmonizr_example(self) -> None:
+        """``(1,2,3,4), (1,2), (5,6), (5,6)``: the first feature joins the second.
+
+        Failure condition: the first feature stays alone because ``(1, 2)`` is held
+        by one feature only (the narrower rule).
+        """
+        result = remove_unique_combinations([(1, 2, 3, 4), (1, 2), (5, 6), (5, 6)])
+        assert result == [(1, 2), (1, 2), (5, 6), (5, 6)]
+
+    def test_target_feature_keeps_its_pattern(self) -> None:
+        """A unique feature used as a target is not moved itself.
+
+        Failure condition: the target moves on to a smaller pattern and the pair breaks.
+        """
+        result = remove_unique_combinations([(1, 2, 3, 4), (1, 2, 3), (1, 2), (1, 2)])
+        assert result == [(1, 2, 3), (1, 2, 3), (1, 2), (1, 2)]
+
+    def test_feature_without_target_keeps_its_values(self) -> None:
+        """A feature with no subset keeps its affiliation; it is not emptied.
+
+        Failure condition: the affiliation becomes empty, so the feature comes out
+        missing, as HarmonizR returns it.
+        """
+        result = remove_unique_combinations([(1, 2), (3, 4), (3, 4)])
+        assert result == [(1, 2), (3, 4), (3, 4)]
+
+    def test_longest_affiliation_is_taken_first(self) -> None:
+        """Features are processed longest affiliation first, whatever the row order.
+
+        Failure condition: a shorter unique affiliation is processed first, moves
+        into the longer one's target, and the longer one is left alone.
+        """
+        rows = [(1, 2, 3), (1, 2, 3, 4), (1, 2), (1, 2)]
+        expected = [(1, 2, 3), (1, 2, 3), (1, 2), (1, 2)]
+        assert remove_unique_combinations(rows) == expected
+        assert remove_unique_combinations(rows[::-1]) == expected[::-1]

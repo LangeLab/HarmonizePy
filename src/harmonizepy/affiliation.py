@@ -196,22 +196,22 @@ def remove_unique_combinations(
     affiliation_list: list[tuple[int, ...]],
     batches_per_block: Mapping[int, int] | None = None,
 ) -> list[tuple[int, ...]]:
-    """Move each feature with an affiliation of its own into a shared one.
+    """Move each feature with an affiliation of its own into another feature's.
 
     A feature whose affiliation no other feature shares would form a group of
-    one, which is returned with its raw values. This step replaces such an
-    affiliation with the longest affiliation that at least two features share
-    and that is a proper subset of the feature's own; the feature then loses
-    the values in the dropped blocks but is corrected with others. Among
-    equally long candidates, the one shared by the most features wins, since
-    its group gives the stronger prior; a remaining tie goes to the smallest
-    tuple. The choice does not depend on the order of the rows. An affiliation
-    that spans a single batch is never a target: its group is left raw, so
-    the move would only discard the feature's other values. A feature with
-    no shared subset, and empty affiliations, are
-    left unchanged. This is the counterpart of HarmonizR's ``ur`` option,
-    with a narrower rule: HarmonizR also moves a feature to a pattern that
-    only one other feature has, and updates the list as it goes.
+    one, which is returned with its raw values. This step moves such a feature
+    into the longest affiliation of another feature that is a proper subset of
+    its own; the feature then loses the values in the dropped blocks but is
+    corrected with others. As in HarmonizR's ``ur`` option, the target may
+    itself be held by a single feature, which then keeps its affiliation and
+    shares it.
+
+    Features are taken longest affiliation first, so the order of the rows
+    does not matter. Among equally long targets, the one more features hold
+    wins, then the smallest tuple. An affiliation that spans a single batch is
+    never a target: its group is left raw, so the move would only discard the
+    feature's other values. A feature with no target keeps its affiliation and
+    its values; HarmonizR empties it instead.
 
     Parameters
     ----------
@@ -229,57 +229,56 @@ def remove_unique_combinations(
 
     Examples
     --------
-    The first feature's affiliation is its own; the others share ``(1, 2)``:
+    The first two features each have an affiliation of their own. The first
+    moves into the second's, which keeps it:
 
     >>> from harmonizepy.affiliation import remove_unique_combinations
-    >>> remove_unique_combinations([(1, 2, 3), (1, 2), (1, 2)])
-    [(1, 2), (1, 2), (1, 2)]
+    >>> remove_unique_combinations([(1, 2, 3), (1, 2), (4, 5), (4, 5)])
+    [(1, 2), (1, 2), (4, 5), (4, 5)]
     """
     result = list(affiliation_list)
-
     counts = Counter(affil for affil in result if affil)
-    non_unique = {affil for affil, cnt in counts.items() if cnt > 1}
-
-    if not non_unique:
-        logger.debug("No shared patterns available for rescue")
-        return result
 
     def n_batches(pattern: tuple[int, ...]) -> int:
         if batches_per_block is None:
             return len(pattern)
         return sum(batches_per_block.get(block, 1) for block in pattern)
 
-    eligible = [pattern for pattern in non_unique if n_batches(pattern) >= 2]
-    ordered = sorted(eligible, key=lambda pattern: (-counts[pattern], pattern))
-    targets = [(pattern, frozenset(pattern)) for pattern in ordered]
+    sets = {pattern: frozenset(pattern) for pattern in counts}
+    by_length: dict[int, list[tuple[int, ...]]] = {}
+    for pattern in counts:
+        if n_batches(pattern) >= 2:
+            by_length.setdefault(len(pattern), []).append(pattern)
+    lengths = sorted(by_length, reverse=True)
+
+    unique = sorted(
+        ((affil, i) for i, affil in enumerate(result) if affil and counts[affil] == 1),
+        key=lambda item: (-len(item[0]), item[0]),
+    )
+    holder = dict(unique)
+    kept: set[int] = set()
     rescued = 0
-    for i, affil in enumerate(result):
-        if not affil or affil in non_unique:
+    for own, i in unique:
+        if i in kept:
             continue
+        own_set = sets[own]
+        target = None
+        for length in lengths:
+            if length >= len(own):
+                continue
+            candidates = [p for p in by_length[length] if counts[p] > 0 and sets[p] < own_set]
+            if candidates:
+                target = max(candidates, key=lambda p: (counts[p], tuple(-b for b in p)))
+                break
+        if target is None:
+            continue
+        if counts[target] == 1:
+            kept.add(holder[target])
+        counts[own] -= 1
+        counts[target] += 1
+        result[i] = target
+        rescued += 1
 
-        best = _find_best_crop(frozenset(affil), targets)
-        if best is not None:
-            result[i] = best
-            rescued += 1
-
-    if rescued > 0:
-        logger.debug("Unique removal rescued %d feature(s)", rescued)
+    if rescued:
+        logger.debug("Unique removal moved %d feature(s)", rescued)
     return result
-
-
-def _find_best_crop(
-    affil_set: frozenset[int],
-    targets: list[tuple[tuple[int, ...], frozenset[int]]],
-) -> tuple[int, ...] | None:
-    """Return the longest target pattern that is a proper subset of *affil_set*.
-
-    *targets* pairs each shared pattern with its set, built once by the caller
-    in the order that breaks ties; ties go to the pattern met first. Returns
-    ``None`` if no target is a proper subset.
-    """
-    best = None
-    for pattern, pattern_set in targets:
-        if len(pattern) < len(affil_set) and pattern_set.issubset(affil_set):
-            if best is None or len(pattern) > len(best):
-                best = pattern
-    return best
