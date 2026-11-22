@@ -12,7 +12,7 @@ flowchart LR
     G -- "1 feature,<br/>2+ batches" --> R1([raw_alone_<br/>in_pattern])
     G == 2+ of each ==> E[engine<br/>fit]
     E == fitted ==> OK([corrected]):::ok
-    E -. set aside .-> R3([raw_zero_variance,<br/>raw_too_few_<br/>features])
+    E -. set aside .-> R3([raw_zero_variance,<br/>raw_too_few_features,<br/>raw_too_few_values])
     classDef ok fill:#116329,stroke:#4ac26b,color:#ffffff
     classDef fail fill:#a40e26,stroke:#ff8182,color:#ffffff
     linkStyle default stroke:#8b949e

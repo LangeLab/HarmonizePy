@@ -82,7 +82,7 @@ INFO [harmonizepy] Input: 8 features x 9 samples
 INFO [harmonizepy] Algorithm: ComBat mode 1 | batches: 3 | needed_values: 2
 INFO [harmonizepy] Unique removal moved 1 feature(s) into a shared pattern (12.5%)
 INFO [harmonizepy] Adjusting 3 unique affiliation group(s)
-INFO [harmonizepy] 2 feature(s) passed through without correction (1 single-batch groups, 1 single-feature groups)
+INFO [harmonizepy] 2 feature(s) passed through without correction (1 in single-batch groups, 1 alone in their pattern)
 INFO [harmonizepy] Done (0.00s).
 INFO [harmonizepy] Output written to proteins_corrected.tsv
 INFO [harmonizepy] Report written to report.tsv

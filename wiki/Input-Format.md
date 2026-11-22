@@ -35,7 +35,7 @@ The reader is chosen by the file's extension:
 - Missing values are empty cells or pandas' usual markers, among them `NA`, `NaN`, `nan`, `null`, `N/A`, `#N/A`, `None` and `<NA>`. A `-` is not a missing marker: it makes its column text, and the run is refused.
 - Every sample column must be numeric. A text cell anywhere in a column fails the whole column, with `data contains non-numeric columns: [...]`. R's HarmonizR turns such a cell into a missing value without a word; I refuse it, because silent coercion can hide a data preparation error.
 - Sample names must be unique, in a file header as in a DataFrame.
-- Infinite values are refused, naming the first features that hold them (see [Scale](#scale)).
+- Infinite values are refused, naming the first features that hold them (see [Scale](#scale)). With ComBat, so are values of magnitude 1e150 or more, whose squares overflow its variance sums; log-scale data are far below that.
 - A row with no values at all is kept and comes out empty, with the status `missing_no_usable_batch`.
 
 ### Repeated features
@@ -91,6 +91,7 @@ Validation runs before any correction. On the command line each of these errors 
 | `data contains duplicate sample names`                 | repeated column name        |
 | `duplicate feature names with different values`        | same name, different values |
 | `data contains infinite values`                        | `inf` or `-inf` in a cell   |
+| `data contains values of magnitude 1e150 or more`      | ComBat with huge values     |
 | `data must have at least 2 sample columns`             | one sample                  |
 | `description must have at least 3 columns`             | too few columns             |
 | `the ID column cannot be found`                        | first column is the batch   |

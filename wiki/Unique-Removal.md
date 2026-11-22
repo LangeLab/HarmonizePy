@@ -4,16 +4,17 @@ A protein measured in a set of batches that no other protein shares would form a
 
 ## The rule
 
-For each feature whose affiliation is its own, HarmonizePy looks at the affiliations that at least two features share and picks the longest one that is a proper subset of the feature's affiliation. The feature takes that affiliation, joins its group, and its values in the dropped batches come out empty.
+For each feature whose affiliation is its own, HarmonizePy looks at the affiliations of the other features and picks the longest one that is a proper subset of the feature's affiliation. The feature takes that affiliation, joins its group, and its values in the dropped batches come out empty.
 
-- The shared affiliations are counted once, before any feature is moved. A feature that has just been moved does not make its new affiliation a candidate for others.
-- When two candidates are equally long, which one is chosen can depend on the order of the rows.
-- A feature with no shared affiliation inside its own keeps it, and stays a group of one with its measured values.
+- The target may be held by a single other feature. That feature then keeps its affiliation, and the two form a group.
+- Features are taken longest affiliation first, and among equally long targets the one more features hold wins, then the smallest. The result does not depend on the order of the rows.
+- An affiliation that spans a single batch is never a target: its group would be left raw, so the move would only empty the feature's other values.
+- A feature with no target keeps its affiliation, and stays a group of one with its measured values.
 - A feature with an empty affiliation is left alone; it comes out empty either way.
 
 ## On the example
 
-In the [Quick start](Quick-Start) example, P4 is measured in batches 1, 2 and 3, and no other protein is. The shared affiliations are (1, 2), held by P1 to P3, and nothing else. (1, 2) is inside (1, 2, 3), so P4 moves:
+In the [Quick start](Quick-Start) example, P4 is measured in batches 1, 2 and 3, and no other protein is. (1, 2), held by P1 to P3, is the longest affiliation inside (1, 2, 3), so P4 moves:
 
 ```text
 INFO [harmonizepy] Unique removal moved 1 feature(s) into a shared pattern (12.5%)
@@ -28,7 +29,7 @@ The log calls an affiliation a pattern.
     <img alt="Three rows over batches 1 to 3: P1 to P3 measured in batches 1 and 2; P4 measured in all three, with batch 3 hatched as cut; P5 measured in batches 2 and 3, with no shared affiliation inside its pattern." src="assets/unique-removal-light.png">
   </picture>
 </p>
-<p align="center"><sub><b>Figure 1.</b> P4's affiliation (1, 2, 3) is its own, and (1, 2) is shared by three proteins and fits inside it, so P4 gives up batch 3 and joins them. P5's affiliation (2, 3) has no shared pattern inside it, so P5 stays alone.</sub></p>
+<p align="center"><sub><b>Figure 1.</b> P4's affiliation (1, 2, 3) is its own, and (1, 2) is shared by three proteins and fits inside it, so P4 gives up batch 3 and joins them. P5's affiliation (2, 3) has only one-batch affiliations inside it, which are never targets, so P5 stays alone.</sub></p>
 
 | Run                    | P4 status              | P4 in s7 to s9   | Group of P1 to P3 |
 | ---------------------- | ---------------------- | ---------------- | ----------------- |
@@ -38,7 +39,7 @@ The log calls an affiliation a pattern.
 - With unique removal on, P4's batch 3 values are lost and its batches 1 and 2 are corrected. With it off, P4 keeps all nine values uncorrected.
 - The choice also changes the other features of the group: P1's corrected value in `s1` is 20.67 with P4 in the group and 20.70 without it.
 
-P5, measured in batches 2 and 3, has no shared affiliation inside (2, 3): neither (2) nor (3) is held by two features. It stays alone and raw under both settings.
+P5, measured in batches 2 and 3, has only (2) and (3) inside its affiliation, and an affiliation of one batch is never a target. It stays alone and raw under both settings.
 
 The report marks a moved feature with `cropped` set to true, and its `batches_used` lists the batches it kept (see [Correction report](Correction-Report)).
 
@@ -46,7 +47,7 @@ The report marks a moved feature with `cropped` set to true, and its `batches_us
 
 The setting is a trade between correcting more features and keeping more measured values:
 
-- On: a feature with an affiliation of its own, and a shared affiliation inside it, is corrected over fewer batches, and its values in the cropped batches disappear from the output. When the shared affiliation it moves into spans a single batch, it ends `raw_single_batch` with only that batch's values.
+- On: a feature with an affiliation of its own, and another feature's affiliation of two or more batches inside it, is corrected over fewer batches, and its values in the cropped batches disappear from the output.
 - Off: such a feature keeps its measured values in the batches of its affiliation, uncorrected, with its batch effect in place.
 
 Neither is right for every study.
@@ -56,7 +57,7 @@ Neither is right for every study.
 
 ## Difference from HarmonizR
 
-HarmonizR's `ur` option does the same job with a wider rule: it also moves a feature into an affiliation that only one other feature has, and it updates the list of affiliations as it moves features. HarmonizePy moves features only into affiliations that at least two features share before any move. The two can therefore give different groups on the same input (see [R compatibility](R-Compatibility)).
+HarmonizR's `ur` option takes the same targets, with three differences: it walks the features in row order and takes the first of equally long targets, it empties the affiliation of a feature with no target, so that feature comes out empty, and it accepts a target of one batch. HarmonizePy's order makes the groups independent of the row order, and a feature with no target keeps its measured values (see [R compatibility](R-Compatibility)).
 
 ## Related pages
 

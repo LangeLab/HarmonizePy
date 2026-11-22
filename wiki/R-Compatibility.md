@@ -53,7 +53,7 @@ Both leave rows that cannot be scaled out of the ComBat fit and return them unad
 
 ### Unique removal
 
-HarmonizR's `ur` moves a feature with a pattern of its own into any other feature's pattern inside its own, even one held by a single feature, and updates the list as it goes. HarmonizePy moves it only into a pattern that two or more features share before any move (see [Unique removal](Unique-Removal)). On the same input the two can form different groups: `(1,2,3,4), (1,2), (5,6), (5,6)` becomes `(1,2), (1,2), (5,6), (5,6)` in HarmonizR and is left unchanged by HarmonizePy.
+Both move a feature with a pattern of its own into the longest pattern of another feature inside its own, even one held by a single feature (see [Unique removal](Unique-Removal)); `(1,2,3,4), (1,2), (5,6), (5,6)` becomes `(1,2), (1,2), (5,6), (5,6)` in both. They differ in three ways: HarmonizR walks the features in row order and takes the first of equally long targets, where HarmonizePy takes the longest patterns first and breaks ties by group size, then the smallest pattern; HarmonizR empties a feature with no target, where HarmonizePy keeps its measured values; and HarmonizR accepts a target of one batch, which HarmonizePy refuses.
 
 ### Sort orders
 

@@ -50,13 +50,14 @@ P8	missing_no_usable_batch		0	False	0
 | `raw_alone_in_pattern`    | measured      |
 | `raw_zero_variance`       | measured      |
 | `raw_too_few_features`    | measured      |
+| `raw_too_few_values`      | measured      |
 | `missing_no_usable_batch` | empty         |
 
 A raw feature keeps its measured values inside its own group's batches. Outside them its cells are empty, as for a corrected feature.
 
 ### `corrected`
 
-The engine fitted the feature with the rest of its group. Corrected is not a promise that the values moved in a useful way: with limma and `needed_values=1`, a feature with one value per batch is collapsed to a single number and still reported here (see [limma](limma#edges-worth-knowing)).
+The engine fitted the feature with the rest of its group.
 
 ### `raw_single_batch`
 
@@ -73,6 +74,10 @@ ComBat only. The feature's variance is too small to scale by: its pooled varianc
 ### `raw_too_few_features`
 
 ComBat only. After the features above were set aside, fewer than two features were left in the group, and a prior needs two.
+
+### `raw_too_few_values`
+
+limma only. The feature has no more values than batches it is observed in, such as one value in each batch, so the fit would leave no residual and collapse it to one number. With limma and `needed_values=1`, the example's P6 ends here (see [limma](limma#edges-worth-knowing)).
 
 ### `missing_no_usable_batch`
 

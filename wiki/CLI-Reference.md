@@ -45,16 +45,15 @@ usage: harmonizepy [-h] [-o PATH] [--output-format {tsv,csv,parquet}]
 
 Without `-o`, the corrected matrix is written next to the data file as `<data stem>_corrected.tsv`, or `.csv` or `.parquet` with `--output-format`. With `-o`, the format comes from the extension (`.csv`, `.parquet`, `.pq`, otherwise tab-separated) unless `--output-format` names one. Missing values are written as empty cells in TSV and CSV, and as nulls in Parquet. Parquet needs the `io` extra.
 
-`--report PATH` writes the per-feature report, by extension (`.csv`, `.parquet` or `.pq`, otherwise tab-separated); `--output-format` does not apply to it. A report path equal to the output or to either input is refused.
+`--report PATH` writes the per-feature report, by extension (`.csv`, `.parquet` or `.pq`, otherwise tab-separated); `--output-format` does not apply to it.
 
 `--summary PATH` writes a JSON summary after the run: the version, the input and output paths, the settings with the `needed_values` actually used, and the feature, sample and batch counts. `--json` prints the same object to standard output and lowers the log to warnings.
 
-> [!CAUTION]
-> `-o`, `--summary` and `--log-file` are not checked against the input paths. Pointing one of them at the data file overwrites it.
+No output may overwrite an input or another output: a run whose `-o`, `--summary`, `--report` or log file names the data file, the description, or another of these files stops with a usage error (exit code 2) before anything is read.
 
 ## Config files
 
-`--config PATH` reads settings from a TOML, JSON or YAML file (`.toml`, `.json`, `.yaml`, `.yml`); YAML needs the `config` extra. Its keys are the long flag names with underscores:
+`--config PATH` reads settings from a TOML, JSON or YAML file (`.toml`, `.json`, `.yaml`, `.yml`); YAML needs the `config` extra. Its keys are the long flag names with underscores, and each value is checked like the matching flag, so a value the flag would refuse is a usage error:
 
 ```toml
 algorithm = "ComBat"
@@ -92,7 +91,7 @@ A log file with debug detail is written next to the output as `<output stem>.log
 | 2      | usage error, or a missing input or config file |
 
 - Status 1 prints one line starting `ERROR` to standard error, such as `ERROR: ...` for invalid input or `ERROR writing output to ...` when a file cannot be written.
-- Status 2 covers what the argument parser refuses (an unknown choice, a value that is not a number, `-v` with `-q`), config file errors (unknown key, unsupported extension, unreadable file), and dry-run and `--report` conflicts. It prints the usage and a `harmonizepy: error:` line.
+- Status 2 covers what the argument parser refuses (an unknown choice, a value that is not a number, `-v` with `-q`), config file errors (unknown key, unsupported extension, unreadable file, a value the matching flag would refuse), dry-run conflicts, and outputs that would overwrite an input or each other. It prints the usage and a `harmonizepy: error:` line.
 - A value the parser accepts but the library refuses, such as `--block 1` or `--needed-values 0`, exits with status 1.
 - A summary that cannot be written prints a warning and does not change the status.
 
