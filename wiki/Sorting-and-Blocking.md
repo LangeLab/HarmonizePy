@@ -53,7 +53,7 @@ flowchart LR
 | `seriation` | score on the first principal component        |
 
 - `jaccard`: the similarity of two batches is the number of features present in both over the number present in either. The chain starts at the batch most similar to all the others and moves each time to the most similar batch not yet placed.
-- `seriation`: batches are scored on the first principal component of their presence vectors, centred per feature and not scaled.
+- `seriation`: batches are scored on the first principal component of their presence vectors, centred per feature and not scaled. The component is computed exactly, so the order does not depend on the order of the rows, and batches with equal scores keep their input order.
 
 Sorting changes the result only together with blocking. Without `block`, every sort gives exactly the same output as no sort, because affiliations over single batches do not depend on their order. The output keeps the input's column order either way.
 

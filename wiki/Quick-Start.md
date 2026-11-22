@@ -61,7 +61,7 @@ harmonizepy proteins.tsv batches.csv --dry-run
   Algorithm:       ComBat mode 1
   needed_values:   2
   Sort strategy:   none
-  Block size:      none (all batches in one group)
+  Block size:      none (each batch is its own block)
   Unique removal:  enabled
   ----------------------------------------------------
   Inputs valid. Use without --dry-run to run correction.

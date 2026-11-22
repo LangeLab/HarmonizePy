@@ -34,7 +34,7 @@ With the default settings, the example proteins have these affiliations (the mat
 | P6, P8     | none        | none                 |
 | P7         | 3           | 3                    |
 
-P4 is the only protein measured in all three batches. A group of one feature cannot be corrected (ComBat has no other feature to estimate its prior from, and limma would remove the feature's own batch differences, real ones included), so [unique removal](Unique-Removal) moves P4 into the group of P1 to P3 and gives up its batch 3 values. P5's affiliation is also its own, but no shared affiliation fits inside it, so it stays alone.
+P4 is the only protein measured in all three batches. A group of one feature cannot be corrected (ComBat has no other feature to estimate its prior from, and limma would remove the feature's own batch differences, real ones included), so [unique removal](Unique-Removal) moves P4 into the group of P1 to P3 and gives up its batch 3 values. P5's affiliation is also its own, but no other feature's affiliation of two or more batches fits inside it, so it stays alone.
 
 The groups, then, are {P1, P2, P3, P4} over batches 1 and 2, {P5} over batches 2 and 3, and {P7} over batch 3. The dry run reports the same count:
 

@@ -131,11 +131,12 @@ def harmonize(
     combat_mode : {1, 2, 3, 4}
         ComBat mode: 1 parametric location and scale, 2 parametric location
         only, 3 non-parametric location and scale, 4 non-parametric location
-        only. Ignored for limma.
+        only. Has no effect with limma, but must still be one of the four.
     needed_values : int or None
         Minimum observed values a feature needs in a batch for that batch to
-        count in its affiliation. ``None`` chooses 2 for limma and modes 1 and
-        3, and 1 for modes 2 and 4.
+        count in its affiliation; with ``block``, a block counts only when
+        every batch in it has that many. ``None`` chooses 2 for limma and
+        modes 1 and 3, and 1 for modes 2 and 4.
     sort : {"sparsity", "jaccard", "seriation"} or None
         Batch order used to form blocks. It changes the output only together
         with ``block``.
@@ -144,8 +145,10 @@ def harmonize(
         the number of batches. ``None`` treats every batch as its own block.
     unique_removal : bool
         When ``True``, a feature whose affiliation no other feature shares is
-        moved to the largest shared affiliation within its own, as R
-        ``ur = TRUE`` does.
+        moved to the longest affiliation of another feature that lies within
+        its own and spans at least two batches, as R ``ur = TRUE`` does, and
+        its values in the dropped blocks become missing; see
+        ``remove_unique_combinations``.
     output_file : str, Path, or None
         If given, the corrected matrix is also written here, in the format of
         the suffix (``.csv``, ``.parquet`` or ``.pq``, otherwise TSV).
@@ -160,10 +163,13 @@ def harmonize(
     DataFrame or HarmonizeResult
         Corrected matrix with the input's features and columns, in the input
         order, except that a feature repeated with the same name and values
-        appears once. A feature with no usable batch is all missing. A feature
+        appears once. A feature's values in batches outside its affiliation
+        are missing; a feature with no usable batch is all missing. A feature
         alone in its affiliation, one whose affiliation spans a single batch,
-        and, with ComBat, one whose variance is too small to estimate keep
-        their raw values; the log counts each kind. With
+        with ComBat one whose variance is too small to estimate or whose group
+        has too few estimable features left, and with limma one with no more
+        values than batches in its group keep their raw values; the report
+        status names each kind (see ``correction_report``). With
         ``return_report=True``, a ``HarmonizeResult`` of the matrix and the
         report.
 

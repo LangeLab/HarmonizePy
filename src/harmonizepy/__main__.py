@@ -103,8 +103,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "description",
         help=(
-            "Batch description (CSV with columns ID, sample, batch). Without the names "
-            "ID and batch, the first column holds the sample IDs and the third the batches."
+            "Batch description (CSV with columns ID, sample, batch; sample is not read). "
+            "Without the names ID and batch, the first column holds the sample IDs and "
+            "the third the batches."
         ),
     )
 
@@ -198,8 +199,8 @@ def _build_parser() -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         default=True,
         help=(
-            "Move a feature whose affiliation no other feature shares into the largest "
-            "shared affiliation within its own, as HarmonizR's ur = TRUE does; it then "
+            "Move a feature whose affiliation no other feature shares into the longest "
+            "affiliation of another feature within its own, as HarmonizR's ur = TRUE does; it then "
             "loses the values of the dropped blocks but is corrected with others. "
             "On by default; --no-unique-removal leaves such features raw."
         ),
@@ -471,7 +472,7 @@ def _print_dry_run(
     """Print a human-readable dry-run summary to stdout."""
     nv_str = str(needed_values)
     sort_str = sort or "none"
-    block_str = str(block) if block is not None else "none (all batches in one group)"
+    block_str = str(block) if block is not None else "none (each batch is its own block)"
     ur_str = "enabled" if unique_removal else "disabled"
     algo_str = f"{algorithm} mode {combat_mode}" if algorithm == "ComBat" else algorithm
     rule = "-" * 52
@@ -521,7 +522,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     given; ``--json`` prints the summary to stdout.
 
     Exit codes: 0 on success; 1 on an input, correction, or output error,
-    reported as one ERROR line; 2 on a usage error or a missing input file.
+    reported as one ERROR line, including a value the parser accepts but the
+    library refuses (``--block 1``); 2 on a usage error, a config file error,
+    or a missing input file.
     """
     parser = _build_parser()
 

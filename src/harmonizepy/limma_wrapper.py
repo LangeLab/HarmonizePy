@@ -50,9 +50,10 @@ def remove_batch_effect(
 ) -> FloatArray:
     """Remove batch effects using a linear model (limma-style).
 
-    Per-cell NaN is handled per-feature by omitting NaN observations from
-    the OLS fit (matching R ``limma::removeBatchEffect`` behavior).
-    NaN stays in the same positions in the output.
+    Missing cells are left out of each feature's least-squares fit, as R
+    ``limma::removeBatchEffect`` does, and stay missing in the output. A
+    feature missing from a whole batch is handled differently from R; see
+    Returns.
 
     Parameters
     ----------
@@ -70,6 +71,9 @@ def remove_batch_effect(
         level. A feature with values in one batch only, or with no more values
         than batches it is observed in, keeps its raw values: its fit would
         leave no residual and collapse it to one level. The log counts both.
+        Each feature is fitted alone, so a single feature is corrected, and a
+        batch of one sample takes that sample's whole deviation into its batch
+        term, so the sample lands on the feature's mean of batch means.
 
     Raises
     ------

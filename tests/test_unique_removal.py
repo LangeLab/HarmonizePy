@@ -20,7 +20,7 @@ from harmonizepy.affiliation import remove_unique_combinations
 
 class TestSingletonRescue:
     def test_basic_singleton_cropped_to_shared_pattern(self):
-        """Singleton is cropped to the nearest shared pattern.
+        """Singleton is cropped to the longest pattern within its own.
 
         Failure condition: a singleton feature is not rescued or is
         cropped to an incorrect subset.
@@ -214,7 +214,7 @@ class TestEdgeCases:
         assert result == [(), (), ()]
 
     def test_large_singleton(self):
-        """A singleton with many blocks is cropped to the largest shared subset.
+        """A singleton with many blocks is cropped to the longest subset another feature holds.
 
         Failure condition: a singleton with 6 blocks is cropped
         too aggressively.

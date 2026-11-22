@@ -72,6 +72,7 @@ Sorting changes the output only together with blocking (see [Sorting and blockin
 - A cell that is not a number: R turns it into a missing value; HarmonizePy refuses the column.
 - Repeated rows: R removes rows whose values repeat another row, whatever their names; HarmonizePy removes a row only when its name and its values repeat, logs it, and refuses a repeated name with different values.
 - Empty rows and columns: R removes them; HarmonizePy keeps them.
+- Columns of the output: R returns only the columns of the groups it corrected, in the order of the groups, so a batch that no group uses has no columns in its output; HarmonizePy returns every input column, in the input order.
 - The batch description: R reads its columns by position; HarmonizePy reads the columns named `ID` and `batch`, and falls back to position.
 - `needed_values`: HarmonizePy takes it as an argument, with HarmonizR's defaults for ComBat.
 - Output file: R writes `cured_data.tsv`; the `harmonizepy` command writes `<data stem>_corrected.tsv` next to the input, and `harmonize()` writes only to `output_file`.

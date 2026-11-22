@@ -26,7 +26,7 @@ usage: harmonizepy [-h] [-o PATH] [--output-format {tsv,csv,parquet}]
 | `--output-format {tsv,csv,parquet}`       | from the extension          | below                                        |
 | `--algorithm {ComBat,limma}`              | `ComBat`                    | [Choosing an engine](Algorithms)             |
 | `--combat-mode {1,2,3,4}`                 | 1                           | [ComBat](ComBat#the-four-modes)              |
-| `--needed-values N`                       | 2; 1 for ComBat modes 2 and 4 | [Missing values](Missing-Values)             |
+| `--needed-values N`                       | 2; 1 in ComBat modes 2, 4   | [Missing values](Missing-Values)             |
 | `--sort {sparsity,jaccard,seriation}`     | none                        | [Sorting and blocking](Sorting-and-Blocking) |
 | `--block N`                               | none                        | [Sorting and blocking](Sorting-and-Blocking) |
 | `--unique-removal`, `--no-unique-removal` | on                          | [Unique removal](Unique-Removal)             |
@@ -43,7 +43,7 @@ usage: harmonizepy [-h] [-o PATH] [--output-format {tsv,csv,parquet}]
 
 ## Output
 
-Without `-o`, the corrected matrix is written next to the data file as `<data stem>_corrected.tsv`, or `.csv` or `.parquet` with `--output-format`. With `-o`, the format comes from the extension (`.csv`, `.parquet`, `.pq`, otherwise tab-separated) unless `--output-format` names one. Missing values are written as empty cells in TSV and CSV, and as nulls in Parquet. Parquet needs the `io` extra.
+Without `-o`, the corrected matrix is written next to the data file as `<data stem>_corrected.tsv`, or `.csv` or `.parquet` with `--output-format`. With `-o`, the format comes from the extension (`.csv`, `.parquet`, `.pq`, otherwise tab-separated) unless `--output-format` names one. Missing values are written as empty cells in TSV and CSV, and as nulls in Parquet. Parquet needs the `io` extra. Each output, the report and the summary included, is written to a temporary file beside it and then renamed, so a write that fails leaves no partial file and keeps any file that was there; the log file is written as the run goes.
 
 `--report PATH` writes the per-feature report, by extension (`.csv`, `.parquet` or `.pq`, otherwise tab-separated); `--output-format` does not apply to it.
 
@@ -68,11 +68,11 @@ report = "report.tsv"
 - Allowed keys: `algorithm`, `combat_mode`, `needed_values`, `sort`, `block`, `unique_removal`, `output`, `output_format`, `summary`, `report`. Any other key is a usage error.
 - Flags on the command line override the file.
 - Paths in the file are taken relative to the current directory, not to the file.
-- Values from the file skip the command line's own checks and are checked by the library instead, so an invalid value exits with status 1 and an `ERROR:` line rather than a usage message. `output_format` is not checked: an unknown value writes tab-separated.
+- A value from the file passes the same type and choice checks as its flag: `combat_mode: 7` or `output_format: xlsx` is a usage error (exit code 2) naming the key. A value the flag accepts but the library refuses, such as `block = 1`, exits with status 1, as the flag does.
 
 ## Dry run
 
-`--dry-run` reads and validates the inputs and plans the groups exactly as a run would, sorting, blocking and unique removal included, then prints the plan and exits without correcting or writing anything. It refuses `--log-file`, `--summary`, `--json` and `--report` on the command line (unless the flag only repeats the config file's value), and ignores `summary` and `report` in a config file. The input-scale warning still prints.
+`--dry-run` reads and validates the inputs and plans the groups exactly as a run would, sorting, blocking and unique removal included, then prints the plan and exits without correcting or writing anything. It refuses `--log-file`, `--summary`, `--json` and `--report` on the command line, even when the flag repeats the config file's value, and ignores `summary` and `report` in a config file. The input-scale warning still prints.
 
 The plan it prints is shown on [Quick start](Quick-Start#2-check-the-plan).
 

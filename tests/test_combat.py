@@ -616,9 +616,9 @@ class TestRConcordance:
         Failure condition: the Python implementation diverges from R
         reference beyond documented tolerances.
 
-        Tolerances: rtol=1e-4/atol=1e-6 for parametric iterative
-        modes (1, 3); closed-form modes are tighter but this
-        tolerance covers all modes.
+        Tolerances: rtol=1e-4/atol=1e-6 for mode 1, whose parametric
+        solver iterates to a 1e-4 convergence threshold; the other modes
+        agree more closely, but this tolerance covers all modes.
         """
         expected = _load_fixture(f"small_combat_mode{mode}.tsv")
         result = combat(self.data, self.batches, par_prior=par_prior, mean_only=mean_only)

@@ -48,12 +48,12 @@ HarmonizePy is a pure-Python batch-effect correction package for omics data. The
 
 **limma** (Ritchie et al. 2015). Linear-model batch correction via sum-to-zero contrasts.
 
-**HarmonizR-compatible pipeline (feature parity with v1.10.0):**
+**HarmonizR pipeline (follows v1.10.0; the differences are listed in [R Compatibility](https://github.com/LangeLab/HarmonizePy/wiki/R-Compatibility)):**
 
 - Structural missingness handled automatically: features are grouped by observed batch support, corrected in compatible subsets, and reassembled into the original matrix shape.
 - Batch sorting: reorder batches so that similar ones become neighbours before blocking. Three strategies: `"sparsity"` (number of features present), `"jaccard"` (overlap of present features), `"seriation"` (first principal component of the presence vectors).
 - Batch blocking: group `block=N` neighbouring batches when forming sub-matrices. A feature needs enough values in every batch of a block for the block to count, so blocking trades observed values for fewer, larger groups. The engines still correct each batch.
-- Unique-combination removal (`unique_removal=True`, default): a feature whose batch-presence pattern no other feature shares would form a group of one and keep its raw values. Its affiliation is cropped to the largest shared pattern within its own, trading the values in the dropped blocks for a group correction.
+- Unique-combination removal (`unique_removal=True`, default): a feature whose batch-presence pattern no other feature shares would form a group of one and keep its raw values. Its affiliation is cropped to the longest affiliation of another feature within its own (spanning at least two batches), trading the values in the dropped blocks for a group correction.
 
 **Validation against R reference workflows:** the package is tested against `sva::ComBat`, `limma::removeBatchEffect`, and HarmonizR v1.10.0 reference outputs. Known edge-case differences in retention policy are documented in the [R Compatibility](https://github.com/LangeLab/HarmonizePy/wiki/R-Compatibility) wiki page. Runtime benchmarks across six datasets are in [Benchmarks](https://github.com/LangeLab/HarmonizePy/wiki/Benchmarks).
 
@@ -111,7 +111,7 @@ The low-level engines handle missing observations per feature and preserve NaN p
 ### Input format
 
 - **data**: features x samples matrix of log-transformed values, usually log2; HarmonizePy does not transform them, and warns with `InputScaleWarning` when the values look untransformed. For TSV/CSV files, the first column must contain feature names (read as the DataFrame index). When passing a DataFrame directly, feature names must be in `DataFrame.index` and sample names in `DataFrame.columns`.
-- **description**: CSV/DataFrame with columns `ID` (sample names matching data columns), `sample` (integer), `batch` (integer batch label).
+- **description**: CSV/DataFrame with at least three columns: `ID` (sample names matching data columns), `sample` (not read), and `batch` (whole-number batch label). Without the names `ID` and `batch`, the first column holds the sample names and the third the batch labels.
 
 ### Parameter reference
 
@@ -121,7 +121,7 @@ The low-level engines handle missing observations per feature and preserve NaN p
 | `combat_mode`    | 1, 2, 3, 4                                          | 1          | ComBat variant (ignored for limma)                              |
 | `sort`           | `"sparsity"`, `"jaccard"`, `"seriation"`, or `None` | `None`     | Batch sorting strategy before blocking                          |
 | `block`          | int >= 2 or `None`                                  | `None`     | Group N consecutive batches into one sub-matrix block           |
-| `unique_removal` | bool                                                | `True`     | Rescue singleton features by cropping to nearest shared pattern |
+| `unique_removal` | bool                                                | `True`     | Crop singletons to another feature's pattern                    |
 | `return_report`  | bool                                                | `False`    | Also return the per-feature correction report                   |
 
 Full signature with all parameters is in the [API Reference](https://github.com/LangeLab/HarmonizePy/wiki/API-Reference).
@@ -146,7 +146,7 @@ harmonizepy data.tsv batch.csv --dry-run
 # Also write what happened to each feature
 harmonizepy data.tsv batch.csv -o corrected.tsv --report report.tsv
 
-# Config file (TOML, JSON, or YAML with [config] extra)
+# Config file (TOML or JSON; YAML needs the [config] extra)
 harmonizepy data.tsv batch.csv --config run.toml
 ```
 
@@ -167,7 +167,6 @@ The suite covers R concordance, edge cases, failure modes, numerical stability, 
 src/harmonizepy/    # Package source: pipeline, engines, CLI, I/O
 tests/              # Unit, integration, R concordance, and CLI tests
 benchmarks/         # Benchmark CLI, dataset catalog, results
-data/               # Small showcase datasets
 ```
 
 ## License
@@ -188,4 +187,4 @@ HarmonizePy is licensed under [GPL-3.0](LICENSE).
 - HarmonizR R package (Bioconductor): <https://www.bioconductor.org/packages/release/bioc/html/HarmonizR.html>
 - HarmonizR source (GitHub): <https://github.com/HSU-HPC/HarmonizR>
 
-The ComBat algorithm was introduced by Johnson, Li & Rabinovic (2007). `limma::removeBatchEffect` was published by Ritchie et al. (2015). The HarmonizR pipeline (structural-missingness handling, batch sorting, blocking, unique-combination removal) was developed by Voß et al. (2022) and Schlumbohm, Neumann & Neumann (2025). HarmonizePy is not a line-by-line port of the R sources: the engine logic was reimplemented from the published manuscripts and validated against R reference output.
+The ComBat algorithm was introduced by Johnson, Li & Rabinovic (2007). `limma::removeBatchEffect` is part of the limma package, described by Ritchie et al. (2015). The HarmonizR pipeline (structural-missingness handling, batch sorting, blocking, unique-combination removal) was developed by Voß et al. (2022) and Schlumbohm, Neumann & Neumann (2025). HarmonizePy is not a line-by-line port of the R sources: the engines are reimplemented in NumPy from the published methods and the behaviour of the R packages, and validated against R reference output.

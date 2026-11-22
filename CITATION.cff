@@ -8,24 +8,24 @@ date-released: "2026-05-29"
 license: GPL-3.0
 abstract: >
   HarmonizePy is a Pure-Python batch-effect correction toolkit for omics
-  data with structural missingness. Standard ComBat and limma require
-  complete matrices; HarmonizePy handles the dissection, adjustment, and
-  reassembly so they work on real-world incomplete data without an R
-  runtime.
+  data with structural missingness. It splits the matrix by each feature's
+  pattern of observed batches, adjusts each part, and reassembles it, so
+  that features missing from whole batches are corrected without
+  imputation and without an R runtime.
 
 
   It provides all four modes of ComBat (Johnson, Li & Rabinovic, 2007):
   parametric and non-parametric, with and without scale correction. It
   also implements limma-style batch removal via sum-to-zero contrasts
-  (Ritchie et al., 2015). The pipeline targets HarmonizR v1.10.0 feature
-  parity: per-feature batch-presence detection groups the matrix into
+  (Ritchie et al., 2015). The pipeline follows HarmonizR v1.10.0, with
+  documented differences: per-feature batch-presence detection groups the matrix into
   compatible subsets, each adjusted independently and then reassembled
   into the original shape without imputation. Missing observations remain
   missing in the output. Three sort strategies reorder batches so similar
   ones become neighbours before blocking; batch blocking groups
   consecutive batches into blocks to reduce sub-matrix count and memory;
   unique-combination removal rescues singletons by cropping their
-  affiliation to the nearest shared pattern before splitting.
+  affiliation to another feature's pattern before splitting.
 
 
   The engine layer is pure NumPy with no compiled extensions. Both a

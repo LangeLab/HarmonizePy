@@ -1,5 +1,5 @@
 #!/usr/bin/env Rscript
-# Generate R fixtures for Phase 2: blocking, sorting, and unique-removal.
+# Generate R fixtures for blocking, sorting, and unique removal.
 #
 # Run from the project root:
 #   Rscript tests/fixtures/generate_blocking_fixtures.R

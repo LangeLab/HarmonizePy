@@ -1,7 +1,6 @@
 """Dataset definitions, generation, and path resolution for benchmarks.
 
-Absorbs the data generation logic from the old ``generate_data.py`` and
-adds a lookup layer that resolves dataset short names to file paths
+Generates the synthetic datasets, and resolves dataset short names to file paths
 using the config.yaml ``datasets`` section.
 
 Usage::

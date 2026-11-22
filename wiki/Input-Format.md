@@ -33,6 +33,7 @@ The reader is chosen by the file's extension:
 - A Parquet file must hold the feature names as its index. A feature-name column that is not the index is read as a sample and refused as text.
 - A DataFrame must have the feature names as its index and the samples as its columns. Read a file with `pd.read_csv("data.tsv", sep="\t", index_col=0)`; without `index_col=0` the name column becomes a text column and the run is refused.
 - Missing values are empty cells or pandas' usual markers, among them `NA`, `NaN`, `nan`, `null`, `N/A`, `#N/A`, `None` and `<NA>`. A `-` is not a missing marker: it makes its column text, and the run is refused.
+- Feature names are read as written, as text: a protein named `NA` keeps that name, and `001` stays `001`.
 - Every sample column must be numeric. A text cell anywhere in a column fails the whole column, with `data contains non-numeric columns: [...]`. R's HarmonizR turns such a cell into a missing value without a word; I refuse it, because silent coercion can hide a data preparation error.
 - Sample names must be unique, in a file header as in a DataFrame.
 - Infinite values are refused, naming the first features that hold them (see [Scale](#scale)). With ComBat, so are values of magnitude 1e150 or more, whose squares overflow its variance sums; log-scale data are far below that.
@@ -76,7 +77,7 @@ s6,6,2
 
 - The file is always read as comma-separated, whatever its extension. A tab-separated description is read as one column and refused.
 - It must have at least three columns. The IDs come from the column named `ID`, or else the first column; the labels from the column named `batch`, or else the third. Names are case-sensitive. The `sample` column, kept for compatibility with HarmonizR, is never read. It still matters by position: when no column is named `batch`, the batch labels are read from the third column.
-- The IDs must be exactly the matrix's column names, each listed once. A sample missing from either side is refused, and the message lists the names that do not match.
+- The IDs must be exactly the matrix's column names, each listed once. They are read as text, so an ID such as `01` matches a column named `01`, and a DataFrame column labelled `1` matches the ID `1`. A sample missing from either side is refused, and the message lists the names that do not match.
 - Batch labels must be whole numbers: `1`, `1.0` and `"1"` are accepted; text, blanks and fractions such as `1.5` are refused, naming the column.
 - Batches can differ in size. A batch of one sample is accepted; ComBat then corrects its groups for location only (see [ComBat](ComBat#the-four-modes)).
 - With a single batch there is nothing to correct against. Every feature with at least `needed_values` values keeps them as measured; the others come out empty.

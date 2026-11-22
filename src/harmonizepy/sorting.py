@@ -159,12 +159,13 @@ def _column_order(
 
 
 def _sparsity_order(presence: npt.NDArray[np.bool_]) -> npt.NDArray[np.intp]:
-    """Sort batches descending by feature completeness count.
+    """Sort batches descending by the number of features present in each.
 
-    Batches with the most present features come first; batches with the
-    fewest come last.  This mirrors R HarmonizR's ``find_na()``-based
-    sort which orders by ascending NA count (= descending completeness),
-    ensuring similar-completeness batches become neighbours under blocking.
+    Batches with the most present features come first; ties keep the order in
+    which the batches first appear in the columns.
+    R HarmonizR's ``find_na()`` counts the missing cells of each batch
+    instead, which ranks batches differently in general (see
+    ``assets/FEATURE_PARITY.md``).
     """
     completeness = presence.sum(axis=0).astype(np.int64)
     return np.argsort(-completeness, kind="stable")

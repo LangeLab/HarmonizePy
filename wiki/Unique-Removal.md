@@ -1,6 +1,6 @@
 # Unique removal
 
-A protein measured in a set of batches that no other protein shares would form a group of one, and a group of one cannot be corrected. Unique removal gives such a protein a smaller set of batches that other proteins do share, when one exists, so it can be corrected with them, at the cost of its values in the batches it gives up. HarmonizR introduced the step ([Schlumbohm et al. 2025](References#schlumbohm-et-al-2025)). It is on by default (`unique_removal=True`, or `--no-unique-removal` to switch it off).
+A protein measured in a set of batches that no other protein shares would form a group of one, and a group of one cannot be corrected. Unique removal gives such a protein a smaller set of batches that another protein has, when one exists, so it can be corrected with them, at the cost of its values in the batches it gives up. HarmonizR introduced the step ([Schlumbohm et al. 2025](References#schlumbohm-et-al-2025)). It is on by default (`unique_removal=True`, or `--no-unique-removal` to switch it off).
 
 ## The rule
 

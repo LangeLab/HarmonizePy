@@ -121,8 +121,9 @@ def _correct_groups(
     """Do the work of ``splitting()`` and also return each feature's outcome.
 
     Returns the corrected matrix, a reason per feature (empty when corrected;
-    ``"no_usable_batch"``, ``"single_batch"``, ``"alone_in_pattern"``, or a
-    ComBat reason from ``_combat_validated``), and the size of each feature's
+    ``"no_usable_batch"``, ``"single_batch"``, ``"alone_in_pattern"``, a
+    ComBat reason from ``_combat_validated``, or limma's ``"too_few_values"``),
+    and the size of each feature's
     group (0 for an empty affiliation).
     """
     if algorithm not in ("ComBat", "limma"):

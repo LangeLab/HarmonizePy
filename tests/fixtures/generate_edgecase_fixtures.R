@@ -434,8 +434,8 @@ cat("\n=== Edge-case fixture generation complete ===\n")
 # =======================================================================
 # 12. PER-CELL NaN: some features have stochastic per-cell NaN within
 #     qualifying blocks, others are fully present.
-#     This tests na.omit behavior in sva::ComBat and matches real
-#     proteomics dropout patterns (e.g., murine_medulloblastoma).
+#     This tests sva::ComBat's per-feature handling of missing cells
+#     (Beta.NA), the dropout pattern of real proteomics data.
 # =======================================================================
 cat("\n--- percell_nan (30x9, 3 batches of 3, per-cell NaN within blocks) ---\n")
 set.seed(888)
@@ -463,8 +463,9 @@ desc_pcnan <- data.frame(
 write.csv(desc_pcnan, file.path(out_dir, "percell_nan_batch.csv"), row.names = FALSE)
 
 # Run HarmonizR pipeline on per-cell NaN data.
-# R sva::ComBat drops the 10 rows with NaN and adjusts the 20 clean rows.
-# Our Python keeps the 10 NaN rows as all-NaN and adjusts the 20 clean rows.
+# Each of the 10 rows with a missing cell keeps two values per batch, so it
+# stays in its group and is corrected on its observed cells; the missing
+# cells stay missing.
 for (m in 1:4) {
   tryCatch({
     result <- harmonizR(

@@ -107,7 +107,7 @@ datasets:
 # expand modes and yield one Scenario per (dataset, algorithm, mode, block, sort).
 #
 # All scenarios: unique_removal=True, needed_values=None (auto-derived by
-# _bench.py: needed_values=2 for limma and ComBat modes 1,3; =1 for modes 2,4).
+# harmonize(): needed_values=2 for limma and ComBat modes 1,3; =1 for modes 2,4).
 # -------------------------------------------------------------------------
 scenario_matrix:
   bulk:                 # limma + ComBat m1-4 plain, plus ComBat m1-4 with block=2

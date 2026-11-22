@@ -37,9 +37,9 @@ class TestSmallPipeline:
         Failure condition: the pipeline produces different corrected
         values than the reference R implementation.
 
-        Tolerances: rtol=1e-4/atol=1e-6 for parametric iterative modes
-        (1, 3); closed-form modes (2, 4) converge tighter but this
-        single tolerance covers all modes safely.
+        Tolerances: rtol=1e-4/atol=1e-6 for mode 1, whose parametric
+        solver iterates to a 1e-4 convergence threshold; the other modes
+        agree more closely, but this single tolerance covers all modes.
         """
         result = harmonize(
             str(FIXTURE_DIR / "small_input.tsv"),

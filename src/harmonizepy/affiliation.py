@@ -4,8 +4,8 @@ A feature's affiliation is the sorted tuple of block labels in which every
 batch holds at least ``needed_values`` observed values of the feature.
 Features with the same affiliation form a group, and each group is corrected
 as one sub-matrix. Unique removal moves a feature whose affiliation no other
-feature shares into the largest shared affiliation within its own, as R
-HarmonizR's ``ur = TRUE`` does.
+feature shares into the longest affiliation of another feature that lies
+within its own, as R HarmonizR's ``ur = TRUE`` does.
 """
 
 from __future__ import annotations

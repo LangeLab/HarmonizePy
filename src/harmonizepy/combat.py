@@ -48,7 +48,7 @@ _VARIANCE_FLOOR = 1e-12
 
 # Size of a block of the non-parametric prior, which holds one row per target
 # feature and one column per feature. A block of 2**16 cells (512 KiB) stays in
-# the CPU cache; at 32000 features, 16 rows took about half the time of 64. The
+# the CPU cache, so wide groups run faster in short blocks than in tall ones. The
 # block never has fewer than 16 rows, so a small group is done in one block.
 # Rows are computed independently; the block size changes the output only by
 # rounding in the matrix product.
@@ -578,21 +578,23 @@ def combat(
       be standardised, so its correction would not be estimated from its data.
     - In the parametric modes outside mean-only mode, a feature with a batch
       whose variance is below 1e-12 of the pooled variance. It would otherwise
-      set the empirical-Bayes prior for every other feature. The non-parametric
-      modes correct such a feature: its batch locations are estimable, and the
-      floored batch gives it no weight in the other features' priors.
-
-    The other features are corrected as if those left raw were absent.
-    - A single feature, which has no other features to share a prior with.
+      set the empirical-Bayes prior for every other feature. Location-only
+      mode and the non-parametric modes correct such a feature: its batch
+      locations are estimable, and in the non-parametric modes the floored
+      batch gives it no weight in the other features' priors. Its other
+      batches enter the shared priors, so it moves the other features as any
+      feature does.
+    - A single feature, or a single feature left after the others are set
+      aside, which has no other features to share a prior with.
     - A feature with values in a single batch, which has no batch effect to
       estimate.
     - With ``ref_batch``, a feature with no value in the reference batch.
 
-    A feature with no observed value is returned as missing and does not enter
-    the fit of the others. A feature with no value in some batches is fitted on
-    the batches it has: the missing batches enter neither its grand mean nor
-    their priors. Because each batch's prior is shared, such a feature also
-    contributes to the priors of the batches it is observed in.
+    The others are corrected as if those left raw were absent. A feature with no
+    observed value stays missing and does not enter the fit of the others. A feature
+    with no value in some batches is fitted on the batches it has: the missing batches
+    enter neither its grand mean nor their priors. Each batch's prior is shared, so
+    such a feature also enters the priors of the batches it is observed in.
 
     Parameters
     ----------
@@ -690,9 +692,9 @@ def _combat_validated(
     Features with no observed value stay missing. Features with values in a
     single batch, features with no value in the reference batch, and features
     whose variance the engine would floor keep their raw values; the
-    non-parametric modes check the pooled variance only. The rest are corrected as if those features were
-    absent. When fewer than two features remain, they are returned as given,
-    since a prior needs at least two.
+    non-parametric modes check the pooled variance only. The rest are
+    corrected as if those features were absent. When fewer than two features
+    remain, they are returned as given, since a prior needs at least two.
 
     Returns the corrected matrix and, per feature, an empty string when it was
     corrected or the reason it was not: ``"no_values"``, ``"single_batch"``,

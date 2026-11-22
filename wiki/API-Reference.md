@@ -103,7 +103,7 @@ combat(data, batch, *, par_prior=True, mean_only=False, ref_batch=None) -> ndarr
 - `mean_only`: correct the location only (modes 2 and 4).
 - `ref_batch`: a batch label to leave unchanged and adjust the others toward; it needs at least two samples.
 
-Returns a new array of the same shape; missing cells stay missing. Features ComBat cannot fit keep their input values ([ComBat](ComBat#features-combat-leaves-raw)). A feature with no value in a batch is fitted on the batches it has. Raises `ValueError` on a wrong shape, a batch length that does not match, labels that are not whole numbers, infinite values, or an invalid `ref_batch`.
+Returns a new array of the same shape; missing cells stay missing. Features ComBat cannot fit keep their input values ([ComBat](ComBat#features-combat-leaves-raw)). A feature with no value in a batch is fitted on the batches it has. Raises `ValueError` on a wrong shape, a batch length that does not match, labels that are not whole numbers, infinite values, values of magnitude 1e150 or more (whose squares overflow the variance sums), or an invalid `ref_batch`.
 
 ## `remove_batch_effect()`
 
@@ -113,7 +113,7 @@ The limma engine on one matrix ([limma](limma)).
 remove_batch_effect(data, batch) -> ndarray
 ```
 
-Takes the same `data` and `batch` as `combat()`. Returns a new array of the same shape; missing cells stay missing. A feature is fitted on the batches it has values in; one with values in a single batch, or missing a batch with no more values than observed batches, keeps its input values. Called directly, it corrects a single feature; inside `harmonize()` a group of one feature is left raw. Raises `ValueError` as `combat()` does, apart from `ref_batch`.
+Takes the same `data` and `batch` as `combat()`. Returns a new array of the same shape; missing cells stay missing. A feature is fitted on the batches it has values in; one with values in a single batch, or missing a batch with no more values than observed batches, keeps its input values. Called directly, it corrects a single feature; inside `harmonize()` a group of one feature is left raw. Raises `ValueError` as `combat()` does, apart from `ref_batch` and the 1e150 limit.
 
 ## `adjust_combat()` and `adjust_limma()`
 

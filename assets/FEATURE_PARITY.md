@@ -21,14 +21,14 @@ Limits:
 
 All four ComBat modes and limma are concordant with R on both dense synthetic data and real murine data with per-cell NaN. NaN handling uses per-feature computation (Beta.NA per-feature OLS), NOT row dropping or column dropping.
 
-| Mode                                 | Dense rtol | Murine max_rel | Murine NaN match |
-| ------------------------------------ | ---------- | -------------- | ---------------- |
-| ComBat 1 (parametric, loc+scale)     | 2e-5       | 0.0003         | YES              |
-| ComBat 2 (parametric, loc only)      | 1e-9       | 0.0000         | \*               |
-| ComBat 3 (non-parametric, loc+scale) | 5e-4       | 0.0000         | YES              |
-| ComBat 4 (non-parametric, loc only)  | 1e-9       | 0.0000         | \*               |
-| limma removeBatchEffect              | 1e-9       | 0.0000         | YES              |
-| ref_batch, auto mean_only            | identical  | identical      | Code review      |
+| Mode                                 | Dense test rtol | Murine max_rel | Murine NaN match |
+| ------------------------------------ | --------------- | -------------- | ---------------- |
+| ComBat 1 (parametric, loc+scale)     | 1e-4            | 0.0003         | YES              |
+| ComBat 2 (parametric, loc only)      | 1e-6            | 0.0000         | \*               |
+| ComBat 3 (non-parametric, loc+scale) | 1e-6 to 5e-4    | 0.0000         | YES              |
+| ComBat 4 (non-parametric, loc only)  | 1e-6            | 0.0000         | \*               |
+| limma removeBatchEffect              | 1e-10           | 0.0000         | YES              |
+| ref_batch, auto mean_only            | identical       | identical      | Code review      |
 
 \*Modes 2 and 4: HarmonizR returns 870 of the shared features entirely missing although the input has values for them; HarmonizePy corrects them. HarmonizR also drops 229 features that HarmonizePy keeps: 221 with one value in a single batch, kept raw, and 8 empty rows, kept missing. On the cells both return, the values agree to 7e-09.
 
@@ -73,7 +73,7 @@ R uses `original_batches_existence_counter` to count non-NA per batch within eac
 
 ### 2.2 Sub-Matrix Extraction
 
-R selects rows by sorted integer affiliation index and columns by `which(block_list %in% vec_in_affil)`. Python selects rows by pre-computed row index array and columns by `np.isin(block_arr, affil)`. Equivalent. Both allow per-cell NaN to pass through to the engines. `splitting.py` does NOT filter columns or rows based on NaN presence.
+R selects rows by sorted integer affiliation index and columns by `which(block_list %in% vec_in_affil)`. Python selects rows by a pre-computed row index array and columns by joining the column indices of the affiliation's blocks. Equivalent. Both allow per-cell NaN to pass through to the engines. `splitting.py` does NOT filter columns or rows based on NaN presence.
 
 ### 2.3 Adjustment Per Sub-Matrix
 
@@ -82,12 +82,12 @@ R selects rows by sorted integer affiliation index and columns by `which(block_l
 - Constant feature (zero variance within a batch): both leave it out of the ComBat fit and return its raw values, with different rules. See section 5.
 - Multi-batch with per-cell NaN: both use per-feature computation (Beta.NA approach). Murine verified at max_rel 0.0003.
 - Multi-batch, no NaN: both use the vectorized path.
-- **Unblocked `medium` benchmark**: 109 of 4968 shared features differ with limma and 135 with ComBat mode 1, 77 of them in their missing cells. Counted as features with a relative difference above 1e-4 or a different missing pattern. The cause is the unique-removal rule (section 4): 99 are features with a pattern of their own that HarmonizePy keeps raw and HarmonizR moves into another feature's pattern, cropping their values, and the rest are in groups whose size those moves change. With `block=2`, ComBat agrees to 7e-06.
+- **Unblocked `medium` benchmark**: 49 of 4968 shared features differ with limma and 99 with ComBat mode 1, 45 of them in their missing cells, counted as features with a relative difference above 1e-4 or a different missing pattern. The cause is the order in which the two unique-removal rules take features (section 4): with ComBat mode 1, 62 are features HarmonizePy cropped to a different target than HarmonizR, 33 are in groups whose members those moves change, and 4 are features HarmonizePy keeps raw as alone in their pattern. HarmonizR also drops 32 features that HarmonizePy returns. With `block=2`, ComBat agrees to 7e-06.
 - **Features HarmonizR returns entirely missing**: in some modes HarmonizR returns features entirely missing although the input has values for them: 1256 of 3000 on `scp_small` in modes 3 and 4, and 870 on `murine` in modes 2 and 4. HarmonizePy corrects them; on the cells both return, the values agree to 5e-15 and 7e-09.
 
 ### 2.4 Reassembly
 
-R uses `plyr::rbind.fill` (align by row name). Python uses pre-allocated array + `pd.concat`. Equivalent for same feature sets. Dropped features: R removes from output entirely, Python keeps as all-NaN (intentional divergence).
+R uses `plyr::rbind.fill` (align by row name). Python uses pre-allocated array + `pd.concat`. Equivalent for same feature sets. Dropped features: R removes from output entirely, Python keeps as all-NaN (intentional divergence). Columns: R returns only the columns of the sub-matrices it rebuilt, starting with the first, so the columns of a batch that no group uses are missing from its output and the column order follows the groups; Python returns every input column in the input order.
 
 ---
 
@@ -115,7 +115,7 @@ Both move a feature whose pattern is its own into the longest pattern of another
 - With no candidate, HarmonizR empties the feature's pattern, and the feature comes out missing. HarmonizePy leaves it unchanged, with its raw values.
 - HarmonizePy never moves a feature into a pattern that spans a single batch, whose group is left raw anyway; HarmonizR does.
 
-For example, `(1,2,3,4), (1,2), (5,6), (5,6)` becomes `(1,2), (1,2), (5,6), (5,6)` in both. A known-truth simulation with 20 batches put the error of the corrected values at about 0.2 under either rule, against 0.44 to 0.78 for a rule that takes only patterns two features share; HarmonizR's emptying removed 40 to 130 of 2000 features per run. The `chain_rescue` fixtures cover both `ur=True` and `ur=False`.
+For example, `(1,2,3,4), (1,2), (5,6), (5,6)` becomes `(1,2), (1,2), (5,6), (5,6)` in both. The `chain_rescue` fixtures cover both `ur=True` and `ur=False`.
 
 ---
 
@@ -145,17 +145,17 @@ Python retains more features in all cases. The trade-off: retained features are 
 
 ## 7. Verification Status
 
-Tolerance of the R concordance tests per scenario; `--` means no R fixture.
+The tolerance each R concordance test asserts (rtol), or for the murine benchmark the largest relative difference found (max_rel); `--` means no R fixture.
 
 | Scenario                    | ComBat 1 to 4         | limma              |
 | --------------------------- | --------------------- | ------------------ |
-| Dense synthetic             | rtol 2e-5 to 5e-4     | rtol 1e-9          |
-| Structural missingness      | rtol 5e-4             | rtol 1e-8          |
-| Blocking (block 2, 4)       | rtol 5e-4             | rtol 1e-8          |
-| Sparsity sort + block       | rtol 5e-4             | rtol 1e-8          |
-| Jaccard sort + block        | rtol 5e-4             | --                 |
-| Seriation sort + block      | rtol 5e-4             | --                 |
-| Per-cell NaN synthetic      | max_rel below 1e-4    | max_rel below 1e-4 |
+| Dense synthetic             | rtol 1e-6 to 5e-4     | rtol 1e-10         |
+| Structural missingness      | rtol 1e-5 to 5e-4     | rtol 1e-8          |
+| Blocking (block 2, 4)       | rtol 1e-5 to 5e-4     | rtol 1e-8          |
+| Sparsity sort + block       | rtol 1e-5 to 5e-4     | rtol 1e-8          |
+| Jaccard sort + block        | rtol 5e-4 (mode 1)    | --                 |
+| Seriation sort + block      | rtol 5e-4 (mode 1)    | --                 |
+| Per-cell NaN synthetic      | rtol 1e-8 to 1e-4     | rtol 1e-8          |
 | Murine unblocked            | max_rel 3e-4          | max_rel 2e-10      |
 | Murine block 2              | max_rel 6e-6 (mode 1) | --                 |
 | Unique-removal chain rescue | rtol 1e-4             | --                 |

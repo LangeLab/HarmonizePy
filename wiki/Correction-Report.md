@@ -65,7 +65,7 @@ The feature's group spans one batch, or with blocking one block that holds one b
 
 ### `raw_alone_in_pattern`
 
-No other feature shares the feature's affiliation, and [unique removal](Unique-Removal) found no shared affiliation inside it, or was switched off. A group of one is not corrected: ComBat has no other feature to form a prior from, and limma would remove the feature's own batch differences, real ones included. P5 is the example.
+No other feature shares the feature's affiliation, and [unique removal](Unique-Removal) found no other feature's affiliation of two or more batches inside it, or was switched off. A group of one is not corrected: ComBat has no other feature to form a prior from, and limma would remove the feature's own batch differences, real ones included. P5 is the example.
 
 ### `raw_zero_variance`
 
