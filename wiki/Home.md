@@ -6,9 +6,9 @@ It is written for proteomics first, where a protein can be missing from a whole 
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/batch-shift-dark.png">
-    <source media="(prefers-color-scheme: light)" srcset="assets/batch-shift-light.png">
-    <img alt="Four proteins measured in two batches: batch 2 reads about 1.5 units higher before correction, and the two batch means come within 0.3 of each other after harmonize()." src="assets/batch-shift-light.png">
+    <source media="(prefers-color-scheme: dark)" srcset="/LangeLab/HarmonizePy/wiki/assets/batch-shift-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="/LangeLab/HarmonizePy/wiki/assets/batch-shift-light.png">
+    <img alt="Four proteins measured in two batches: batch 2 reads about 1.5 units higher before correction, and the two batch means come within 0.3 of each other after harmonize()." src="/LangeLab/HarmonizePy/wiki/assets/batch-shift-light.png">
   </picture>
 </p>
 <p align="center"><sub><b>Figure 1.</b> Four proteins from the <a href="Quick-Start">Quick start</a> example. Each short bar is a batch mean: the dashed line between them is the batch effect, and after correction it is nearly flat while each protein keeps its own level.</sub></p>

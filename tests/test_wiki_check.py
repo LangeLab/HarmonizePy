@@ -114,6 +114,19 @@ def test_rejects_missing_image(tmp_path: Path) -> None:
     assert "references a missing image: assets/flow-dark.png" in result.stderr
 
 
+def test_checks_root_relative_images_against_assets(tmp_path: Path) -> None:
+    wiki_dir = tmp_path / "wiki"
+    page = '<img alt="Flow" src="/Owner/Repo/wiki/assets/flow-light.png">\n'
+    _write_pages(wiki_dir, **{"Flow.md": page, "Lost.md": page.replace("flow-light", "lost")})
+    _write_assets(wiki_dir, "flow-light.png")
+
+    result = _run_validator(wiki_dir)
+
+    assert result.returncode == 1
+    assert "references a missing image: assets/lost.png" in result.stderr
+    assert "flow-light" not in result.stderr
+
+
 def test_rejects_non_png_files_in_assets(tmp_path: Path) -> None:
     wiki_dir = tmp_path / "wiki"
     _write_pages(wiki_dir)

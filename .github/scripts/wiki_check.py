@@ -18,6 +18,9 @@ _INLINE_CODE = re.compile(r"`+[^`\n]*`+")
 _FENCE = re.compile(r"^( {0,3})(`{3,}|~{3,})")
 _ASSET_DIR = "assets"
 _ASSET_SUFFIXES = (".png",)
+# The wiki's own image URL, root-relative: the same from every page, including Home,
+# which GitHub serves at /OWNER/REPO/wiki where a relative assets/ path misses the wiki.
+_ROOTED_ASSET = re.compile(r"^/[^/]+/[^/]+/wiki/(assets/[^/?#]+)$")
 _ASSET_REFERENCE = re.compile(r"""(?:src|srcset)\s*=\s*["']([^"']+)["']|!\[[^]\n]*\]\(([^)\s]+)""")
 
 
@@ -166,6 +169,9 @@ def validate(wiki_dir: Path) -> list[str]:
         visible_text = _without_code(text)
         for match in _ASSET_REFERENCE.finditer(visible_text):
             reference = (match.group(1) or match.group(2)).strip()
+            rooted = _ROOTED_ASSET.match(reference)
+            if rooted:
+                reference = rooted.group(1)
             if _is_external(reference) or not reference.startswith(f"{_ASSET_DIR}/"):
                 continue
             if reference not in assets:
