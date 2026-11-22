@@ -23,7 +23,13 @@ from importlib.metadata import version
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from .core import harmonize, plan_affiliations, prepare_inputs, resolve_needed_values
-from .io import _read_data_matrix, format_from_suffix, read_description, write_frame
+from .io import (
+    _read_data_matrix,
+    format_from_suffix,
+    read_description,
+    write_atomically,
+    write_frame,
+)
 from .types import HarmonizeResult
 from .validation import sample_batch_map
 
@@ -434,9 +440,9 @@ def _build_summary_dict(
 
 
 def _write_summary(path: str, summary: dict[str, object]) -> None:
-    """Write a JSON run-summary file to *path*."""
-    with Path(path).open("w", encoding="utf-8") as fh:
-        json.dump(summary, fh, indent=2)
+    """Write a JSON run-summary file to *path*, atomically (``write_atomically``)."""
+    text = json.dumps(summary, indent=2)
+    write_atomically(path, lambda tmp: Path(tmp).write_text(text, encoding="utf-8"))
     logging.getLogger("harmonizepy").info("Run summary written to %s", path)
 
 

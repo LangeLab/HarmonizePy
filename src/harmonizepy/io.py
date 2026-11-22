@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import csv
 import logging
+import secrets
 from collections import Counter
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -372,6 +374,9 @@ def write_output(df: pd.DataFrame, path: str) -> None:
 def write_frame(df: pd.DataFrame, path: str, fmt: str) -> None:
     """Write *df* to *path* as ``"tsv"``, ``"csv"``, or ``"parquet"``, with the index.
 
+    The file is written through ``write_atomically``, so a failed write leaves
+    no partial file at *path* and keeps any file that was there.
+
     Raises
     ------
     ImportError
@@ -382,8 +387,39 @@ def write_frame(df: pd.DataFrame, path: str, fmt: str) -> None:
     if fmt == "parquet":
         if not _HAVE_PYARROW:
             raise ImportError("Parquet output requires pyarrow: pip install harmonizepy[io]")
-        df.to_parquet(path, index=True, engine="pyarrow")
+        write_atomically(path, lambda tmp: df.to_parquet(tmp, index=True, engine="pyarrow"))
     elif fmt == "csv":
-        df.to_csv(path)
+        write_atomically(path, lambda tmp: df.to_csv(tmp))
     else:
-        df.to_csv(path, sep="\t")
+        write_atomically(path, lambda tmp: df.to_csv(tmp, sep="\t"))
+
+
+def write_atomically(path: str, write: Callable[[str], object]) -> None:
+    """Call *write* on a temporary file beside *path*, then rename it to *path*.
+
+    The temporary file is in the target's directory, so the rename is atomic
+    on one file system, and it is created with an ordinary open, so it gets
+    the permissions the user's umask gives any new file. When *write* fails,
+    the temporary file is removed, the error is raised again, and a file that
+    already existed at *path* is unchanged.
+
+    Raises
+    ------
+    OSError
+        If the directory of *path* does not exist or is not writable, or the
+        rename fails.
+    """
+    target = Path(path)
+    tmp = target.with_name(f".{target.name}.{secrets.token_hex(6)}.tmp")
+    try:
+        with tmp.open("xb"):
+            pass
+    except OSError as error:
+        # Name the path the user gave, not the hidden temporary file.
+        raise type(error)(error.errno, error.strerror, str(target)) from error
+    try:
+        write(str(tmp))
+        tmp.replace(target)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise

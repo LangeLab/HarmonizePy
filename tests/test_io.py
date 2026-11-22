@@ -485,3 +485,69 @@ class TestNamesReadAsWritten:
         assert result.columns.tolist() == ids
 
 
+class TestAtomicWrites:
+    """A write that fails part way leaves no partial file under the user's name."""
+
+    @staticmethod
+    def _failing_to_csv(self: pd.DataFrame, path: str, *args: object, **kwargs: object) -> None:
+        Path(path).write_text("partial")
+        raise OSError("disk full")
+
+    def test_failed_write_keeps_the_existing_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An existing output keeps its content when a new write fails.
+
+        Failure condition: the writer opens the target directly, so the old
+        file is truncated and replaced by a partial one.
+        """
+        target = tmp_path / "out.tsv"
+        target.write_text("previous run")
+        # File I/O is an owned boundary: the patched writer fails after writing.
+        monkeypatch.setattr(pd.DataFrame, "to_csv", self._failing_to_csv)
+
+        with pytest.raises(OSError, match="disk full"):
+            write_output(pd.DataFrame({"s1": [1.0]}, index=["f1"]), str(target))
+
+        assert target.read_text() == "previous run"
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["out.tsv"]
+
+    def test_failed_write_creates_no_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A failed write to a new path leaves nothing behind.
+
+        Failure condition: a partial file or the temporary file stays in the folder.
+        """
+        monkeypatch.setattr(pd.DataFrame, "to_csv", self._failing_to_csv)
+
+        with pytest.raises(OSError, match="disk full"):
+            write_output(pd.DataFrame({"s1": [1.0]}, index=["f1"]), str(tmp_path / "new.csv"))
+
+        assert list(tmp_path.iterdir()) == []
+
+    def test_successful_write_leaves_only_the_target(self, tmp_path: Path) -> None:
+        """A normal write produces the target and no temporary file.
+
+        Failure condition: the temporary file is not renamed or not removed.
+        """
+        df = pd.DataFrame({"s1": [1.0, 2.0]}, index=["f1", "f2"])
+
+        write_output(df, str(tmp_path / "out.tsv"))
+
+        assert [p.name for p in tmp_path.iterdir()] == ["out.tsv"]
+        pd.testing.assert_frame_equal(read_main_data(str(tmp_path / "out.tsv")), df)
+
+    def test_missing_folder_error_names_the_target(self, tmp_path: Path) -> None:
+        """Writing into a missing folder raises an error that names the given path.
+
+        Failure condition: the message names the hidden temporary file, which
+        the user never asked for.
+        """
+        target = tmp_path / "missing" / "out.tsv"
+
+        with pytest.raises(FileNotFoundError) as caught:
+            write_output(pd.DataFrame({"s1": [1.0]}, index=["f1"]), str(target))
+
+        assert caught.value.filename == str(target)
+        assert ".tmp" not in str(caught.value)
