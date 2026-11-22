@@ -43,6 +43,31 @@ def _reject_infinite(
         )
 
 
+# ComBat squares residuals and sums them per feature; values at or beyond this
+# magnitude overflow float64 in those sums and turn the output non-finite.
+COMBAT_MAX_ABS_VALUE = 1e150
+
+
+def reject_combat_overflow(
+    values: npt.NDArray[np.floating[Any]], names: Sequence[object] | pd.Index
+) -> None:
+    """Raise ``ValueError`` if a value is too large for ComBat, naming the first features.
+
+    ComBat's variance sums overflow float64 for magnitudes of about 1e154, which
+    makes its output non-finite; values at or beyond ``COMBAT_MAX_ABS_VALUE``
+    are rejected. Log-scale data are many orders of magnitude below it.
+    """
+    with np.errstate(invalid="ignore"):
+        large_rows = np.flatnonzero((np.abs(values) >= COMBAT_MAX_ABS_VALUE).any(axis=1))
+    if large_rows.size:
+        shown = [str(names[i]) for i in large_rows[:5]]
+        raise ValueError(
+            f"data contains values of magnitude 1e150 or more in {large_rows.size} "
+            f"feature(s) (first: {shown}); ComBat's variance sums overflow at such values. "
+            "Log-transform the data, or use limma."
+        )
+
+
 def validate_data_matrix(df: pd.DataFrame) -> None:
     """Check that *df* is a features x samples matrix the engines can use.
 

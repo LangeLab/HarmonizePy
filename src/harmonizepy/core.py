@@ -33,6 +33,7 @@ from .splitting import _correct_groups
 from .types import HarmonizeConfig, HarmonizeResult
 from .validation import (
     check_input_scale,
+    reject_combat_overflow,
     sample_batch_map,
     validate_data_matrix,
     validate_description,
@@ -334,7 +335,10 @@ def prepare_inputs(
     data = clean_features(data)
     validate_data_matrix(data)
     validate_description(description, data)
-    check_input_scale(data.to_numpy(dtype=np.float64))
+    values = data.to_numpy(dtype=np.float64)
+    check_input_scale(values)
+    if algorithm == "ComBat":
+        reject_combat_overflow(values, data.index)
     logger.info("Input: %d features x %d samples", data.shape[0], data.shape[1])
 
     sample_to_batch = sample_batch_map(description)

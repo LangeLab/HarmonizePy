@@ -33,7 +33,12 @@ import numpy as np
 import numpy.typing as npt
 
 from .types import FloatArray
-from .validation import batch_codes, validate_engine_input, validate_ref_batch
+from .validation import (
+    batch_codes,
+    reject_combat_overflow,
+    validate_engine_input,
+    validate_ref_batch,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -615,8 +620,9 @@ def combat(
     ------
     ValueError
         On wrong dimensionality, batch length mismatch, batch labels that are
-        not whole numbers, infinite values, or a ``ref_batch`` that is not
-        among the batch labels or has one sample.
+        not whole numbers, infinite values, values of magnitude 1e150 or more
+        (whose squares overflow the variance sums), or a ``ref_batch`` that is
+        not among the batch labels or has one sample.
 
     Examples
     --------
@@ -642,6 +648,7 @@ def combat(
     batch_int = batch_codes(batch)
 
     validate_engine_input(data, batch_int)
+    reject_combat_overflow(data, range(data.shape[0]))
     validate_ref_batch(batch_int, ref_batch)
     corrected, _ = _combat_validated(
         data, batch_int, par_prior=par_prior, mean_only=mean_only, ref_batch=ref_batch
@@ -664,6 +671,7 @@ def _combat_with_reasons(
     data = np.asarray(data, dtype=np.float64)
     batch_int = batch_codes(batch)
     validate_engine_input(data, batch_int)
+    reject_combat_overflow(data, range(data.shape[0]))
     return _combat_validated(
         data, batch_int, par_prior=par_prior, mean_only=mean_only, ref_batch=None
     )

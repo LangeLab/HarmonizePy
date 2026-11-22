@@ -1296,3 +1296,43 @@ def test_batch_observed_by_one_feature_gives_finite_output() -> None:
         for kwargs in ({}, {"mean_only": True}, {"par_prior": False}):
             out = combat(data, batch, **kwargs)
             assert np.isfinite(out[~np.isnan(data)]).all()
+
+
+@pytest.mark.parametrize("scale", [1e150, 1e200])
+def test_values_too_large_for_combat_are_rejected(scale: float) -> None:
+    """Values whose squares overflow are rejected with the feature named.
+
+    Failure condition: ComBat returns non-finite values without an error.
+    """
+    rng = np.random.default_rng(9)
+    data = rng.normal(10, 1, (20, 12))
+    data[4] *= scale
+    with pytest.raises(
+        ValueError, match=r"magnitude 1e150 or more in 1 feature\(s\) \(first: \['4'\]\)"
+    ):
+        combat(data, np.repeat([0, 1, 2], 4))
+
+
+def test_harmonize_names_the_feature_too_large_for_combat() -> None:
+    """harmonize() with ComBat rejects such values before correcting, naming the feature;
+    limma corrects them.
+
+    Failure condition: the run fails mid-way, or limma is refused although it is finite.
+    """
+    import pandas as pd
+
+    from harmonizepy import harmonize
+
+    rng = np.random.default_rng(10)
+    samples = [f"s{i}" for i in range(12)]
+    data = pd.DataFrame(
+        rng.normal(10, 1, (20, 12)), columns=samples, index=[f"p{i}" for i in range(20)]
+    )
+    data.iloc[3] *= 1e160
+    desc = pd.DataFrame({"ID": samples, "sample": range(12), "batch": np.repeat([1, 2, 3], 4)})
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with pytest.raises(ValueError, match=r"first: \['p3'\]"):
+            harmonize(data, desc)
+        out = harmonize(data, desc, algorithm="limma")
+    assert np.isfinite(out.to_numpy()).all()
