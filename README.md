@@ -55,7 +55,45 @@ HarmonizePy is a pure-Python batch-effect correction package for omics data. The
 - Batch blocking: group `block=N` neighbouring batches when forming sub-matrices. A feature needs enough values in every batch of a block for the block to count, so blocking trades observed values for fewer, larger groups. The engines still correct each batch.
 - Unique-combination removal (`unique_removal=True`, default): a feature whose batch-presence pattern no other feature shares would form a group of one and keep its raw values. Its affiliation is cropped to the longest affiliation of another feature within its own (spanning at least two batches), trading the values in the dropped blocks for a group correction.
 
-**Validation against R reference workflows:** the package is tested against `sva::ComBat`, `limma::removeBatchEffect`, and HarmonizR v1.10.0 reference outputs. Known edge-case differences in retention policy are documented in the [R Compatibility](https://github.com/LangeLab/HarmonizePy/wiki/R-Compatibility) wiki page. Runtime benchmarks across six datasets are in [Benchmarks](https://github.com/LangeLab/HarmonizePy/wiki/Benchmarks).
+**Validation against R reference workflows:** the package is tested against `sva::ComBat`, `limma::removeBatchEffect`, and HarmonizR v1.10.0 reference outputs. Known edge-case differences in retention policy are documented in the [R Compatibility](https://github.com/LangeLab/HarmonizePy/wiki/R-Compatibility) wiki page. Runtime benchmarks across seven datasets are in [Benchmarks](https://github.com/LangeLab/HarmonizePy/wiki/Benchmarks).
+
+## Performance
+
+The same correction as HarmonizR 1.10.0, on the same matrices, in a fraction of the time:
+
+<p align="center">
+  <a href="benchmarks/RESULTS.md">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="benchmarks/figures/01-speed-dark.png">
+      <source media="(prefers-color-scheme: light)" srcset="benchmarks/figures/01-speed-light.png">
+      <img src="benchmarks/figures/01-speed-light.png" alt="Wall time of HarmonizePy and HarmonizR on five matrices for limma, ComBat mode 1 and ComBat mode 3: HarmonizePy takes 21 ms to 2.0 s, HarmonizR 1.0 s to 312 s, 3.9 to 338 times longer" width="100%">
+    </picture>
+  </a>
+</p>
+
+| Dataset     | Features x samples | HarmonizePy | HarmonizR | Faster | Largest difference |
+| ----------- | ------------------ | ----------: | --------: | -----: | -----------------: |
+| `small`     | 1,000 x 20         |      0.11 s |     7.6 s |    67x |              6e-06 |
+| `murine`    | 4,753 x 25         |      0.47 s |     1.8 s |   3.9x |              3e-04 |
+| `medium`    | 5,000 x 60         |       2.0 s |      14 s |   7.0x |             0.42\* |
+| `dia`       | 8,470 x 36         |      0.49 s |     4.8 s |   9.9x |              5e-15 |
+| `scp_small` | 3,000 x 1,000      |      0.71 s |      59 s |    82x |              7e-06 |
+
+ComBat mode 1, the default, both on one core; the largest difference is the largest relative difference between the two outputs over the cells both have, and mode 1's solver stops at a 1e-4 convergence threshold. \* On `medium` without blocking, the two unique-removal rules take features in a different order, so some features join different groups. [Benchmark results](benchmarks/RESULTS.md) has every scenario, the scaling sweeps, and the method.
+
+It also needs less memory. Each tool runs in a fresh process that reads both files, corrects once and exits:
+
+<p align="center">
+  <a href="benchmarks/RESULTS.md#memory">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="benchmarks/figures/02-memory-dark.png">
+      <source media="(prefers-color-scheme: light)" srcset="benchmarks/figures/02-memory-light.png">
+      <img src="benchmarks/figures/02-memory-light.png" alt="Peak memory of HarmonizePy and HarmonizR on five matrices for limma, ComBat mode 1 and ComBat mode 3: HarmonizePy 116 to 208 MB, HarmonizR 170 to 848 MB, 1.4 to 5.9 times more" width="100%">
+    </picture>
+  </a>
+</p>
+
+HarmonizePy peaks at 116 to 208 MB; HarmonizR needs 1.4 to 2.6 times that with limma and 3.8 to 5.9 times with ComBat, most of it the sva package it loads.
 
 ## Installation
 

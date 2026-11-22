@@ -2,6 +2,24 @@
 
 The benchmark suite measures how long `harmonize()` takes and how much memory it uses, and compares its output with single-core HarmonizR on matrices too large for the test fixtures. The latest results are in [`benchmarks/RESULTS.md`](https://github.com/LangeLab/HarmonizePy/blob/main/benchmarks/RESULTS.md) in the repository, measured at a stated version; this page describes what the suite runs and how to read and reproduce it.
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/benchmark-speed-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="assets/benchmark-speed-light.png">
+    <img alt="Wall time of HarmonizePy and HarmonizR on five matrices for limma, ComBat mode 1 and ComBat mode 3: HarmonizePy takes 21 ms to 2.0 s, HarmonizR 1.0 s to 312 s." src="assets/benchmark-speed-light.png">
+  </picture>
+</p>
+<p align="center"><sub><b>Figure 1.</b> Wall time of one correction on each matrix with an R baseline, both tools on one core. HarmonizR's time includes reading its input file, at most 5% of it here. <a href="https://github.com/LangeLab/HarmonizePy/blob/main/benchmarks/RESULTS.md#runtime">RESULTS.md</a> has every scenario.</sub></p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/benchmark-memory-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="assets/benchmark-memory-light.png">
+    <img alt="Peak memory of HarmonizePy and HarmonizR on five matrices for limma, ComBat mode 1 and ComBat mode 3: HarmonizePy 116 to 208 MB, HarmonizR 170 to 848 MB." src="assets/benchmark-memory-light.png">
+  </picture>
+</p>
+<p align="center"><sub><b>Figure 2.</b> Peak memory of a fresh process that reads both input files, corrects once and exits. Dotted lines mark each tool started and left idle; loading sva adds about 370 MB to HarmonizR's ComBat runs. <a href="https://github.com/LangeLab/HarmonizePy/blob/main/benchmarks/RESULTS.md#against-harmonizr">RESULTS.md</a> has the table.</sub></p>
+
 ## Datasets
 
 | Dataset     | Kind                  | Features | Samples | Batches | R baseline |
@@ -22,12 +40,53 @@ The benchmark suite measures how long `harmonize()` takes and how much memory it
 ## What is measured
 
 - Wall time of one `harmonize()` call, median over repetitions, after a warm-up run in the R-backed pass.
-- Memory: the peak of Python allocations traced by `tracemalloc` during the call, plus the size of the result matrix.
+- Memory within a run: the peak of Python allocations traced by `tracemalloc` during the call, plus the size of the result matrix.
+- Memory against HarmonizR: the peak resident set of a fresh process per run (`ru_maxrss`), which reads the two input files, corrects once and exits. It counts everything the operating system gives the tool, interpreter and libraries included; a run that only loads each tool gives its idle cost. HarmonizR runs with BiocParallel set to serial, so all of its work stays in the measured process.
 - Against HarmonizR: the largest relative difference, `|py - r| / |r|`, over cells both outputs have, and whether the missing cells sit in the same places.
 
-HarmonizePy runs on one thread, with BLAS limited to one thread. HarmonizR runs with one R worker. R baselines are cached and were not measured in the same batch as the Python runs, so time ratios between them are rough. The Python heap and R's `gc()` heap measure different things and do not compare directly.
+HarmonizePy runs on one thread, with BLAS limited to one thread. HarmonizR runs with one R worker. R baselines are cached; `RESULTS.md` records them cached immediately before the Python passes, so both saw the same load. Absolute times on a shared machine still move from day to day; ratios measured in one batch compare. The Python heap and R's `gc()` heap measure different things and do not compare directly; the fresh-process peaks do.
+
+## Scaling
+
+A separate sweep corrects synthetic matrices with ten batches, each feature absent from 20% of them, growing either the features or the samples.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/benchmark-scaling-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="assets/benchmark-scaling-light.png">
+    <img alt="Wall time of limma and the four ComBat modes as features grow from 1,000 to 50,000 at 60 samples, and as samples grow from 40 to 6,000 at 5,000 features." src="assets/benchmark-scaling-light.png">
+  </picture>
+</p>
+<p align="center"><sub><b>Figure 3.</b> Time follows the number of missingness groups, printed along the bottom, which grows far slower than the matrix. The non-parametric modes compare each feature with every other in its group, so they rise once groups get large.</sub></p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/benchmark-memory-scaling-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="assets/benchmark-memory-scaling-light.png">
+    <img alt="Peak traced memory of one harmonize call against the size of the input matrix, from 0.5 MB to 229 MB, between 2.4 and 3.9 times the input." src="assets/benchmark-memory-scaling-light.png">
+  </picture>
+</p>
+<p align="center"><sub><b>Figure 4.</b> Traced peak of one call against the input matrix as float64: 2.4 to 3.9 times the input over the whole sweep.</sub></p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/benchmark-blocking-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="assets/benchmark-blocking-light.png">
+    <img alt="Wall time against the share of observed values kept, for limma, ComBat 1 and ComBat 3 at 5,000 and 20,000 features, without blocking and with block=2." src="assets/benchmark-blocking-light.png">
+  </picture>
+</p>
+<p align="center"><sub><b>Figure 5.</b> <code>block=2</code> joins neighbouring batches, so far fewer groups form and runs take a fraction of the time; a feature missing from one batch of a block loses the whole block, so about 80% of the observed values reach the output. See <a href="Sorting-and-Blocking">Sorting and blocking</a>.</sub></p>
 
 ## Reading the concordance
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/benchmark-outcomes-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="assets/benchmark-outcomes-light.png">
+    <img alt="For each matrix with an R baseline, the share of input features each tool corrects, returns as measured, returns empty, or leaves out, with ComBat mode 1." src="assets/benchmark-outcomes-light.png">
+  </picture>
+</p>
+<p align="center"><sub><b>Figure 6.</b> What each tool's output holds for every input feature, ComBat mode 1. Both correct the same features; HarmonizePy keeps a row for each feature it cannot correct, and its <a href="Correction-Report">correction report</a> says why.</sub></p>
 
 Most scenarios agree to within the ComBat convergence threshold or to rounding (see [R compatibility](R-Compatibility#tolerances)). Where missing cells or values differ, the cause is one of these:
 
@@ -40,25 +99,27 @@ Most scenarios agree to within the ComBat convergence threshold or to rounding (
 
 ## Reproducing
 
-The R-backed pass needs R with the packages pinned by `renv.lock` (`sva`, `limma`, `HarmonizR`, `seriation` and their helpers); the Python-only pass needs no R.
+The R baselines and the memory comparison need R with the packages pinned by `renv.lock` (`sva`, `limma`, `HarmonizR`, `seriation` and their helpers); the other runs need no R. Each run writes a fixed file under `benchmarks/results/`, which is not tracked, and the last command draws every figure on this page from those files.
 
 ```bash
-OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 uv run python -m benchmarks.bench run \
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+uv run python -m benchmarks.bench cache-r --datasets small medium dia murine scp_small --cores 1
+uv run python -m benchmarks.bench run \
   --datasets small medium dia murine scp_small \
-  --with-r --with-r-cores 1 \
-  --n-reps 3 \
+  --with-r --with-r-cores 1 --n-reps 3 \
   --out benchmarks/results/benchmark_r_parity.json \
   --md benchmarks/results/benchmark_r_parity.md
-
-OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 uv run python -m benchmarks.bench run \
-  --datasets large scp_large \
-  --n-reps 1 \
-  --no-warmup \
+uv run python -m benchmarks.bench run \
+  --datasets large scp_large --n-reps 1 --no-warmup \
   --out benchmarks/results/benchmark_python_extremes.json \
   --md benchmarks/results/benchmark_python_extremes.md
+uv run python -m benchmarks.memory_peak
+uv run python -m benchmarks.scaling
+uv run python -m benchmarks.outcomes
+uv run --group figures python -m benchmarks.figures
 ```
 
-`python -m benchmarks.bench cache-r` fills the cache of R baselines that the first pass attaches. Results go to `benchmarks/results/`, which is not tracked. The suite has its own subcommands: `run`, `cache-r`, `validity`, `profile`, `report` and `generate-data`; `python -m benchmarks.bench --help` lists their options.
+The figures land in `benchmarks/figures/` and, under the names this page uses, in the wiki's `assets/` folder. The suite has its own subcommands: `run`, `cache-r`, `validity`, `profile`, `report` and `generate-data`; `python -m benchmarks.bench --help` lists their options.
 
 ## Related pages
 
