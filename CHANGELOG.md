@@ -46,7 +46,7 @@ All notable changes to this project are documented in this file. The format is b
 - `build_block_list()` accepts float batch labels; it raised a `KeyError` for labels that were not whole numbers.
 - The ComBat log line reports location-only correction when a one-sample batch forces it.
 - ComBat's non-parametric modes (3 and 4) form each likelihood from the deviations to the feature's own mean, as `sva::ComBat` does. Expanding the square lost precision when a feature's values lay far from the other features' estimates relative to their spread, which could put the scale estimates off by up to a factor of three. On the test fixtures, corrected values change by at most 6e-13 relative.
-- Docstrings, CLI help, the wiki, the README, and the parity document describe what the code does: wrong examples and exception lists are corrected, unmeasured speed, memory, and accuracy claims are removed, and the sort-order differences from R are stated with how often the orders agree. All docstring examples run (#24).
+- Docstrings, CLI help, the wiki, the README, and the parity document describe what the code does: wrong examples and exception lists are corrected, unmeasured speed, memory, and accuracy claims are removed, and the sort-order and unique-removal differences from R are stated with how often the results agree. All docstring examples run (#24).
 - `build_affiliation_list()` rejects batch or block labels that do not have one entry per column, and `build_block_list()` counts float batch labels as distinct batches.
 
 

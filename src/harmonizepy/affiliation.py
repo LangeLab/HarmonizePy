@@ -204,7 +204,9 @@ def remove_unique_combinations(
     equally long candidates, the winner follows an internal order fixed by the
     set of shared affiliations, so it does not depend on the order of the
     rows. A feature with no shared subset, and empty affiliations, are
-    left unchanged. This follows R ``HarmonizR:::unique_removal`` (``ur``).
+    left unchanged. This is the counterpart of HarmonizR's ``ur`` option,
+    with a narrower rule: HarmonizR also moves a feature to a pattern that
+    only one other feature has, and updates the list as it goes.
 
     Parameters
     ----------

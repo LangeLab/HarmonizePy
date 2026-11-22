@@ -1247,9 +1247,9 @@ class TestUnobservedBatch:
     def test_level_follows_the_observed_batches(self, kwargs: dict[str, bool]) -> None:
         """The feature's level stays near its correction on the observed batches alone.
 
-        Before, the unobserved batch counted as a batch effect of zero and pulled a
-        level of about 10.4 down to about 7.2. What remains is the shrinkage towards
-        batch priors centred on the all-batch mean.
+        Counting the unobserved batch as a batch effect of zero would pull a level of
+        about 10.4 down to about 7.2. What remains is the shrinkage towards batch
+        priors centred on the all-batch mean.
 
         Failure condition: the unobserved batch enters the grand mean or the prior.
         """
@@ -1257,7 +1257,7 @@ class TestUnobservedBatch:
         keep = batch < 2
         level = np.nanmean(combat(data, batch, **kwargs)[0])
         alone = np.nanmean(combat(data[:, keep], batch[keep], **kwargs)[0])
-        # The batch shifts are +-1 and the old bias was 3.2; 0.4 covers the prior
+        # The batch shifts are +-1 and the zero-effect bias would be 3.2; 0.4 covers the prior
         # offset between the two fits, which reaches 0.25 in location-only mode.
         assert abs(level - alone) < 0.4
 

@@ -30,8 +30,9 @@ abstract: >
 
   The engine layer is pure NumPy with no compiled extensions. Both a
   programmatic API and a full CLI are available, supporting config files
-  (TOML, JSON, YAML), dry-run validation, JSON run summaries, and output
-  in TSV, CSV, or Parquet. The implementation is verified against R
+  (TOML, JSON, YAML), dry-run validation, JSON run summaries, a
+  per-feature report of what happened to each feature, and output in TSV,
+  CSV, or Parquet. The implementation is verified against R
   reference outputs for `sva::ComBat`, `limma::removeBatchEffect`, and
   HarmonizR workflows across synthetic and real-data scenarios.
 authors:

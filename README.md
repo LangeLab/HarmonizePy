@@ -71,7 +71,7 @@ uv python install 3.12.13
 uv sync --dev --python 3.12.13
 
 # Optional extras
-pip install harmonizepy[config]      # YAML/TOML support for --config flag
+pip install harmonizepy[config]      # YAML config files for --config
 pip install harmonizepy[completion]  # Shell tab-completion via argcomplete
 pip install harmonizepy[io]          # Parquet input and output
 ```
@@ -80,7 +80,7 @@ See [Installation](https://github.com/LangeLab/HarmonizePy/wiki/Installation) fo
 
 ## Quick start
 
-`harmonize()` returns a `pandas.DataFrame` with the same shape and column order as the input. Features are rows (DataFrame index), samples are columns.
+`harmonize()` returns a `pandas.DataFrame` with the input's features and column order; a feature repeated with the same name and values appears once. Features are rows (DataFrame index), samples are columns.
 
 ```python
 import pandas as pd
@@ -94,6 +94,10 @@ result = harmonize("data.tsv", "description.csv")
 data_df = pd.read_csv("data.tsv", sep="\t", index_col=0)
 desc_df = pd.read_csv("description.csv")
 result = harmonize(data_df, desc_df, algorithm="limma", sort="sparsity", block=2)
+
+# What happened to each feature: corrected, or kept raw and why
+result, report = harmonize(data_df, desc_df, return_report=True)
+report["status"].value_counts()
 
 # Low-level API (ndarray in, ndarray out)
 from harmonizepy import combat, remove_batch_effect
@@ -118,6 +122,7 @@ The low-level engines handle missing observations per feature and preserve NaN p
 | `sort`           | `"sparsity"`, `"jaccard"`, `"seriation"`, or `None` | `None`     | Batch sorting strategy before blocking                          |
 | `block`          | int >= 2 or `None`                                  | `None`     | Group N consecutive batches into one sub-matrix block           |
 | `unique_removal` | bool                                                | `True`     | Rescue singleton features by cropping to nearest shared pattern |
+| `return_report`  | bool                                                | `False`    | Also return the per-feature correction report                   |
 
 Full signature with all parameters is in the [API Reference](https://github.com/LangeLab/HarmonizePy/wiki/API-Reference).
 
