@@ -21,7 +21,6 @@ import json
 import platform
 import statistics
 from datetime import UTC, datetime
-from importlib.metadata import version
 from pathlib import Path
 from typing import Any, cast
 
@@ -68,11 +67,14 @@ def build_report_json(
     r_cores = r_cores or config.r_cache_default_cores
 
     # System info
+    import harmonizepy
+
     system = {
         "os": f"{platform.system()} {platform.release()}",
-        "cpu": platform.processor() or "unknown",
+        "cpu": _cpu_model(),
+        "blas_threads": _blas_threads_setting(),
         "python": platform.python_version(),
-        "harmonizepy": version("harmonizepy"),
+        "harmonizepy": harmonizepy.__version__,
         "r": r_version,
         "r_available": r_version is not None,
         "harmonizr": harmonizr_version,
@@ -104,12 +106,15 @@ def build_report_json(
             baseline = "Python + R" if ds_spec.r_eligible else "Python only"
             # Calculate file sizes
             from .datasets import resolve_dataset_paths
+
             try:
                 paths = resolve_dataset_paths(config, ds_name)
                 input_size = paths.input_path.stat().st_size if paths.input_path.is_file() else 0
                 desc_size = paths.desc_path.stat().st_size if paths.desc_path.is_file() else 0
                 total_kb = (input_size + desc_size) / 1024.0
-                size_str = f"{total_kb:.0f} KB" if total_kb < 1024 else f"{total_kb / 1024.0:.1f} MB"
+                size_str = (
+                    f"{total_kb:.0f} KB" if total_kb < 1024 else f"{total_kb / 1024.0:.1f} MB"
+                )
             except OSError:
                 size_str = "N/A"
             datasets_meta[ds_name] = {
@@ -123,8 +128,13 @@ def build_report_json(
             }
         except KeyError:
             datasets_meta[ds_name] = {
-                "type": "Unknown", "baseline": "Unknown", "features": 0, "samples": 0, "batches": 0,
-                "file_size": "N/A", "missing_frac": None,
+                "type": "Unknown",
+                "baseline": "Unknown",
+                "features": 0,
+                "samples": 0,
+                "batches": 0,
+                "file_size": "N/A",
+                "missing_frac": None,
             }
 
     return {
@@ -165,13 +175,25 @@ def _build_scenario_entry(
         "p5_s": s_metrics.p5_s,
         "p95_s": s_metrics.p95_s,
         "cpu_pct": statistics.median(s_metrics.cpu_pcts) if s_metrics.cpu_pcts else None,
-        "tracemalloc_peak_mb": statistics.median(s_metrics.tracemalloc_peak_mbs) if s_metrics.tracemalloc_peak_mbs else None,
+        "tracemalloc_peak_mb": statistics.median(s_metrics.tracemalloc_peak_mbs)
+        if s_metrics.tracemalloc_peak_mbs
+        else None,
         "rss_post_gc_kbs": s_metrics.rss_post_gc_kbs,
-        "rss_before_kb": statistics.median(s_metrics.rss_before_kbs) if s_metrics.rss_before_kbs else None,
-        "rss_after_kb": statistics.median(s_metrics.rss_after_kbs) if s_metrics.rss_after_kbs else None,
-        "rss_post_gc_kb": statistics.median(s_metrics.rss_post_gc_kbs) if s_metrics.rss_post_gc_kbs else None,
-        "rss_delta_kb": statistics.median(s_metrics.rss_delta_kbs) if s_metrics.rss_delta_kbs else None,
-        "rss_delta_post_gc_kb": statistics.median(s_metrics.rss_delta_post_gc_kbs) if s_metrics.rss_delta_post_gc_kbs else None,
+        "rss_before_kb": statistics.median(s_metrics.rss_before_kbs)
+        if s_metrics.rss_before_kbs
+        else None,
+        "rss_after_kb": statistics.median(s_metrics.rss_after_kbs)
+        if s_metrics.rss_after_kbs
+        else None,
+        "rss_post_gc_kb": statistics.median(s_metrics.rss_post_gc_kbs)
+        if s_metrics.rss_post_gc_kbs
+        else None,
+        "rss_delta_kb": statistics.median(s_metrics.rss_delta_kbs)
+        if s_metrics.rss_delta_kbs
+        else None,
+        "rss_delta_post_gc_kb": statistics.median(s_metrics.rss_delta_post_gc_kbs)
+        if s_metrics.rss_delta_post_gc_kbs
+        else None,
         "rss_stability": {
             "status": s_metrics.rss_stability.status,
             "reason": s_metrics.rss_stability.reason,
@@ -207,10 +229,9 @@ def _build_scenario_entry(
         }
         comp_type = "realistic" if r_cores and r_cores > 1 else "single_core_fair"
         note = (
-            f"R={r_cores} cores (foreach/doParallel), "
-            f"Python=1 thread (NumPy single-threaded)."
-        ) if r_cores and r_cores > 1 else (
-            "R=1 core, Python=1 thread. Equal threading, startup excluded."
+            (f"R={r_cores} cores (foreach/doParallel), Python=1 thread (NumPy single-threaded).")
+            if r_cores and r_cores > 1
+            else ("R=1 core, Python=1 thread. Equal threading, startup excluded.")
         )
         comparison_meta = {
             "r_cores": r_cores,
@@ -265,10 +286,31 @@ def read_report_json(path: str | Path) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _detect_blas_threads() -> int:
-    """Detect available BLAS threads from the system."""
+def _cpu_model() -> str:
+    """Return the CPU model name: ``/proc/cpuinfo`` on Linux, else what ``platform`` reports."""
+    try:
+        with Path("/proc/cpuinfo").open(encoding="utf-8") as cpuinfo:
+            for line in cpuinfo:
+                if line.startswith("model name"):
+                    return line.split(":", 1)[1].strip()
+    except OSError:
+        pass
+    return platform.processor() or platform.machine() or "unknown"
+
+
+def _blas_threads_setting() -> str:
+    """Return the BLAS thread limit the environment sets for this run.
+
+    ``OPENBLAS_NUM_THREADS``, ``OMP_NUM_THREADS``, and ``MKL_NUM_THREADS`` are
+    checked in that order; without them, OpenBLAS starts one thread per core.
+    """
     import os
-    return os.cpu_count() or 32
+
+    for name in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+        value = os.environ.get(name)
+        if value:
+            return value
+    return f"not limited ({os.cpu_count()} cores)"
 
 
 def generate_markdown(report: dict[str, Any]) -> str:
@@ -276,7 +318,7 @@ def generate_markdown(report: dict[str, Any]) -> str:
     system = report.get("system", {})
     results = report.get("results", [])
 
-    blas_threads = _detect_blas_threads()
+    blas_threads = system.get("blas_threads", "not recorded")
 
     r_cores_str = "N/A"
     for entry in results:
@@ -295,8 +337,12 @@ def generate_markdown(report: dict[str, Any]) -> str:
     lines.append(f"**Generated:** {report.get('generated_at', '')}")
     lines.append(f"**Platform:** {system.get('os', '')}")
     lines.append(f"**CPU:** {system.get('cpu', '')}")
-    lines.append(f"**Threads:** Python=1 thread, R={r_cores_str} core(s), System/BLAS={blas_threads} threads")
-    lines.append(f"**Python:** {system.get('python', '')} (harmonizepy v{system.get('harmonizepy', '')})")
+    lines.append(
+        f"**Threads:** Python=1 thread, R={r_cores_str} core(s), BLAS threads={blas_threads}"
+    )
+    lines.append(
+        f"**Python:** {system.get('python', '')} (harmonizepy v{system.get('harmonizepy', '')})"
+    )
     if system.get("r"):
         lines.append(f"**R:** {system['r']} (HarmonizR {system.get('harmonizr', 'N/A')})")
     lines.append("")
@@ -337,7 +383,9 @@ def _add_data_specs(lines: list[str], report: dict[str, Any]) -> None:
 
     lines.append("## Data Specifications")
     lines.append("")
-    lines.append("| Dataset | Type | Baseline | Features | Samples | Batches | Missing | File Size |")
+    lines.append(
+        "| Dataset | Type | Baseline | Features | Samples | Batches | Missing | File Size |"
+    )
     lines.append("| --- | --- | --- | --- | --- | --- | --- | --- |")
     for ds_name in sorted(datasets_meta):
         meta = datasets_meta[ds_name]
@@ -361,10 +409,7 @@ def _add_data_specs(lines: list[str], report: dict[str, Any]) -> None:
 
 
 def _has_r_data(results: list[dict[str, Any]]) -> bool:
-    return any(
-        r.get("r") and r["r"].get("median_s") is not None
-        for r in results
-    )
+    return any(r.get("r") and r["r"].get("median_s") is not None for r in results)
 
 
 def _add_speed_section(lines: list[str], results: list[dict[str, Any]], r_cores: str) -> None:
@@ -375,19 +420,23 @@ def _add_speed_section(lines: list[str], results: list[dict[str, Any]], r_cores:
 
     lines.append("## Speed")
     lines.append("")
-    lines.append(f"Wall-clock time per scenario. Python runs single-threaded. R uses {r_cores} core(s) with system BLAS threading.")
+    lines.append(
+        f"Wall-clock time per scenario. Python starts no threads of its own; BLAS uses the thread limit in the header. R uses {r_cores} core(s)."
+    )
     has_r = _has_r_data(results)
     if has_r:
-        lines.append("Rows with `--` in the R columns are intentional Python-only scenarios or scenarios without a cached R baseline.")
+        lines.append(
+            "Rows with `--` in the R columns are intentional Python-only scenarios or scenarios without a cached R baseline."
+        )
     lines.append("")
 
     header = "| Dataset | Algorithm | Mode | Block | Sort | Py Med (s) | Py Reps"
-    sep    = "| --- | --- | --- | --- | --- | --- | ---"
+    sep = "| --- | --- | --- | --- | --- | --- | ---"
     if has_r:
         header += " | R Med (s) | R Reps | Ratio (R/Py)"
-        sep    += " | --- | --- | ---"
+        sep += " | --- | --- | ---"
     header += " |"
-    sep    += " |"
+    sep += " |"
 
     lines.append(header)
     lines.append(sep)
@@ -433,17 +482,21 @@ def _add_memory_section(lines: list[str], results: list[dict[str, Any]], r_cores
 
     lines.append("## Memory")
     lines.append("")
-    lines.append("Python RSS retained delta is measured from a post-GC baseline before the call to a post-GC RSS after transient benchmark objects are released. This is more stable across repeated in-process runs than a raw before/after delta. RSS stability summarizes the repeated timed runs: plateau means the last up to 3 post-GC samples stayed within 1024 KB, and growing means monotonic growth without a stable tail. Raw end-of-call RSS is still stored in the JSON output. Heap is Python tracemalloc peak and R gc() absolute heap. R runs all scenarios in one process, so later scenarios may reuse previously allocated memory.")
+    lines.append(
+        "Python RSS retained delta is measured from a post-GC baseline before the call to a post-GC RSS after transient benchmark objects are released. This is more stable across repeated in-process runs than a raw before/after delta. RSS stability summarizes the repeated timed runs: plateau means the last up to 3 post-GC samples stayed within 1024 KB, and growing means monotonic growth without a stable tail. Raw end-of-call RSS is still stored in the JSON output. Heap is Python tracemalloc peak and R gc() absolute heap. R runs all scenarios in one process, so later scenarios may reuse previously allocated memory."
+    )
     has_r = _has_r_data(results)
     if has_r:
-        lines.append("Rows with blank R memory fields are intentional Python-only scenarios or scenarios without a cached R baseline.")
+        lines.append(
+            "Rows with blank R memory fields are intentional Python-only scenarios or scenarios without a cached R baseline."
+        )
     lines.append("")
 
     header = "| Dataset | Algorithm | Mode | Py RSS stability | Py RSS retained Δ (KB) | R RSS Δ (KB) | Py RSS post-GC (KB) | Py Heap (MB) | R Heap (MB) |"
-    sep    = "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"
+    sep = "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"
     if not has_r:
         header = "| Dataset | Algorithm | Mode | Py RSS stability | Py RSS retained Δ (KB) | Py RSS post-GC (KB) | Py Heap (MB) |"
-        sep    = "| --- | --- | --- | --- | --- | --- | --- |"
+        sep = "| --- | --- | --- | --- | --- | --- | --- |"
 
     lines.append(header)
     lines.append(sep)
@@ -461,15 +514,23 @@ def _add_memory_section(lines: list[str], results: list[dict[str, Any]], r_cores
             if py.get("rss_delta_post_gc_kb") is not None
             else "--"
         )
-        py_rss_post_gc = f"{py.get('rss_post_gc_kb', 0):.0f}" if py.get("rss_post_gc_kb") is not None else "--"
-        py_heap = f"{py.get('tracemalloc_peak_mb', 0):.2f}" if py.get("tracemalloc_peak_mb") is not None else "--"
+        py_rss_post_gc = (
+            f"{py.get('rss_post_gc_kb', 0):.0f}" if py.get("rss_post_gc_kb") is not None else "--"
+        )
+        py_heap = (
+            f"{py.get('tracemalloc_peak_mb', 0):.2f}"
+            if py.get("tracemalloc_peak_mb") is not None
+            else "--"
+        )
         row = f"| {ds} | {algo} | {mode} | {py_rss_stability_status} | {py_rss} |"
 
         if has_r:
             r_data = r.get("r")
             if r_data and r_data.get("rss_delta_kb") is not None:
                 r_rss = f"{r_data['rss_delta_kb']:.0f}"
-                r_heap = f"{r_data['r_heap_mb']:.1f}" if r_data.get("r_heap_mb") is not None else "--"
+                r_heap = (
+                    f"{r_data['r_heap_mb']:.1f}" if r_data.get("r_heap_mb") is not None else "--"
+                )
             else:
                 r_rss = "--"
                 r_heap = "--"
@@ -500,13 +561,17 @@ def _add_concordance_section(lines: list[str], results: list[dict[str, Any]]) ->
 
     lines.append("## Concordance")
     lines.append("")
-    lines.append("Python vs R corrected output comparison on shared features. Relative difference is |py - r| / |r| for non-NaN cells. Only scenarios with an R baseline appear below.")
+    lines.append(
+        "Python vs R corrected output comparison on shared features. Relative difference is |py - r| / |r| for non-NaN cells. Only scenarios with an R baseline appear below."
+    )
     lines.append("")
 
-    lines.extend([
-        "| Dataset | Algorithm | Mode | Block | Sort | Shared Features | Py Only | R Only | NaN Match | Max Rel | Mean Rel |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
-    ])
+    lines.extend(
+        [
+            "| Dataset | Algorithm | Mode | Block | Sort | Shared Features | Py Only | R Only | NaN Match | Max Rel | Mean Rel |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        ]
+    )
     for r in conc_rows:
         sc = r["scenario"]
         v = r["validity"]
@@ -520,7 +585,11 @@ def _add_concordance_section(lines: list[str], results: list[dict[str, Any]]) ->
         r_only = str(v.get("concordance_r_only_features", ""))
         nm = "YES" if v.get("concordance_nan_match") else "NO"
         mr = f"{v['concordance_max_rel']:.2e}" if v.get("concordance_max_rel") is not None else "--"
-        mn = f"{v['concordance_mean_rel']:.2e}" if v.get("concordance_mean_rel") is not None else "--"
+        mn = (
+            f"{v['concordance_mean_rel']:.2e}"
+            if v.get("concordance_mean_rel") is not None
+            else "--"
+        )
         lines.append(
             f"| {ds} | {algo} | {mode} | {block} | {sort} | "
             f"{shared} | {py_only} | {r_only} | {nm} | {mr} | {mn} |"

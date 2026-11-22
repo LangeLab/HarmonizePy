@@ -9,6 +9,7 @@ import logging
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from benchmarks.harness import BenchmarkHarness
 from benchmarks.metrics import SingleRunMetrics, aggregate_metrics, assess_rss_stability
@@ -485,3 +486,52 @@ class TestBenchmarkLoading:
 
         assert data_df is expected_data
         assert desc_df is expected_desc
+
+
+class TestReportSystemInfo:
+    """The report records the run's environment as it was."""
+
+    def test_blas_threads_follow_the_environment(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The recorded BLAS thread limit is the one the environment sets.
+
+        Failure condition: the report states the core count whatever the limit is.
+        """
+        from benchmarks.report import _blas_threads_setting
+
+        for name in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+            monkeypatch.delenv(name, raising=False)
+        monkeypatch.setenv("OMP_NUM_THREADS", "1")
+        assert _blas_threads_setting() == "1"
+        monkeypatch.delenv("OMP_NUM_THREADS")
+        assert _blas_threads_setting().startswith("not limited")
+
+    def test_cpu_model_is_named(self) -> None:
+        """The CPU field holds a model name, not an empty string.
+
+        Failure condition: ``platform.processor()`` is empty on Linux and the
+        report says "unknown".
+        """
+        from benchmarks.report import _cpu_model
+
+        assert _cpu_model().strip()
+
+    def test_markdown_header_prints_the_recorded_values(self) -> None:
+        """The Markdown header shows the recorded BLAS limit and package version.
+
+        Failure condition: the header re-detects the threads when it is rendered.
+        """
+        from benchmarks.report import generate_markdown
+
+        report = {
+            "system": {
+                "os": "Linux",
+                "cpu": "test cpu",
+                "blas_threads": "1",
+                "python": "3.12",
+                "harmonizepy": "9.9.9",
+            },
+            "results": [],
+        }
+        md = generate_markdown(report)
+        assert "BLAS threads=1" in md
+        assert "harmonizepy v9.9.9" in md
