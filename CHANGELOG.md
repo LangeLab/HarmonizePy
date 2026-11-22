@@ -2,187 +2,129 @@
 
 # Changelog
 
-All notable changes to this project are documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+All notable changes to HarmonizePy, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+How to read it:
+
+- Each version opens with a summary of what it changes for users. The entries follow under **Added**, **Changed**, **Fixed**, and **Removed**, each led by the area it touches.
+- While the major version is 0, a minor version can change corrected values. Every intended change is listed.
+- `#N` is the GitHub issue with the discussion. Work on `main` that is not released yet collects under `[Unreleased]`.
+- From 0.4.0, a version's section is also the text of its GitHub release.
 
 ## [Unreleased]
 
+This release fixes the inputs found to give wrong values, hang, or fail without a clear message, and adds a report that says what happened to each feature. Corrected values change only where a fix below applies; elsewhere they differ from 0.3.2 by rounding, at most 1e-10. Large inputs run faster and need less memory.
+
 ### Added
 
-- `harmonize(..., return_report=True)` returns a `HarmonizeResult` of the corrected matrix and a per-feature report: whether each feature was corrected or kept raw and why, the batches of its group, its group size, whether unique removal cropped it, and how many repeated rows of it were removed. The CLI writes the same table with `--report PATH`, and refuses a path that would overwrite the output or an input. The corrected matrix is the same with or without the report (#28).
-- `harmonize()` and the dry run warn with `InputScaleWarning` when the data look untransformed (non-negative with a 95th percentile above 100) or look like proportions (every value between 0 and 1). The check is a heuristic, names the transform to apply, and can be silenced by category. The expected input scale is documented (#25).
+- **Correction report.** `harmonize(..., return_report=True)` returns a `HarmonizeResult` of the corrected matrix and a table with one row per feature: whether it was corrected or kept raw and why, the batches of its group, its group size, whether unique removal cropped it, and how many repeats of it were removed. The CLI writes the same table with `--report PATH`. The matrix is the same with or without the report (#28).
+- **Input-scale warning.** `harmonize()` and the dry run warn with `InputScaleWarning` when the values look untransformed (non-negative with a 95th percentile above 100) or look like proportions, and name the transform to apply. The check is a heuristic and can be silenced by category (#25).
 
 ### Changed
 
-- ComBat's parametric solver iterates all batches of a group together, each stopping at its own convergence; corrected values are unchanged. Per-group bookkeeping and peak memory are lower, and the design cache is bounded by size.
-- The per-group ComBat log line is at DEBUG level; the run's INFO lines report the number of groups.
-- CSV and TSV files are read with pandas' C parser on the calling thread, at every width; pyarrow's reader, which started a thread pool, is no longer used. Parquet is read without reader threads. The `io` extra is needed for Parquet only.
-- `pytest` also runs the examples in the docstrings, so CI checks them with the rest of the suite.
-- ComBat's non-parametric modes (3 and 4) compute the prior in blocks sized to stay in the CPU cache, which speeds up large groups and lowers their peak memory; a small group is done in one block. Corrected values change by rounding only.
-- ComBat's checks for features to leave raw take a few array operations per group whatever the number of batches, so runs with many small groups are not slowed by them.
+- **Speed and memory.** ComBat solves all batches of a group together, computes the non-parametric prior in blocks sized for the CPU cache, and checks for features to leave raw in a few array operations per group. Corrected values change by rounding only.
+- **One thread.** CSV and TSV files are read with pandas' C parser instead of pyarrow's reader, which started a thread pool, and Parquet is read without reader threads. The `io` extra is needed for Parquet only.
+- **Logging.** The per-group ComBat line is at DEBUG level; INFO lines report the number of groups.
 
 ### Fixed
 
-- ComBat, parametric modes: a feature whose variance the engine would raise to its 1e-12 floor, such as a feature that is constant inside a batch, no longer sets the empirical-Bayes prior for every other feature. It keeps its raw values, as `sva::ComBat` does for exactly constant rows, and the other features are corrected as if it were absent (#18).
-- ComBat, non-parametric modes: a feature whose pooled within-batch variance is below the 1e-12 floor, such as one constant inside every batch, keeps its raw values, as in the parametric modes and `sva::ComBat`. It was given a shift that did not come from its data. A feature constant in some batches only is still corrected, unlike in `sva::ComBat`: its batch locations are estimable, and it gives no weight to the other features' priors in the batches where it is constant.
-- A feature alone in its batch pattern keeps its raw values with both engines. ComBat could hang on such a row with a missing cell and return missing values; limma corrected it on its own batch means (#19).
-- `combat()` rejects an unknown `ref_batch`, and a reference batch with a single sample, before any other step.
-- Infinite values, such as log2 of zero, are rejected with the feature named. They made every output value missing.
-- `combat()`: a feature with no observed value stays missing and no longer makes every other value missing.
-- `combat()`, `adjust_combat()`, `remove_batch_effect()`, and `adjust_limma()` require batch labels that are whole numbers. `combat()` cast labels such as 0.2 and 0.9 to the same integer and treated them as one batch. The limma functions, which accepted text, missing, and infinite labels, now reject them too.
-- `combat()` and `remove_batch_effect()` fit a feature that has no value in some batch on the batches it was measured in: an unobserved batch no longer enters its grand mean, the batch priors, or the limma contrasts, where it counted as a batch effect of zero (a true level of 10 came back near 7). Features with values in a single batch keep their raw values in both engines, as do, in limma, features missing a batch whose values do not outnumber their observed batches, and, with `ref_batch`, features with no value in the reference batch. A batch observed by fewer than two features has no prior, and its estimates are used unshrunk. The log counts each kind. `harmonize()` output is unchanged.
-- `splitting()` rejects an unknown algorithm or ComBat mode with a `ValueError`, and `adjust_combat()` checks the batch length before any shortcut.
-- A whole-number column with a blank cell loads, with the blank as missing. An integer column becomes floating point only when it has a blank, with every reader (#20).
-- Repeated features are removed only when both the name and all values repeat, and the removal is logged. Features with identical values under different names are kept, and a name repeated with different values raises a `ValueError`. `harmonize()` applies the same rule to a DataFrame passed directly (#21).
-- CLI: `--output-format csv` without `-o` writes `<data_stem>_corrected.csv`. A dry run writes no files: `--dry-run` with `--log-file`, `--summary`, `--json`, or `--report` on the command line is a usage error, and a dry run ignores the same keys in a config file (#22).
-- `harmonize()`, the dry run, and the run summary read the batch description by one rule: the columns named `ID` and `batch` when present, otherwise the first and third columns (#22).
-- A description that lists a sample twice, or has a batch label that is not a whole number, raises a `ValueError` that names the problem. Labels such as 1.5 were truncated to integers.
-- The dry run plans the groups exactly as the correction run does, including sorting and unique removal, so its sub-matrix count matches the run. It prints the `needed_values` the run will use instead of `auto`.
-- `read_main_data()` keeps rows with no value, as `harmonize()` does for a DataFrame, so a file and the same frame give the same rows.
-- Duplicate sample names raise a `ValueError`, in a DataFrame and in a file header, where the parser would otherwise rename the second column.
-- CLI: the run summary records the `needed_values` the run used; a malformed YAML config and reading or writing errors give an error message instead of a traceback; log lines are no longer repeated when `main()` runs more than once in a process, and `main()` leaves the package logger as it found it.
-- The log reports the number of features unique removal moved and the number of blocks correctly.
-- Parquet files are read without the deprecated `engine="auto"` option.
-- `combat_mode` must be an integer from 1 to 4 in `harmonize()`, `HarmonizeConfig`, `adjust_combat()`, and `splitting()`, with one error message. `True` and `1.0` were accepted by some of these and rejected by others.
-- `build_block_list()` accepts float batch labels; it raised a `KeyError` for labels that were not whole numbers.
-- The ComBat log line reports location-only correction when a one-sample batch forces it.
-- ComBat's non-parametric modes (3 and 4) form each likelihood from the deviations to the feature's own mean, as `sva::ComBat` does. Expanding the square lost precision when a feature's values lay far from the other features' estimates relative to their spread, which could put the scale estimates off by up to a factor of three. On the test fixtures, corrected values change by at most 6e-13 relative.
-- Docstrings, CLI help, the wiki, the README, and the parity document describe what the code does: wrong examples and exception lists are corrected, unmeasured speed, memory, and accuracy claims are removed, and the sort-order and unique-removal differences from R are stated with how often the results agree. All docstring examples run (#24).
-- `build_affiliation_list()` rejects batch or block labels that do not have one entry per column, and `build_block_list()` counts float batch labels as distinct batches.
-
+- **ComBat statistics.**
+  - A feature whose variance the engine would raise to its 1e-12 floor, such as one constant inside a batch, keeps its raw values and no longer sets the empirical-Bayes prior for every other feature (#18). In modes 2 to 4, a feature constant in only some batches is still corrected; `sva::ComBat` leaves it raw.
+  - Modes 3 and 4 form each likelihood from the deviations to the feature's own mean, as `sva::ComBat` does. The expanded form lost precision and could put scale estimates off by up to a factor of three.
+  - `combat()` and `remove_batch_effect()` fit a feature that has no value in some batch on the batches it was measured in; the unobserved batch counted as a batch effect of zero, so a true level of 10 came back near 7. Features with values in a single batch keep their raw values, as do, in limma, features missing a batch whose values do not outnumber their observed batches. `harmonize()` never sends such a feature to an engine, so this change alone does not alter its output (#27).
+- **Features left raw.** A feature alone in its batch pattern keeps its raw values with both engines. ComBat could hang on such a row with a missing cell, and limma corrected it on its own batch means (#19).
+- **Engine input.** `combat()` keeps a feature with no value missing instead of making every value missing. Infinite values are rejected with the feature named. All four engine functions require whole-number batch labels; `combat()` merged labels such as 0.2 and 0.9 into one batch. An unknown `ref_batch`, a one-sample reference batch, an unknown algorithm, and a `combat_mode` other than an integer from 1 to 4 are rejected with one message each.
+- **Input files.**
+  - A whole-number column with a blank cell loads, with the blank as missing (#20).
+  - A feature is removed as a repeat only when its name and all its values repeat, and the removal is logged; a name repeated with different values raises a `ValueError`. Files and DataFrames follow the same rule (#21).
+  - Rows with no value are kept when a file is read, as for a DataFrame; reading a file dropped them. Repeated sample names raise a `ValueError`.
+  - The batch description is read by one rule everywhere: the columns named `ID` and `batch`, otherwise the first and third. A sample listed twice, or a batch label that is not a whole number, raises a `ValueError` that names it (#22).
+- **Command line.** `--output-format csv` without `-o` writes a `.csv` file. A dry run writes no files, plans the groups exactly as the run does, and prints the `needed_values` the run uses; `--dry-run` with `--log-file`, `--summary`, `--json`, or `--report` is a usage error (#22). The summary records the resolved `needed_values`; a malformed YAML config and read or write errors give a message instead of a traceback; log lines are not repeated when `main()` runs twice.
+- **Pipeline.** The log counts the features unique removal moved and the blocks correctly. `build_block_list()` accepts float labels and counts them as distinct batches; `build_affiliation_list()` checks that labels match the columns.
+- **Documentation.** Docstrings, CLI help, the wiki, the README, and the parity document describe what the code does, and state the sort-order and unique-removal differences from HarmonizR with how often the results agree (#24).
 
 ## [0.3.2] - 2026-05-29
 
+This release adds a GitHub wiki, a CI workflow that runs the R concordance tests on committed fixtures, and a benchmark summary.
+
 ### Added
 
-- Fixture-backed CI workflow with a representative test subset for push and pull request runs.
-- Top-level benchmark results documentation now summarizes dataset design, benchmark environment, R-vs-Python representative runtimes, and the mixed R-backed versus Python-only benchmark policy.
-- GitHub Wiki documentation added under `docs/`: 10 pages covering Installation, Quick Start, Input Format, Algorithms, Pipeline, API Reference, CLI Reference, R Compatibility, and Benchmarks. Includes `_Sidebar.md` and `_Footer.md` for navigation.
+- **CI.** A GitHub Actions workflow runs a representative subset of the test suite on pushes and pull requests, with the R reference outputs committed so the concordance tests need no R installation.
+- **Documentation.** A GitHub wiki of ten pages (installation, quick start, input format, algorithms, pipeline, API, CLI, R compatibility, benchmarks) and a benchmark summary in `benchmarks/RESULTS.md`.
 
 ### Changed
 
-- R-generated TSV and CSV fixtures are now tracked in git so CI can run concordance coverage without regenerating them.
-- Package metadata, smoke checks, README examples, parity docs, and workspace reference docs are aligned on version 0.3.2.
-- CLI default output now writes `<data_stem>_corrected.tsv` unless parquet is explicitly requested.
-- README restructured: intro condensed, Documentation section added with wiki links, parameter table trimmed to most-used params, CLI section shortened, test coverage and project layout sections condensed. Logo uses absolute GitHub raw URL for PyPI compatibility. Docs badge links to the wiki.
+- **Command line.** Without `-o`, the output is `<data_stem>_corrected.tsv`; Parquet is written only when requested.
+- **README.** The README is shorter and links to the wiki pages.
 
 ### Fixed
 
-- Repo-wide Ruff and mypy failures cleared on the current CI target.
-- Install docs and dependency notes now document `harmonizepy[io]` for parquet support and pyarrow-accelerated IO.
+- **Code quality.** Ruff and mypy pass on the CI target. The install docs name the `io` extra for Parquet.
 
 ## [0.3.1] - 2026-05-28
 
+This release adds a benchmark harness that compares against HarmonizR, and speeds up the missing-value paths of both engines.
+
 ### Added
 
-- New benchmark system: in-process runner, YAML-driven scenario registry, stable R cache keys, 6-command CLI (`run`/`cache-r`/`validity`/`profile`/`report`/`generate-data`), and JSON/Markdown report generation.
-- Per-scenario validity checks, R concordance in the harness, and scenario tags (`parametric`, `nonparametric`, `blocking`, `sorted`, `py_only`) for filtering.
-- Comparable memory metrics: R heap and RSS delta alongside Python tracemalloc including output array `nbytes`.
-- R wrapper recovers from `sva::ComBat` singular matrix crashes by removing problematic features and retrying.
+- **Benchmarks.** A benchmark command (`run`, `cache-r`, `validity`, `profile`, `report`, `generate-data`) with a scenario registry, cached HarmonizR baselines, concordance checks, and memory measurements for Python and R.
 
 ### Changed
 
-- `splitting.py` and `core.py`: keep split-and-rebuild on one final assembled matrix, cache per-affiliation column indices, and for sorted runs scatter corrected submatrices directly back to original column positions instead of reordering the full result afterwards.
-- Internal optimization and benchmark-status documents reorganized to separate completed work from remaining memory-focused items.
-- Benchmarking now uses public `harmonize()` directly, defaults R baselines to 1 core, suppresses timed-run logging, and auto-converts DIA CSV input to TSV for R.
+- **Speed.** The ComBat missing-value path, the non-parametric prior, the limma missing-value path, the affiliation and sorting helpers, data validation, and output assembly do less repeated work, with concordance unchanged.
 
 ### Fixed
 
-- Orphaned `doParallel` workers killed via process group on R timeout.
-- R version strings cleaned of renv status messages.
-- `generate_from_config` uses per-dataset `missing_frac` instead of hardcoded 0.0.
-- `block` passed to HarmonizR as numeric (was silently falling back to unblocked). Historical `Block = 2` results invalidated.
-- Memory/reporting fixes: tracemalloc MB divisor corrected from 1e6 to 1024^2, and R `gc()` now reads the MB column instead of raw cell counts.
-- CLI/config fixes: config paths now resolve relative to the config file, and `--combat-modes` now reaches `filter_registry` in `run`, `cache-r`, and `validity`.
-- Harness batch column lookup uses column name with positional fallback matching `core.py`.
-- Dead code removed: `Scenario.cache_key`, `phase_times` field and aggregation.
-
-### Performance
-
-- `_combat_nan`: consolidated NaN-heavy ComBat work including vectorized standardization/final adjustment, grouped valid-mask reuse, one-hot grouped Beta.NA with reused reduced layouts, grouped row variance by sums/squared sums, and reusable `_it_sol` buffers. These changes reduced engine overhead while preserving concordance.
-- Non-parametric ComBat: binomial residual precompute plus block-vectorized `_int_eprior` cut large mode 3 from 9.76s to 5.87s.
-- limma NaN path now groups identical valid-observation masks and solves each reduced design once, improving representative full-pipeline timings from 0.48s to 0.27s on murine and from 1.13s to 0.36s on DIA while preserving concordance.
-- Affiliation and sorting helpers now reuse repeated affiliation patterns and precomputed non-NaN presence masks, reducing representative sorted/block timings from 0.15s to 0.13s on medium ComBat mode 1 and from 2.80s to 2.65s on `scp_large` limma.
-- Data-matrix validation now inspects `df.dtypes` directly instead of indexing every column, reducing `validate_data_matrix()` on `scp_large` from 0.90s to 0.05s and improving representative `scp_large` limma sort+block timing from 2.72s to 2.35s without changing concordance.
-- `splitting()` now returns its assembled output with `DataFrame(..., copy=False)`, removing the final full-width materialization copy and improving representative `scp_large` limma sort+block timing from 2.38s to 2.07s.
-- The split path now reuses one float64 ndarray across affiliation spotting and extraction, removing a duplicate whole-frame conversion and improving representative `scp_large` limma sort+block timing from 2.24s to 1.96s.
-- Direct-assembly and column-cache refactors improved pipeline timings: medium limma 0.15s->0.09s, medium m1 0.69s->0.63s, scp_small limma 0.16s->0.13s, scp_small m1 0.36s->0.32s.
-- Sorted block runs now avoid a full final unsort copy, improving representative `scp_large` timings from 5.87s to 5.57s for ComBat mode 1 and from 3.87s to 3.66s for limma.
+- **Benchmarks.** `block` reaches HarmonizR as a number (it fell back to no blocking, so earlier blocked R results were invalid); memory units, R version strings, config paths, mode filters, and R worker clean-up on timeout are corrected.
 
 ## [0.3.0] - 2026-05-27
 
+Per-cell missing values reach the engines instead of being dropped: each feature is corrected from its observed cells, as `sva::ComBat` 3.60.0 does, where rows and columns with missing cells were dropped before.
+
 ### Added
 
-- NaN handling: per-feature Beta.NA computation in ComBat and limma engines, matching R sva v3.60.0. NaN-shaped sub-matrices pass through to engines; each feature independently omits NaN from OLS, variance, and EB computations.
-- NaN-safe iterative (`_it_sol`) and non-parametric (`_int_eprior`) EB solvers using per-gene non-NA counts.
-- Per-cell NaN R concordance fixtures and murine medulloblastoma real-data verification. All modes concordant at max_rel 0.0003.
-- FEATURE_PARITY.md with complete R vs Python difference inventory.
-- DIA real-proteomics dataset verification: 8470 proteins, 2 batches, perfect concordance at machine epsilon.
+- **Missing values.** ComBat and limma compute each feature's batch means, variances, and empirical-Bayes estimates from its observed cells (`Beta.NA`), and both solvers use each feature's own count of observed cells.
+- **Validation.** R concordance fixtures with per-cell missing values, checks on the murine medulloblastoma and DIA proteomics datasets, and `assets/FEATURE_PARITY.md`, the list of differences from HarmonizR.
 
 ### Changed
 
-- Engine NaN handling: replaced row-dropping with per-feature Beta.NA path. Dense path unchanged.
-- `splitting.py`: removed column-dropping logic. Per-cell NaN flows through to engines.
-- `validation.py`: NaN allowed in engine inputs; validation checks only structural properties.
-- Test NaN invariants: now verify correct NaN handling rather than asserting NaN-free input.
-- Code cleanup: removed redundant copies, consolidated duplicated helpers, vectorized block assignment.
-- Benchmark runner: R memory measurement and expanded concordance metrics.
+- **Pipeline.** Sub-matrices keep their missing cells; rows and columns are no longer dropped before correction, and engine input may contain missing values.
 
 ### Fixed
 
-- `_it_sol`: `t2_n_g_hat` uses original `g_hat` per iteration (not updated `g_new`), matching R's `postmean` formula. Prevents divergence with NaN data.
-- `_int_eprior`: likelihood normalization uses per-gene `n_i` instead of fixed batch size. Enables correct non-parametric EB with per-cell NaN.
-- Benchmark data generator: minimum 4 samples per batch to satisfy needed_values=2.
-- Benchmark runner: unique tagged filenames per scenario, R memory measurement via `/usr/bin/time -v`.
-- Dry-run mode: pipeline DEBUG suppressed during plan output.
-
-### Performance
-
-Modes 1/2 run in ~1.3-1.7s on 8470x36 data. Modes 3/4 dominate at ~8.5s (80% spent in `_int_eprior` broadcast loop). Targets: binomial formula for `_int_eprior` (est. 2.8x on modes 3/4), grouped NaN-pattern solving for per-feature OLS/variance.
+- **ComBat solvers.** The parametric solver uses the original batch estimate in each iteration, as R's `postmean` does, which stops it diverging on missing data; the non-parametric prior normalises each likelihood by the feature's own observed count.
+- **Command line.** The dry run no longer prints pipeline debug lines.
 
 ## [0.2.0] - 2026-04-01
 
+This release builds the HarmonizR pipeline around the engines, after HarmonizR 1.8.0: batch sorting, blocking, and unique-combination removal, with a command line.
+
 ### Added
 
-- **Batch sorting**: three strategies matching R HarmonizR v1.8.0: sparsity (completeness-based), jaccard (greedy nearest-neighbour), seriation (PCA-based optimal leaf ordering). See `harmonizepy.sorting`.
-- **Batch blocking**: group consecutive batches into superblocks for dissection via `block=N`. See `harmonizepy.blocking`.
-- **Unique-combination removal**: rescue singleton features by cropping to the nearest shared batch-presence pattern (`unique_removal=True`, matching R's `ur=TRUE` default). See `harmonizepy.affiliation`.
-- **CLI** (`__main__.py`): full command-line interface with positional args, `--algorithm`, `--combat-mode`, `--sort`, `--block`, `--unique-removal`, `--needed-values`, `--dry-run`, `--summary`, `--json`, `--config`, `--verbose`/`--quiet`, `--version`, `--help`. Output formats: TSV, CSV, Feather.
-- **`HarmonizeConfig`** frozen dataclass for reproducible run configuration.
-- **`validate_harmonize_args`** centralised validation of all pipeline parameters.
+- **Pipeline.** Batch sorting (`sparsity`, `jaccard`, `seriation`), blocking of neighbouring batches (`block=N`), and unique-combination removal (`unique_removal=True`, after R's `ur=TRUE`).
+- **Command line.** The `harmonizepy` command with the pipeline options, `--needed-values`, `--dry-run`, `--summary`, `--json`, `--config`, and TSV, CSV, and Feather output.
+- **Configuration.** `HarmonizeConfig`, a frozen dataclass for a reproducible run, and one validator for all pipeline arguments.
 
 ### Changed
 
-- **`harmonize()` pipeline** (`core.py`): extended from direct ComBat/limma adjustment to the full HarmonizR workflow: sort, block, spot missing, unique removal, split, adjust, concat, re-sort columns.
-- **Splitting** (`splitting.py`): pre-allocates a single output array instead of one per affiliation group, reducing peak memory from ~3x input to ~1x input.
-- **Input validation** (`validation.py`): extracted from individual modules into a single file with consistent error messages.
-- **IO** (`io.py`): now reads TSV, CSV, and Feather formats; drops all-NaN rows on read; preserves all-NaN columns (structural missingness).
+- **Memory.** The split step fills one output array instead of one per group, so peak memory is about the input's size instead of three times it.
+- **Input.** Files are read as TSV, CSV, or Feather.
 
 ### Removed
 
-- Redundant validation spread across `combat.py` and `limma_wrapper.py`, consolidated into `validation.py`.
-- `np.matrix` usage from ComBat engine, now fully vectorised NumPy.
+- **Engines.** The ComBat engine no longer uses `np.matrix`, and validation repeated across modules is gone.
 
 ### Fixed
 
-- `_int_eprior` in `combat.py`: guard against zero/negative `d_hat` causing `-inf` in log-likelihood computation (clamp to `1e-12`).
-- `_aprior` / `_bprior`: return flat prior (`1.0`) when variance cannot be estimated (zero-variance features).
-- `combat()`: force `mean_only=True` when any batch has fewer than 2 samples (mirrors R `sva::ComBat` behaviour).
-- `combat()`: negative `delta_star` from `_postvar` clamped before `sqrt`.
-
-### R Concordance
-
-- Full test suite validated against R `sva::ComBat`, `limma::removeBatchEffect`, and `HarmonizR` (v1.8.0 pipeline with sort, block, and unique-removal toggles). Covers small, medium, large, unbalanced, minimal, high-var, near-constant, negative, wide, sparse, high-missingness, and singleton-batch edge cases.
+- **ComBat.** A zero or negative scale estimate no longer gives an infinite log-likelihood or a negative variance, the priors stay finite for zero-variance features, and a one-sample batch forces location-only correction, as `sva::ComBat` does.
 
 ## [0.1.0] - 2025-12-15
 
+The first release implements ComBat in its four modes and limma's `removeBatchEffect` in NumPy, with the HarmonizR approach to missing values (split by batch pattern, correct, reassemble), tested against R.
+
 ### Added
 
-- **ComBat engine** (`combat.py`): pure NumPy reimplementation of Johnson, Li & Rabinovic (2007). All four modes: parametric and non-parametric, with and without scale correction. Supports `ref_batch` and automatic `mean_only` fallback for singleton batches.
-- **limma engine** (`limma_wrapper.py`): pure NumPy `removeBatchEffect` using sum-to-zero contrasts and OLS (Ritchie et al. 2015).
-- **HarmonizR pipeline** (`core.py`): structural missingness handling via per-feature batch presence detection, grouping by affiliation, NaN-free sub-matrix extraction, adjustment, and reassembly.
-- **`harmonize()` entry point**: accepts DataFrames, file paths (TSV/CSV), and Path objects.
-- **Data IO** (`io.py`): `read_main_data`, `read_description`, `write_output` for TSV/CSV.
-- **Input validation**: `validate_data_matrix`, `validate_description`, `validate_combat_input`, `validate_limma_input`.
-- **CLI** (`__main__.py`): minimal command-line wrapper with `-o` output flag.
-- **Test suite**: R-concordance tests for all ComBat modes and limma, plus unit tests for all internal helpers.
-- **R fixture generation**: scripts under `tests/fixtures/` generating reference outputs from R `sva`, `limma`, and `HarmonizR`.
+- **Engines.** ComBat (Johnson, Li & Rabinovic 2007), parametric and non-parametric, with and without scale correction, with `ref_batch`; limma's `removeBatchEffect` with sum-to-zero contrasts (Ritchie et al. 2015).
+- **Pipeline.** `harmonize()` groups features by the batches they are observed in, corrects each group, and reassembles the matrix; it accepts DataFrames and TSV or CSV paths.
+- **Command line.** A minimal `harmonizepy` command with `-o`.
+- **Tests.** Concordance tests against R `sva`, `limma`, and HarmonizR, with the scripts that generate the reference outputs.
