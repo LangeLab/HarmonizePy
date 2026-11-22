@@ -55,7 +55,7 @@ With `return_report=True`, a `HarmonizeResult` named tuple of `data` (the same m
 - `status`: `corrected`, or why the feature kept its values:
   - `raw_single_batch`: its group spans one batch.
   - `raw_alone_in_pattern`: no other feature shares its affiliation.
-  - `raw_zero_variance`: ComBat, parametric modes; its variance is too small to estimate.
+  - `raw_zero_variance`: ComBat; its variance is too small to estimate.
   - `raw_too_few_features`: ComBat; fewer than two features were left in its group to form a prior.
   - `missing_no_usable_batch`: no batch, or with `block` no block, has enough values, and the row is all missing in the output.
 - `batches_used`: the batch labels of its group, comma-separated and sorted; empty when not corrected.

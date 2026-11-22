@@ -56,8 +56,8 @@ The two rules differ:
 
 - sva leaves out a row whose variance is exactly zero in any batch with two or more samples. HarmonizePy leaves out a row whose variance its engine would raise to the 1e-12 floor: a pooled within-batch variance below 1e-12 (with `ref_batch`, the variance in the reference batch), or a batch variance below 1e-12 of the pooled variance. Near-constant rows are therefore left out too.
 - sva's test ignores rows with a missing cell; with such a row, `sva::ComBat` stops with an error. HarmonizePy applies its rule to rows with missing cells.
-- In location-only mode (modes 2 and 4, or any batch with a single sample), HarmonizePy does not apply the batch rule, because that mode never divides by one batch's variance. A row that is constant in one batch only is corrected.
-- sva applies its rule in every mode. HarmonizePy applies it in the parametric modes only.
+- HarmonizePy applies the batch rule in mode 1 only. Location-only mode (mode 2, or any batch with a single sample) never divides by one batch's variance. The non-parametric modes (3 and 4) weight each feature's prior by likelihood, and a batch with floored variance gives the feature no weight there, so it cannot move the others. In these modes a row that is constant in some batches only is corrected: its batch locations are estimable, and leaving it raw would keep its batch shift.
+- The pooled rule applies in every mode. A row with zero pooled variance cannot be standardised, and the non-parametric modes would give it a shift that does not come from its data.
 
 ### All-NaN rows for unqualified features
 

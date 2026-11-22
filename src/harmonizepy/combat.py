@@ -468,7 +468,8 @@ def _unestimable_rows(
     whose variance is below ``_VARIANCE_FLOOR`` times the pooled variance,
     which is the engine's batch scale estimate. Mean-only mode is in effect
     when the caller asks for it or when any batch has a single sample, as in
-    the engines.
+    the engines; the non-parametric modes pass ``mean_only=True`` to check the
+    pooled variance only.
     """
     obs = ~np.isnan(data)
     has_nan = not bool(obs.all())
@@ -535,13 +536,16 @@ def combat(
     Some features are returned with their raw values, and the run log counts
     them:
 
-    - In the parametric modes, a feature whose variance the engine would raise
-      to the 1e-12 floor: a pooled within-batch variance below 1e-12 (with
-      ``ref_batch``, the reference batch's variance), or, outside mean-only
-      mode, a batch whose variance is below 1e-12 of the pooled variance.
-      Such a feature is not estimated from its data, and it would otherwise
-      set the empirical-Bayes prior for every other feature; the others are
-      corrected as if it were absent.
+    - A feature whose pooled within-batch variance is below the 1e-12 floor
+      (with ``ref_batch``, the reference batch's variance). Its values cannot
+      be standardised, so its correction would not be estimated from its data.
+    - In the parametric modes outside mean-only mode, a feature with a batch
+      whose variance is below 1e-12 of the pooled variance. It would otherwise
+      set the empirical-Bayes prior for every other feature. The non-parametric
+      modes correct such a feature: its batch locations are estimable, and the
+      floored batch gives it no weight in the other features' priors.
+
+    The other features are corrected as if those left raw were absent.
     - A single feature, which has no other features to share a prior with.
     - A feature with values in a single batch, which has no batch effect to
       estimate.
@@ -644,9 +648,9 @@ def _combat_validated(
     """Set aside the features ComBat cannot fit, then run the dense or missing-value path.
 
     Features with no observed value stay missing. Features with values in a
-    single batch, features with no value in the reference batch, and, in the
-    parametric modes, features whose variance the engine would floor keep
-    their raw values. The rest are corrected as if those features were
+    single batch, features with no value in the reference batch, and features
+    whose variance the engine would floor keep their raw values; the
+    non-parametric modes check the pooled variance only. The rest are corrected as if those features were
     absent. When fewer than two features remain, they are returned as given,
     since a prior needs at least two.
 
@@ -717,14 +721,15 @@ def _combat_validated(
             )
             return set_aside(no_reference, "no_reference")
 
-    if par_prior:
-        unestimable = _unestimable_rows(data, batch_int, mean_only=mean_only, ref_batch=ref_batch)
-        if unestimable.any():
-            logger.info(
-                "%d feature(s) with within-batch variance below the floor left uncorrected",
-                int(unestimable.sum()),
-            )
-            return set_aside(unestimable, "zero_variance")
+    unestimable = _unestimable_rows(
+        data, batch_int, mean_only=mean_only or not par_prior, ref_batch=ref_batch
+    )
+    if unestimable.any():
+        logger.info(
+            "%d feature(s) with within-batch variance below the floor left uncorrected",
+            int(unestimable.sum()),
+        )
+        return set_aside(unestimable, "zero_variance")
 
     if data.shape[0] < 2:
         logger.debug("Single feature input, returning copy")

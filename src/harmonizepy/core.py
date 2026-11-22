@@ -161,8 +161,8 @@ def harmonize(
         order, except that a feature repeated with the same name and values
         appears once. A feature with no usable batch is all missing. A feature
         alone in its affiliation, one whose affiliation spans a single batch,
-        and, in the parametric ComBat modes, one whose variance is too small
-        to estimate keep their raw values; the log counts each kind. With
+        and, with ComBat, one whose variance is too small to estimate keep
+        their raw values; the log counts each kind. With
         ``return_report=True``, a ``HarmonizeResult`` of the matrix and the
         report.
 
@@ -477,8 +477,8 @@ def correction_report(
 
     - ``status``: ``corrected``; ``raw_single_batch`` (its group spans one
       batch); ``raw_alone_in_pattern`` (no other feature shares its
-      affiliation); ``raw_zero_variance`` (ComBat, parametric modes: variance
-      too small to estimate); ``raw_too_few_features`` (ComBat: fewer than two
+      affiliation); ``raw_zero_variance`` (ComBat: variance too small to
+      estimate); ``raw_too_few_features`` (ComBat: fewer than two
       features left in its group to form a prior); or
       ``missing_no_usable_batch`` (no batch, or with ``block`` no block, with
       enough values; the row is all missing).

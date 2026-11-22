@@ -672,6 +672,33 @@ class TestFeaturesLeftRaw:
         np.testing.assert_array_equal(out[:500], alone)
         np.testing.assert_array_equal(out[500], constant[0])
 
+    @pytest.mark.parametrize("mean_only", [False, True])
+    def test_non_parametric_constant_row_left_raw_and_others_unchanged(
+        self, mean_only: bool
+    ) -> None:
+        """In modes 3 and 4, a row constant in every batch keeps its values.
+
+        Failure condition: the row, whose values cannot be standardised, is given a
+        shift that does not come from its data, or changes the other rows.
+        """
+        data, batch = self._matrix(60)
+        constant = np.array([[19.0] * 6 + [21.0] * 6])
+        alone = combat(data, batch, par_prior=False, mean_only=mean_only)
+        out = combat(np.vstack([data, constant]), batch, par_prior=False, mean_only=mean_only)
+        np.testing.assert_array_equal(out[:60], alone)
+        np.testing.assert_array_equal(out[60], constant[0])
+
+    def test_non_parametric_row_constant_in_one_batch_is_corrected(self) -> None:
+        """In mode 3, a row constant in one batch only has its batch shift removed.
+
+        Failure condition: the row is left raw and keeps a batch shift of 2.
+        """
+        data, batch = self._matrix(60)
+        row = np.array([[18.0] * 6 + [20.1, 19.7, 20.3, 19.9, 20.2, 19.8]])
+        out = combat(np.vstack([data, row]), batch, par_prior=False)[60]
+        assert np.isfinite(out).all()
+        assert abs(out[6:].mean() - out[:6].mean()) < 1.0
+
     def test_constant_row_with_missing_cells(self) -> None:
         """The missing-value path leaves a constant row raw and the others unchanged.
 
