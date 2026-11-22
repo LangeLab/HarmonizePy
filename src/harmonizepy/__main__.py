@@ -65,7 +65,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="harmonizepy",
         description=(
-            "Batch-effect harmonization for mass-spectrometry proteomics data.\n"
+            "Batch-effect correction for omics matrices with missing values.\n"
             "Wraps ComBat (parametric / non-parametric) and limma::removeBatchEffect.\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -90,7 +90,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "data",
         help=(
             "Features x samples matrix of log-transformed values: TSV (default), CSV "
-            "(.csv), or Parquet (.parquet, .pq), with feature names in the first column."
+            "(.csv) with feature names in the first column, or Parquet (.parquet, .pq) "
+            "with feature names as the index."
         ),
     )
     parser.add_argument(

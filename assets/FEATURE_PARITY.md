@@ -194,7 +194,7 @@ Tolerance of the R concordance tests per scenario; `--` means no R fixture.
 
 ---
 
-## 10. Complete Difference Inventory (28 Items)
+## 10. Complete Difference Inventory (29 Items)
 
 ### Affects Output Values
 
@@ -206,6 +206,7 @@ Tolerance of the R concordance tests per scenario; `--` means no R fixture.
 6. **Seriation sort**: `seriation::seriate` vs SVD/PC1 projection. Different orderings.
 7. **Sparsity sort**: R counts missing cells per batch; Python counts the features present with at least `needed_values` values. Orders agreed in 11 of 200 cases.
 8. **Constant feature in ComBat**: R leaves out rows with zero variance in any batch, in every mode. Python leaves out rows whose variance its engine would floor, by the rules in section 5; in modes 2 to 4 a row constant in some batches only is corrected.
+9. **Flat hyper-prior**: when a batch's scale estimates have zero variance across features, R's moment estimates of the inverse-gamma prior divide by zero. Python uses a flat prior, `(1, 1)`.
 
 ### Affects I/O or Robustness
 

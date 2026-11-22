@@ -128,7 +128,7 @@ Full signature with all parameters is in the [API Reference](https://github.com/
 
 ### Choosing algorithm and strategy
 
-Start with the default (`ComBat`, mode 1). For very small batch sizes (n < 10 per batch), prefer `combat_mode=3` (non-parametric). For datasets with 5 or more batches, `sort="sparsity"` and `block=2` group similar batches together before correction. Use `sort="jaccard"` when batch sizes are uneven. See [Algorithms](https://github.com/LangeLab/HarmonizePy/wiki/Algorithms) and [Pipeline](https://github.com/LangeLab/HarmonizePy/wiki/Pipeline) for full guidance.
+Start with the default (`ComBat`, mode 1). The non-parametric modes (3 and 4) assume no distribution for the batch effects, at a cost that grows with the square of a group's size. Blocking (`block=N`) forms fewer, larger groups, at the cost of the values a feature has in only part of a block; sorting decides which batches share a block and has no effect without it. No measurement in this repository yet recommends one setting over another. See [Algorithms](https://github.com/LangeLab/HarmonizePy/wiki/Algorithms) and [Pipeline](https://github.com/LangeLab/HarmonizePy/wiki/Pipeline) for full guidance.
 
 ## CLI usage
 

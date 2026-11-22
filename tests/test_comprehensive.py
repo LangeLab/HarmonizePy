@@ -614,7 +614,7 @@ class TestCombatFailureModes:
         with pytest.raises(ValueError, match="2-D"):
             combat(np.zeros((2, 3, 4)), np.array([0, 0, 1]))
 
-    def test_nan_rows_dropped(self):
+    def test_missing_cells_stay_missing_and_others_are_adjusted(self):
         """Per-cell NaN positions stay NaN; quantified cells are adjusted.
 
         Failure condition: quantified cells become NaN or NaN propagates.
