@@ -13,6 +13,8 @@ How to read it:
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-22
+
 This release fixes the inputs found to give wrong values, hang, or fail without a clear message, and adds a report that says what happened to each feature. Corrected values change only where a fix below applies; elsewhere they differ from 0.3.2 by rounding, at most 1e-10. Large inputs run faster and need less memory.
 
 ### Added

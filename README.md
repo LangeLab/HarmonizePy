@@ -9,7 +9,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.12--3.14-2D7D46?style=flat-square&logo=python&logoColor=white" alt="Python 3.12-3.14">
-  <img src="https://img.shields.io/badge/version-0.3.2-8B5CF6?style=flat-square" alt="v0.3.2">
+  <img src="https://img.shields.io/badge/version-0.4.0-8B5CF6?style=flat-square" alt="v0.4.0">
   <img src="https://img.shields.io/badge/status-alpha-C17D10?style=flat-square" alt="Alpha">
   <a href="https://github.com/LangeLab/HarmonizePy/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/LangeLab/HarmonizePy/ci.yml?branch=main&style=flat-square&logo=github&label=CI" alt="CI"></a>
   <a href="https://codecov.io/gh/LangeLab/HarmonizePy"><img src="https://img.shields.io/codecov/c/github/LangeLab/HarmonizePy?branch=main&style=flat-square&logo=codecov&logoColor=white" alt="Coverage"></a>
