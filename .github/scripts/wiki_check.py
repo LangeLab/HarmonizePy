@@ -16,6 +16,9 @@ _MARKDOWN_LINK = re.compile(r"(?<!!)\[([^]\n]+)\]\(([^)\n]+)\)")
 _LINK_TITLE = re.compile(r"""\s+(?:"[^"]*"|'[^']*'|\([^)]*\))\s*$""")
 _INLINE_CODE = re.compile(r"`+[^`\n]*`+")
 _FENCE = re.compile(r"^( {0,3})(`{3,}|~{3,})")
+_ASSET_DIR = "assets"
+_ASSET_SUFFIXES = (".png",)
+_ASSET_REFERENCE = re.compile(r"""(?:src|srcset)\s*=\s*["']([^"']+)["']|!\[[^]\n]*\]\(([^)\s]+)""")
 
 
 def _blank(text: str) -> str:
@@ -87,6 +90,26 @@ def _is_external(target: str) -> bool:
     ) or target.startswith("#")
 
 
+def _validate_assets(asset_dir: Path, assets: set[str]) -> list[str]:
+    """Check the image folder and record its files as ``assets/NAME`` references."""
+
+    errors: list[str] = []
+    for entry in sorted(asset_dir.iterdir(), key=lambda path: path.name.casefold()):
+        relative = f"{asset_dir}/{entry.name}"
+        if entry.is_symlink() or not entry.is_file():
+            errors.append(f"{_ASSET_DIR}/ entries must be regular files: {relative}")
+            continue
+        if not entry.name.casefold().endswith(_ASSET_SUFFIXES):
+            errors.append(f"{_ASSET_DIR}/ permits PNG images only: {relative}")
+            continue
+        if _PORTABLE_FILENAME_CHARS.search(entry.name):
+            errors.append(f"image filename contains a non-portable character: {relative}")
+        if entry.stat().st_size == 0:
+            errors.append(f"image is empty: {relative}")
+        assets.add(f"{_ASSET_DIR}/{entry.name}")
+    return errors
+
+
 def validate(wiki_dir: Path) -> list[str]:
     """Return validation errors for ``wiki_dir``; an empty list means valid."""
 
@@ -98,10 +121,17 @@ def validate(wiki_dir: Path) -> list[str]:
     pages: list[Path] = []
     aliases: dict[str, Path] = {}
 
+    assets: set[str] = set()
+
     for entry in entries:
         relative = f"{wiki_dir}/{entry.name}"
+        if entry.name == _ASSET_DIR and entry.is_dir() and not entry.is_symlink():
+            errors.extend(_validate_assets(entry, assets))
+            continue
         if entry.is_symlink() or not entry.is_file():
-            errors.append(f"wiki entries must be regular top-level files: {relative}")
+            errors.append(
+                f"wiki entries must be regular top-level files or the {_ASSET_DIR}/ folder: {relative}"
+            )
             continue
         if not entry.name.endswith(".md"):
             errors.append(f"wiki source currently permits Markdown pages only: {relative}")
@@ -134,6 +164,14 @@ def validate(wiki_dir: Path) -> list[str]:
             continue
 
         visible_text = _without_code(text)
+        for match in _ASSET_REFERENCE.finditer(visible_text):
+            reference = (match.group(1) or match.group(2)).strip()
+            if _is_external(reference) or not reference.startswith(f"{_ASSET_DIR}/"):
+                continue
+            if reference not in assets:
+                line = _line_number(text, match.start())
+                errors.append(f"{page}:{line} references a missing image: {reference}")
+
         for match in _WIKI_LINK.finditer(visible_text):
             specification = match.group(1).strip()
             page_target = specification.split("|", 1)[0].strip()

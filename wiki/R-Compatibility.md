@@ -1,109 +1,115 @@
-# R Compatibility
+# R compatibility
 
-HarmonizePy is validated against three R reference implementations:
+HarmonizePy is checked against the R packages it reimplements ([Leek et al. 2012](References#leek-et-al-2012); [Ritchie et al. 2015](References#ritchie-et-al-2015); [HarmonizR 1.10.0](References#harmonizr-1100)): `sva::ComBat` 3.60.0, `limma::removeBatchEffect` and HarmonizR 1.10.0, pinned in the repository's `renv.lock`. Matching R is a check that the computation is the same, not the goal itself.
 
-- `sva::ComBat` (Bioconductor sva v3.60.0)
-- `limma::removeBatchEffect` (Bioconductor limma)
-- `HarmonizR` v1.10.0 (Bioconductor)
+> [!NOTE]
+> Agreement with R shows that HarmonizePy computes what R computes. It is not evidence that either result is correct. I keep it as a regression check, and do not change HarmonizePy just to match R. Where HarmonizePy behaves differently on purpose, the difference and its reason are listed below.
 
-This page describes what is validated, the numerical tolerances achieved, and the known differences between HarmonizePy and the R implementations.
+## How the comparison works
 
----
+The R outputs are generated once by scripts in `tests/fixtures/` and committed. The test suite runs the Python code on the same inputs and compares cell by cell with `numpy.testing.assert_allclose`, so the comparison runs in CI without R installed. Engine tests compare `combat()` and `remove_batch_effect()` with `sva` and `limma`; pipeline tests compare `harmonize()` with HarmonizR, including sorting, blocking, unique removal and `needed_values`, and check that the missing cells sit in the same places.
 
-## Validation scope
+## Tolerances
 
-The parity validation covers:
+The tolerances the tests assert, as relative and absolute tolerance:
 
-- All four ComBat modes and limma on dense synthetic data
-- Per-cell NaN handling on real murine medulloblastoma data (4753 features, 25 samples, 4 batches, 49% missing)
-- DIA proteomics data (8470 features, 36 samples, 2 batches)
-- Full pipeline: blocking, sort+block, `unique_removal` toggle, and the combined stress case (sort + block + unique_removal + per-cell NaN)
-- Synthetic datasets at small, medium, and SCP-scale
+| Comparison                 | rtol          | atol          |
+| -------------------------- | ------------- | ------------- |
+| limma, engine and pipeline | 1e-8 to 1e-10 | 1e-8 to 1e-10 |
+| ComBat modes 2 and 4       | 1e-6 to 1e-4  | 1e-8 to 1e-4  |
+| ComBat mode 1              | 1e-4 to 5e-4  | 1e-6 to 1e-4  |
+| ComBat mode 3              | 1e-6 to 5e-4  | 1e-8 to 1e-4  |
 
----
+- The range in each row covers the different fixtures: dense, sparse, high-missingness, blocked and sorted inputs.
+- limma is a closed-form least-squares fit, so it agrees to rounding. ComBat mode 1 iterates to a convergence threshold of $`10^{-4}`$, with a slightly different stopping test from `sva` (see [ComBat](ComBat#parametric-and-non-parametric-priors)), so it agrees to about that threshold.
+- The benchmark suite compares against HarmonizR on larger matrices as well; its results are in [Benchmarks](Benchmarks).
 
-## Concordance table
+## Where HarmonizePy differs on purpose
 
-| Method | Dense tolerance | Murine real data (max_rel) | NaN positions match |
-| --- | --- | --- | --- |
-| ComBat mode 1 (parametric, loc+scale) | 2e-5 | 0.0003 | Yes |
-| ComBat mode 2 (parametric, loc only) | 1e-9 | 0.0000 | Note 1 |
-| ComBat mode 3 (non-parametric, loc+scale) | 5e-4 | 0.0000 | Yes |
-| ComBat mode 4 (non-parametric, loc only) | 1e-9 | 0.0000 | Note 1 |
-| limma removeBatchEffect | 1e-9 | 0.0000 | Yes |
+### Features are kept
 
-**Note 1:** Modes 2 and 4 with R: R drops 229 additional features due to an interaction between `mean_only=TRUE` and single-feature groups. HarmonizePy retains those features as all-NaN rows. On the shared subset of features, values match perfectly (0.0000).
+HarmonizR removes some features from its output. I keep every input feature except an exact repeat, so the output has one row per input feature whatever the data:
 
----
+- A feature alone in its affiliation, over two or more batches: HarmonizR does not return it as measured. In the benchmarks it drops such features; on the [Quick start](Quick-Start) example it keeps P5 but empties its batch 2 values. HarmonizePy returns its measured values (`raw_alone_in_pattern`).
+- A feature with no usable batch: R drops it; HarmonizePy returns an empty row (`missing_no_usable_batch`).
 
-## Known behavioral differences
-
-The following differences are intentional. None affect the corrected values for features that both implementations process.
-
-### Single-feature groups
-
-A feature with a batch-presence pattern that appears only once (singleton group) has no other features to share the ComBat EB prior with. R drops the feature entirely. HarmonizePy keeps it with its original (uncorrected) values, with ComBat and with limma.
-
-**When this occurs:** only when exactly 1 feature has a given batch-presence pattern and that pattern involves 2 or more batches. On the murine dataset (4753 features), this never occurs. On a medium synthetic dataset (5000 features), it affects roughly 32 of 4968 features.
-
-**Practical effect:** the affected features retain their original batch effects. They appear in the output and can be filtered downstream if needed. The correction of all other features is unaffected.
-
-### Constant features in ComBat
-
-A feature whose values do not vary inside a batch has zero variance there, and in the parametric modes it would set the empirical-Bayes prior for every other feature. `sva::ComBat` 3.60.0 leaves such rows out of the fit and returns them unadjusted, and so does HarmonizePy. The other features are corrected as if the constant row were absent.
-
-The two rules differ:
-
-- sva leaves out a row whose variance is exactly zero in any batch with two or more samples. HarmonizePy leaves out a row whose variance its engine would raise to the 1e-12 floor: a pooled within-batch variance below 1e-12 (with `ref_batch`, the variance in the reference batch), or a batch variance below 1e-12 of the pooled variance. Near-constant rows are therefore left out too.
-- sva's test ignores rows with a missing cell; with such a row, `sva::ComBat` stops with an error. HarmonizePy applies its rule to rows with missing cells.
-- HarmonizePy applies the batch rule in mode 1 only. Location-only mode (mode 2, or any batch with a single sample) never divides by one batch's variance. The non-parametric modes (3 and 4) weight each feature's prior by likelihood, and a batch with floored variance gives the feature no weight there, so it cannot move the others. In these modes a row that is constant in some batches only is corrected: its batch locations are estimable, and leaving it raw would keep its batch shift.
-- The pooled rule applies in every mode. A row with zero pooled variance cannot be standardised, and the non-parametric modes would give it a shift that does not come from its data.
-
-### All-NaN rows for unqualified features
-
-Features with no qualifying batch (below the `needed_values` threshold in every batch) appear as all-NaN rows in the HarmonizePy output. R omits these features from the output entirely, producing a matrix with fewer rows.
-
-**Practical effect:** the output matrix shape differs by the number of such features. The HarmonizePy convention produces a predictable output shape that matches the input regardless of data quality.
-
-### Input validation strictness
-
-R silently coerces non-numeric cells to NA and silently removes rows whose values repeat another row. HarmonizePy raises a `ValueError` for non-numeric cells. A row is removed only when both its name and its values repeat another row, and the removal is logged; a repeated name with different values raises a `ValueError`. Rows with identical values under different names are both kept. This is intentional: silent coercion or removal can mask data preparation errors.
-
-### Sorting algorithm differences
-
-All three sorting strategies can order batches differently from R. Sparsity counts the features present in each batch where R counts missing cells; jaccard builds a nearest-neighbour chain where R pairs the most similar batches first; seriation orders batches by the first principal component of their presence vectors where R uses hierarchical clustering with optimal leaf ordering (`seriation::seriate`). On generated test cases with contiguous batch labels, the orders agreed with R in 11 of 200 cases (sparsity), 54 of 200 (jaccard), and 24 of 400 (seriation). Sparsity agreed in all 200 when R's count of missing cells was used, so its difference comes from counting present features instead.
-
-Sorting changes the output only together with blocking. The strategies are not required to match R.
-
-### Default output filename
-
-R writes `cured_data.tsv`. HarmonizePy writes `<data_stem>_corrected.tsv` next to the input file.
-
----
-
-## Verifying against your own R results
-
-If you want to compare HarmonizePy output against R on your own data, the simplest approach is to run the same data through R `HarmonizR::harmonizR()` and compare the outputs feature by feature.
-
-A typical comparison in Python:
+The [correction report](Correction-Report) says which rows were not corrected. To get HarmonizR's shape for a comparison, drop the empty rows yourself:
 
 ```python
-import pandas as pd
-import numpy as np
-
-py_result = pd.read_csv("harmonizepy_output.tsv", sep="\t", index_col=0)
-r_result  = pd.read_csv("harmonizr_output.tsv",   sep="\t", index_col=0)
-
-# Align on shared features and samples
-shared = py_result.index.intersection(r_result.index)
-py = py_result.loc[shared]
-r  = r_result.loc[shared]
-
-# Max relative difference on non-NaN cells
-rel_diff = np.abs(py.values - r.values) / (np.abs(r.values) + 1e-10)
-print(f"Max relative difference: {np.nanmax(rel_diff):.2e}")
-print(f"Features only in Python output: {len(py_result) - len(shared)}")
-print(f"Features only in R output: {len(r_result) - len(shared)}")
+result = harmonize("data.tsv", "batch.csv")
+result = result.dropna(how="all")
 ```
 
-A `max_rel` below `5e-4` on ComBat mode 1 (and below `1e-9` on modes 2, 3, 4 and limma) is concordant with the reference validation results. Features present only in the Python output are the single-feature pass-through and all-NaN retention cases described above.
+### A feature missing a whole batch
+
+Called directly on such a feature, `sva::ComBat` stops with a singular-matrix error; `combat()` fits it on the batches it has. `limma::removeBatchEffect` sets the coefficient it cannot estimate to zero; `remove_batch_effect()` fits contrasts over the batches the feature has. For a feature missing an interior batch the two limma versions agree; for one missing the first or last batch they differ (see [limma](limma#missing-cells)). Inside `harmonize()` the case does not arise, because every feature has values in every batch of its group.
+
+### Constant features
+
+Both leave rows that cannot be scaled out of the ComBat fit and return them unadjusted, with different tests:
+
+- `sva` leaves out a row whose variance is exactly zero in any batch of two or more samples, in every mode. Its test takes the variance without removing missing cells, so a row with a missing cell is never left out, and such a row can make `sva::ComBat` stop with an error.
+- HarmonizePy leaves out, in every mode, a row whose pooled variance is below $`10^{-12}`$, and in mode 1 also a row whose variance in a batch with two or more values is below $`10^{-12}`$ of its pooled variance. Near-constant rows are therefore left out too, and rows with missing cells are tested like any other.
+
+### Unique removal
+
+HarmonizR's `ur` moves a feature with a pattern of its own into any other feature's pattern inside its own, even one held by a single feature, and updates the list as it goes. HarmonizePy moves it only into a pattern that two or more features share before any move (see [Unique removal](Unique-Removal)). On the same input the two can form different groups: `(1,2,3,4), (1,2), (5,6), (5,6)` becomes `(1,2), (1,2), (5,6), (5,6)` in HarmonizR and is left unchanged by HarmonizePy.
+
+### Sort orders
+
+All three sort strategies can order batches differently from HarmonizR, whose rules differ:
+
+| Strategy    | HarmonizePy                 | HarmonizR                  |
+| ----------- | --------------------------- | -------------------------- |
+| `sparsity`  | most present features first | fewest missing cells first |
+| `jaccard`   | nearest-neighbour chain     | pairs, then chained        |
+| `seriation` | first principal component   | `seriation::seriate`       |
+
+Sorting changes the output only together with blocking (see [Sorting and blocking](Sorting-and-Blocking)).
+
+### Input handling
+
+- A cell that is not a number: R turns it into a missing value; HarmonizePy refuses the column.
+- Repeated rows: R removes rows whose values repeat another row, whatever their names; HarmonizePy removes a row only when its name and its values repeat, logs it, and refuses a repeated name with different values.
+- Empty rows and columns: R removes them; HarmonizePy keeps them.
+- The batch description: R reads its columns by position; HarmonizePy reads the columns named `ID` and `batch`, and falls back to position.
+- `needed_values`: HarmonizePy takes it as an argument, with HarmonizR's defaults for ComBat.
+- Output file: R writes `cured_data.tsv`; the `harmonizepy` command writes `<data stem>_corrected.tsv` next to the input, and `harmonize()` writes only to `output_file`.
+
+## Where HarmonizR is the better choice
+
+- Reproducing a published HarmonizR result exactly: the unique-removal rule and the sort orders differ, so some features land in different groups.
+- Wanting HarmonizR's output shape: it removes features it does not correct, where HarmonizePy keeps them (`result.dropna(how="all")` removes the empty rows, but raw features stay).
+- Working in R: HarmonizR accepts and returns S4 objects, plots, and can run its groups on several cores.
+
+## Not provided
+
+HarmonizR's S4 objects, plotting, and multi-core execution have no counterpart. HarmonizePy starts no threads or processes of its own.
+
+## Comparing with your own R run
+
+To compare a HarmonizePy result with a HarmonizR result on the same input, align the two on their shared features and samples, compare the cells both have, and count the features only one side returns:
+
+```python
+import numpy as np
+import pandas as pd
+
+py = pd.read_csv("data_corrected.tsv", sep="\t", index_col=0)
+r = pd.read_csv("cured_data.tsv", sep="\t", index_col=0)
+
+rows = py.index.intersection(r.index)
+cols = py.columns.intersection(r.columns)
+a, b = py.loc[rows, cols].to_numpy(), r.loc[rows, cols].to_numpy()
+
+both = ~np.isnan(a) & ~np.isnan(b)
+print("max relative difference:", np.max(np.abs(a[both] - b[both]) / np.abs(b[both])))
+print("missing cells differ:", int((np.isnan(a) != np.isnan(b)).sum()))
+print("features only in HarmonizePy:", len(py.index.difference(r.index)))
+```
+
+Features only in the HarmonizePy output are the kept features described above, and rows R removed as value repeats. A difference in missing cells on shared features comes from unique removal, from the sort order with blocking, or from HarmonizR returning whole features missing, which the benchmarks show in some ComBat modes (see [Benchmarks](Benchmarks#reading-the-concordance)).
+
+## Related pages
+
+- [Benchmarks](Benchmarks): concordance on larger and real matrices.
+- [Limits](Limits): what agreement with R does and does not show.

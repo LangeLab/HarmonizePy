@@ -1,17 +1,17 @@
-# API Reference
+# API reference
 
-Complete reference for every public function and class in HarmonizePy.
+Every public name in `harmonizepy`, with its signature, arguments, return value and errors. Each entry links to the page that explains the behaviour behind it.
 
 ```python
-from harmonizepy import harmonize, combat, remove_batch_effect, HarmonizeConfig, HarmonizeResult
-from harmonizepy import adjust_combat, adjust_limma
+from harmonizepy import (
+    harmonize, HarmonizeConfig, HarmonizeResult, InputScaleWarning,
+    combat, remove_batch_effect, adjust_combat, adjust_limma,
+)
 ```
-
----
 
 ## `harmonize()`
 
-The main pipeline entry point. Handles structural missingness, sorts and blocks batches, groups features by affiliation, corrects each group, and reassembles the output.
+The full pipeline: validate, form affiliations, correct each group, reassemble ([Pipeline](Pipeline)).
 
 ```python
 harmonize(
@@ -30,211 +30,105 @@ harmonize(
 ) -> pd.DataFrame | HarmonizeResult
 ```
 
-### Parameters
+| Argument         | Type                                               | Default    |
+| ---------------- | -------------------------------------------------- | ---------- |
+| `data`           | DataFrame or path                                  | required   |
+| `description`    | DataFrame or path                                  | required   |
+| `config`         | `HarmonizeConfig` or `None`                        | `None`     |
+| `algorithm`      | `"ComBat"` or `"limma"`                            | `"ComBat"` |
+| `combat_mode`    | 1, 2, 3 or 4                                       | 1          |
+| `needed_values`  | int >= 1 or `None`                                 | `None`     |
+| `sort`           | `"sparsity"`, `"jaccard"`, `"seriation"` or `None` | `None`     |
+| `block`          | int >= 2 or `None`                                 | `None`     |
+| `unique_removal` | bool                                               | `True`     |
+| `output_file`    | path or `None`                                     | `None`     |
+| `return_report`  | bool                                               | `False`    |
 
-| Parameter | Type | Default | Description |
-| --- | --- | --- | --- |
-| `data` | `DataFrame`, `str`, or `Path` | required | Features x samples matrix. If a path, read from that TSV/CSV/Parquet file. Feature names must be in `df.index`, sample names in `df.columns`. |
-| `description` | `DataFrame`, `str`, or `Path` | required | Batch description. Must have columns `ID`, `sample`, `batch`. If a path, read from that CSV file. |
-| `config` | `HarmonizeConfig` or `None` | `None` | If provided, all algorithm settings come from this object. Individual keyword arguments below are ignored. |
-| `algorithm` | `"ComBat"` or `"limma"` | `"ComBat"` | Batch correction algorithm. |
-| `combat_mode` | `int` (1-4) | `1` | ComBat variant. Ignored when `algorithm="limma"`. |
-| `needed_values` | `int` or `None` | `None` | Minimum non-missing observations per batch for a feature to qualify. `None` auto-selects: 2 for modes 1, 3 and limma; 1 for modes 2, 4. |
-| `sort` | `"sparsity"`, `"jaccard"`, `"seriation"`, or `None` | `None` | Batch sorting strategy applied before blocking. |
-| `block` | `int >= 2` or `None` | `None` | Group this many consecutive sorted batches into one block. |
-| `unique_removal` | `bool` | `True` | Rescue singleton-affiliation features by cropping to the nearest shared pattern. |
-| `output_file` | `str`, `Path`, or `None` | `None` | Write the corrected matrix to this path. Format inferred from extension: `.tsv`, `.csv`, `.parquet`, `.pq`. |
-| `return_report` | `bool` | `False` | Also return the per-feature correction report. |
+- `data`, `description`: the two tables of [Input format](Input-Format). A data path is read by its extension; a description path is always read as comma-separated.
+- `config`: when given, its fields replace `algorithm`, `combat_mode`, `needed_values`, `sort`, `block` and `unique_removal`, and those keyword arguments are ignored.
+- `combat_mode`: see [ComBat](ComBat#the-four-modes). Ignored with limma.
+- `needed_values`: values a feature needs in a batch for the batch to count ([Missing values](Missing-Values)). `None` picks 2 for ComBat modes 1 and 3 and for limma, 1 for modes 2 and 4.
+- `sort`, `block`: see [Sorting and blocking](Sorting-and-Blocking). `block` must also be below the number of batches.
+- `unique_removal`: see [Unique removal](Unique-Removal).
+- `output_file`: also write the corrected matrix there: `.csv`, `.parquet` or `.pq` by extension, otherwise tab-separated.
+- `return_report`: return the report with the matrix ([Correction report](Correction-Report)).
 
-### Returns
+Returns the corrected matrix as a DataFrame, with the input's features and columns in the input's order; a feature repeated with the same name and values appears once. Features that could not be corrected keep their measured values or come out empty, as the report records. With `return_report=True`, returns a `HarmonizeResult`.
 
-`pd.DataFrame` with the same shape, index, and column order as the input. NaN positions are preserved where data was insufficient for correction.
-
-With `return_report=True`, a `HarmonizeResult` named tuple of `data` (the same matrix) and `report`, a DataFrame with one row per feature of `data`, in its order:
-
-- `status`: `corrected`, or why the feature kept its values:
-  - `raw_single_batch`: its group spans one batch.
-  - `raw_alone_in_pattern`: no other feature shares its affiliation.
-  - `raw_zero_variance`: ComBat; its variance is too small to estimate.
-  - `raw_too_few_features`: ComBat; fewer than two features were left in its group to form a prior.
-  - `missing_no_usable_batch`: no batch, or with `block` no block, has enough values, and the row is all missing in the output.
-- `batches_used`: the batch labels of its group, comma-separated and sorted; empty when not corrected.
-- `group_size`: the number of features in its group, 0 for none.
-- `cropped`: unique removal moved it to a smaller affiliation, so its values in the dropped batches are missing in the output.
-- `repeats_removed`: how many repeated rows with its name and values were removed before correction.
-
-### Raises
-
-`ValueError` on invalid arguments, mismatched sample IDs, or duplicate feature names.
-
-### Warns
-
-`InputScaleWarning` when the values do not look log-transformed. The data matrix should hold log-transformed values, usually log2; HarmonizePy does not transform them (see [[Input Format]]). The check is a heuristic and can be silenced by category.
-
-### Examples
+Raises `ValueError` on an invalid argument, an input that fails validation, or a feature name repeated with different values; `TypeError` if `unique_removal` is not a bool; `OSError` if a path cannot be read or `output_file` cannot be written; `ImportError` for Parquet without `pyarrow`. Warns with `InputScaleWarning` when the values do not look log-transformed.
 
 ```python
-from harmonizepy import harmonize
-
-# From file paths
 result = harmonize("data.tsv", "batch.csv")
-
-# From DataFrames
-result = harmonize(data_df, desc_df, algorithm="limma")
-
-# Sort and block for many-batch datasets
-result = harmonize(data_df, desc_df, sort="sparsity", block=2)
-
-# Non-parametric ComBat for small batches
-result = harmonize(data_df, desc_df, combat_mode=3, needed_values=1)
-
-# Write output directly
-result = harmonize("data.tsv", "batch.csv", output_file="corrected.parquet")
-
-# What happened to each feature
+result = harmonize(data_df, desc_df, algorithm="limma", sort="sparsity", block=2)  # needs 3+ batches
 result, report = harmonize(data_df, desc_df, return_report=True)
-report["status"].value_counts()
 ```
-
----
 
 ## `HarmonizeResult`
 
-The named tuple `harmonize(..., return_report=True)` returns. It unpacks as `data, report`.
+A named tuple of two DataFrames, returned by `harmonize(..., return_report=True)`; it unpacks as `data, report`.
 
-- `data`: the corrected matrix, as `harmonize()` returns it without the report.
-- `report`: a DataFrame with one row per feature of `data`, with the columns described under `harmonize()` Returns.
-
----
+- `data`: the corrected matrix, as `harmonize()` returns it otherwise.
+- `report`: one row per feature of `data`, in its order, with the columns `status`, `batches_used`, `group_size`, `cropped` and `repeats_removed` ([Correction report](Correction-Report#columns)).
 
 ## `HarmonizeConfig`
 
-Frozen dataclass for storing a reproducible run configuration. Pass as `config=` to `harmonize()` to override all individual keyword arguments.
+A frozen dataclass holding a run's settings, for reuse with `harmonize(data, description, config=cfg)`.
 
-```python
-from harmonizepy import HarmonizeConfig
+| Field            | Default    | Same as          |
+| ---------------- | ---------- | ---------------- |
+| `algorithm`      | `"ComBat"` | `algorithm`      |
+| `combat_mode`    | 1          | `combat_mode`    |
+| `needed_values`  | `None`     | `needed_values`  |
+| `sort_strategy`  | `None`     | `sort`           |
+| `block_size`     | `None`     | `block`          |
+| `unique_removal` | `True`     | `unique_removal` |
 
-cfg = HarmonizeConfig(
-    algorithm="ComBat",
-    combat_mode=1,
-    sort_strategy="sparsity",
-    block_size=2,
-    unique_removal=True,
-)
-```
+The fields are checked when the instance is created, raising `ValueError` or `TypeError` as `harmonize()` would, and cannot be changed afterwards; make a new instance for other settings. The settings themselves are explained on the pages linked from `harmonize()` above.
 
-### Fields
+## `InputScaleWarning`
 
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `algorithm` | `str` | `"ComBat"` | `"ComBat"` or `"limma"` |
-| `combat_mode` | `int` | `1` | ComBat mode 1-4 |
-| `needed_values` | `int` or `None` | `None` | Minimum observations per batch (auto-selected if `None`) |
-| `sort_strategy` | `str` or `None` | `None` | `"sparsity"`, `"jaccard"`, `"seriation"`, or `None` |
-| `block_size` | `int` or `None` | `None` | Block size >= 2, or `None` |
-| `unique_removal` | `bool` | `True` | Rescue singleton features |
-
-`HarmonizeConfig` is frozen and slots-based. Once created, fields cannot be changed. Create a new instance to use different settings.
-
----
+A `UserWarning` subclass raised by `harmonize()` and the command line when the values look untransformed ([Input format](Input-Format#scale)). Filter it by category to silence it.
 
 ## `combat()`
 
-Low-level ComBat engine. Operates directly on NumPy arrays. Does not handle structural missingness: for that, use `harmonize()`.
+The ComBat engine on one matrix, with no pipeline around it ([ComBat](ComBat)).
 
 ```python
-combat(
-    data,
-    batch,
-    *,
-    par_prior=True,
-    mean_only=False,
-    ref_batch=None,
-) -> ndarray
+combat(data, batch, *, par_prior=True, mean_only=False, ref_batch=None) -> ndarray
 ```
 
-### Parameters
+- `data`: a features by samples float array; missing cells allowed.
+- `batch`: one whole-number label per sample.
+- `par_prior`: parametric prior (modes 1 and 2) or non-parametric (modes 3 and 4).
+- `mean_only`: correct the location only (modes 2 and 4).
+- `ref_batch`: a batch label to leave unchanged and adjust the others toward; it needs at least two samples.
 
-| Parameter | Type | Default | Description |
-| --- | --- | --- | --- |
-| `data` | `ndarray`, shape `(n_features, n_samples)` | required | Expression matrix. Per-cell NaN is allowed. |
-| `batch` | array-like, shape `(n_samples,)` | required | Integer batch label per sample. |
-| `par_prior` | `bool` | `True` | Use parametric prior (True = modes 1/2, False = modes 3/4). |
-| `mean_only` | `bool` | `False` | Correct location only, skip scale adjustment (True = modes 2/4). |
-| `ref_batch` | `int` or `None` | `None` | Reference batch to leave unadjusted. Other batches are adjusted toward this reference. |
-
-### Returns
-
-`ndarray` with the same shape as `data`. NaN positions preserved.
-
-### Example
-
-```python
-import numpy as np
-from harmonizepy import combat
-
-data = np.random.randn(1000, 30)   # 1000 features, 30 samples
-batch = np.array([1]*10 + [2]*10 + [3]*10)
-
-corrected = combat(data, batch)
-corrected_np = combat(data, batch, par_prior=False)  # non-parametric
-corrected_loc = combat(data, batch, mean_only=True)   # location only
-```
-
----
+Returns a new array of the same shape; missing cells stay missing. Features ComBat cannot fit keep their input values ([ComBat](ComBat#features-combat-leaves-raw)). A feature with no value in a batch is fitted on the batches it has. Raises `ValueError` on a wrong shape, a batch length that does not match, labels that are not whole numbers, infinite values, or an invalid `ref_batch`.
 
 ## `remove_batch_effect()`
 
-Low-level limma engine. Operates directly on NumPy arrays. Does not handle structural missingness: for that, use `harmonize()`.
+The limma engine on one matrix ([limma](limma)).
 
 ```python
 remove_batch_effect(data, batch) -> ndarray
 ```
 
-`data` is an ndarray of shape `(n_features, n_samples)`. Per-cell NaN is allowed. `batch` is a 1-D array-like of integer batch labels, length `n_samples`.
+Takes the same `data` and `batch` as `combat()`. Returns a new array of the same shape; missing cells stay missing. A feature is fitted on the batches it has values in; one with values in a single batch, or missing a batch with no more values than observed batches, keeps its input values. Called directly, it corrects a single feature; inside `harmonize()` a group of one feature is left raw. Raises `ValueError` as `combat()` does, apart from `ref_batch`.
 
-### Returns
+## `adjust_combat()` and `adjust_limma()`
 
-`ndarray` with the same shape as `data`. NaN positions preserved.
-
-### Example
-
-```python
-import numpy as np
-from harmonizepy import remove_batch_effect
-
-corrected = remove_batch_effect(data, batch)
-```
-
----
-
-## `adjust_combat()`
-
-Wrapper that maps HarmonizR-style integer modes (1-4) to the `combat()` parameters. Operates on DataFrames rather than raw ndarrays.
+DataFrame wrappers around the engines, for custom pipelines that manage their own groups.
 
 ```python
 adjust_combat(sub_df, batch_labels, mode=1, ref_batch=None) -> pd.DataFrame
-```
-
-`sub_df` is a features x samples DataFrame. Returns a corrected DataFrame with the same shape, index, and columns. Intended for custom pipeline use when you are managing sub-matrices yourself.
-
----
-
-## `adjust_limma()`
-
-Wrapper applying limma correction to a DataFrame.
-
-```python
 adjust_limma(sub_df, batch_labels) -> pd.DataFrame
 ```
 
-`sub_df` is a features x samples DataFrame. Returns a corrected DataFrame with the same shape, index, and columns.
+`mode` is a ComBat mode, 1 to 4. Both return a corrected DataFrame with the index and columns of `sub_df`, and raise `ValueError` on labels that do not match the columns or are not whole numbers, or on input the engine refuses.
 
----
+## Pipeline helpers
 
-## Semi-public submodule API
-
-These functions are importable from their submodules for building custom pipelines. They are not re-exported from the top-level `harmonizepy` namespace.
+Importable from their modules for custom pipelines; not exported from `harmonizepy` itself.
 
 ```python
 from harmonizepy.sorting import sort_batches
@@ -242,10 +136,6 @@ from harmonizepy.blocking import build_block_list
 from harmonizepy.affiliation import remove_unique_combinations
 ```
 
-| Function | Module | Description |
-| --- | --- | --- |
-| `sort_batches(data, batch_labels, strategy)` | `harmonizepy.sorting` | Returns a reordered copy of `batch_labels` according to the chosen strategy. |
-| `build_block_list(batch_labels, block_size)` | `harmonizepy.blocking` | Returns a list of batch-group assignments for the given block size. |
-| `remove_unique_combinations(affiliation_list)` | `harmonizepy.affiliation` | Rescues singleton-affiliation features by cropping to the nearest shared pattern. |
-
-These interfaces are stable for the current version but are not covered by the same backward-compatibility guarantee as the top-level public API.
+- `sort_batches(data, batch_list, strategy, needed_values)` returns `(sorted_data, sorted_batch_list, col_order)`: the matrix with its columns reordered so that similar batches are adjacent, the labels in the new order, and the input column index at each new position (`np.argsort(col_order)` restores the input order).
+- `build_block_list(batch_list, block_size)` returns the block label of each sample, starting at 1, with every `block_size` batches in order of first appearance sharing a block.
+- `remove_unique_combinations(affiliation_list)` takes one affiliation (a tuple of batch or block labels) per feature and returns a new list in which each affiliation held by one feature only is replaced by the longest shared affiliation inside it, where one exists ([Unique removal](Unique-Removal#the-rule)).

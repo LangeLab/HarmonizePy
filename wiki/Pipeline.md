@@ -1,128 +1,105 @@
 # Pipeline
 
-The `harmonize()` function implements the full HarmonizR-compatible pipeline. This page explains what happens at each stage and why.
+Which batches a protein was measured in decides which proteins it is corrected with. `harmonize()` groups every feature by that question, corrects each set of features that share an answer as one smaller matrix, and puts the pieces back in the input's order. The approach is HarmonizR's ([Voss et al. 2022](References#voss-et-al-2022)). This page follows the eight proteins of the [Quick start](Quick-Start) example through it.
 
----
+## One feature's way through
 
-## The structural missingness problem
-
-Standard ComBat and limma require fully-dense matrices: every feature must be observed in every sample. Real omics data rarely satisfies this requirement. In proteomics, for example, a peptide may be reliably detected in batches 1 and 2 but absent from batch 3 entirely, not because it was zero but because it was below the detection limit for that instrument run. Treating that absence as NaN and feeding the matrix to ComBat will fail.
-
-The HarmonizR approach solves this by exploiting the structure of the missingness. Rather than imputing or dropping, it groups features by which batches they appear in, then corrects each group independently using only the batches where that group has data.
-
----
-
-## Pipeline stages
-
-### 1. Read and validate
-
-Inputs are validated before any computation: shapes, column names, types, and sample alignment. A `ValueError` is raised immediately if inputs are inconsistent, not after a long computation.
-
-### 2. Batch sorting (optional)
-
-If `sort` is specified, batches are reordered before any other processing, so that batches with similar sets of observed features sit next to each other and share a block. A feature counts as present in a batch when it has at least `needed_values` values there.
-
-Three strategies are available:
-
-**`"sparsity"`** - Orders batches by the number of features present, most first.
-
-**`"jaccard"`** - Chains batches by Jaccard similarity: the features present in both batches over the features present in either. The chain starts at the batch most similar to all others and moves to the most similar batch not yet placed.
-
-**`"seriation"`** - Orders batches by their score on the first principal component of the batches' presence vectors.
-
-No measurement so far shows one strategy correcting better than another.
-
-The sorting order affects which features land in which sub-matrix groups after blocking, but it does not change the final correction result for the no-block case (each feature still ends up in a group with the same batches, just potentially in a different order).
-
-### 3. Blocking (optional)
-
-If `block=N` is specified, every N neighbouring batches (in sort order) form a block, and affiliations are formed over blocks instead of batches: a block counts for a feature when every batch inside it holds at least `needed_values` values of the feature. With many batches, fewer distinct patterns arise and features join larger groups; on the medium and high-missingness test fixtures, blocks of two reduced the groups from 4 to 3. The engines still correct each original batch inside a sub-matrix.
-
-Blocking costs observed values: a feature missing from one batch of a block loses the whole block. On the test fixtures it did not change peak memory. No measurement so far gives a recommended block size; with many batches and much missingness, compare the share of features corrected with and without blocking, for example from the dry run's sub-matrix count and the run log.
-
-### 4. Affiliation spotting
-
-For each feature, the pipeline determines its **affiliation**: the set of batches (or blocks) in which it has at least `needed_values` non-missing observations. Features with identical affiliations form a group.
-
-A feature that has data in batches 1, 2, and 4 but not batch 3 has a different affiliation from a feature that has data in batches 1, 2, 3, and 4. They will be corrected separately.
-
-Features with an empty affiliation (not enough data in any batch) are passed through as all-NaN rows.
-
-### 5. Unique-combination rescue (unique removal)
-
-Enabled by default (`unique_removal=True`). A feature whose affiliation pattern is unique across the dataset would form a singleton group that ComBat cannot correct (ComBat's EB prior estimation requires multiple features). Without this step, those features would be dropped.
-
-The rescue algorithm crops the feature's affiliation to the nearest shared pattern (the most similar pattern that appears in at least one other feature). This allows the feature to join an existing group and receive a correction, at the cost of losing data from the batches that were cropped out.
-
-Set `unique_removal=False` only if you need strict missingness-pattern matching and can afford to lose the affected features.
-
-### 6. Sub-matrix extraction
-
-Features are grouped by their (possibly rescued) affiliation, and one sub-matrix is extracted per group. Each sub-matrix contains exactly the features in that group and the samples from the batches in their shared affiliation.
-
-Sub-matrices may still contain per-cell NaN (random missing values within a qualifying batch). These pass through to the correction engines, which handle them per-feature.
-
-### 7. Batch correction
-
-Each sub-matrix is corrected independently by the selected algorithm (ComBat or limma). See [[Algorithms]] for details on how per-cell NaN is handled inside the engines.
-
-Single-feature groups are passed through without adjustment, with either engine. ComBat has no other feature to share the empirical-Bayes prior with, and limma would remove the feature's own batch means, true differences included. The feature retains its original values rather than being dropped.
-
-### 8. Reassembly
-
-Corrected sub-matrices are scattered back to their original positions in the output matrix. The output has the same shape, index, and column order as the input. Features that were all-NaN in the input remain all-NaN.
-
----
-
-## Data flow summary
-
-```bash
-Input matrix (features x samples, may have structural NaN)
-        |
-        v
-[Sort batches]          <- optional: sparsity / jaccard / seriation
-        |
-        v
-[Form blocks]           <- optional: group N consecutive batches
-        |
-        v
-Spot affiliations       <- per feature: which batches have >= needed_values observations
-        |
-        v
-[Unique removal]        <- rescue singleton-affiliation features
-        |
-        v
-Group by affiliation    <- features with identical affiliation -> one sub-matrix
-        |
-        v
-Correct each sub-matrix <- ComBat or limma, per-cell NaN handled per-feature
-        |
-        v
-Reassemble              <- scatter corrected values back to original positions
-        |
-        v
-Output matrix (same shape as input, NaN preserved)
+```mermaid
+flowchart LR
+    A[usable<br/>batches] -- none --> M([missing_no_<br/>usable_batch]):::fail
+    A == 1+ ==> G[its<br/>group]
+    G -- 1 batch --> R2([raw_single_<br/>batch])
+    G -- "1 feature,<br/>2+ batches" --> R1([raw_alone_<br/>in_pattern])
+    G == 2+ of each ==> E[engine<br/>fit]
+    E == fitted ==> OK([corrected]):::ok
+    E -. set aside .-> R3([raw_zero_variance,<br/>raw_too_few_<br/>features])
+    classDef ok fill:#116329,stroke:#4ac26b,color:#ffffff
+    classDef fail fill:#a40e26,stroke:#ff8182,color:#ffffff
+    linkStyle default stroke:#8b949e
 ```
 
----
+<p align="center"><sub><b>Figure 1.</b> The status each feature ends with in the <a href="Correction-Report">correction report</a>. The thick line is the path to correction. Only green is corrected; the plain outcomes keep the feature's measured values inside its group's batches, and red empties the row. Unique removal, on by default, runs before groups are formed. A group in one batch is <code>raw_single_batch</code> whatever its size, so P7 ends there.</sub></p>
 
-## NaN handling: what is and is not done
+## Affiliations
 
-HarmonizePy never imputes. This is a hard rule.
+For each feature, HarmonizePy finds the batches where it has at least `needed_values` measured values ([Missing values](Missing-Values#what-harmonizepy-does-instead) gives the defaults). That set is the feature's affiliation. Features with the same affiliation form a group.
 
-**Structural NaN** (a feature absent from an entire batch) is handled by affiliation: that batch is excluded from the feature's group. The correction runs only on batches where the feature has enough data.
+With the default settings, the example proteins have these affiliations (the matrix is drawn on [Missing values](Missing-Values)):
 
-**Per-cell NaN** (a random missing value within a qualifying batch) is handled inside the correction engines using a per-feature computation. For each feature, only the observed samples are used for parameter estimation. The NaN positions in the output match the NaN positions in the input exactly.
+| Protein    | Affiliation | After unique removal |
+| ---------- | ----------- | -------------------- |
+| P1, P2, P3 | 1, 2        | 1, 2                 |
+| P4         | 1, 2, 3     | 1, 2                 |
+| P5         | 2, 3        | 2, 3                 |
+| P6, P8     | none        | none                 |
+| P7         | 3           | 3                    |
 
-If a feature has no qualifying affiliation group after all the steps above, it appears as an all-NaN row in the output. It is never filled with imputed or carry-forward values.
+P4 is the only protein measured in all three batches. A group of one feature cannot be corrected (ComBat has no other feature to estimate its prior from, and limma would remove the feature's own batch differences, real ones included), so [unique removal](Unique-Removal) moves P4 into the group of P1 to P3 and gives up its batch 3 values. P5's affiliation is also its own, but no shared affiliation fits inside it, so it stays alone.
 
----
+The groups, then, are {P1, P2, P3, P4} over batches 1 and 2, {P5} over batches 2 and 3, and {P7} over batch 3. The dry run reports the same count:
 
-## Choosing pipeline parameters
+```text
+  Sub-matrices:    3  (unique affiliation groups)
+```
 
-- Small dataset, 2-4 batches: default (no `sort`, no `block`)
-- 5-10 batches, bulk proteomics: `sort="sparsity"`, `block=2`
-- 10+ batches, uneven batch sizes: `sort="jaccard"`, `block=2`
-- Many batches, complex overlap structure: `sort="seriation"`, `block=2`
-- To retain the most features: keep `unique_removal=True` (default)
-- Strict missingness-pattern matching: `unique_removal=False`
+## Correcting each group
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/pipeline-groups-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="assets/pipeline-groups-light.png">
+    <img alt="Six of the example's eight proteins form three groups: P1 to P4 over batches 1 and 2, P5 over batches 2 and 3, and P7 over batch 3, each with its report status." src="assets/pipeline-groups-light.png">
+  </picture>
+</p>
+<p align="center"><sub><b>Figure 2.</b> The three groups the default run forms, each a smaller matrix with only its own batches. Only group 1 has two or more features over two or more batches, so only it reaches the engine.</sub></p>
+
+Each group becomes a matrix of its features and the samples of its batches, and the engine corrects it alone. Gaps inside the group, such as P1's missing cell in batch 1, go into the engine as gaps: each feature is fitted on the cells it has, and the gap stays empty in the output.
+
+A group is fitted only when it has at least two features and at least two batches. The other groups keep their measured values:
+
+- {P7} spans one batch, so there is nothing to correct it against: `raw_single_batch`.
+- {P5} has one feature: `raw_alone_in_pattern`.
+
+Inside a fitted group, ComBat can still set a feature aside, for example one whose variance is zero; those statuses are explained on [Correction report](Correction-Report).
+
+HarmonizR drops these features. I keep them with their measured values instead: no value is corrected where its batch effect cannot be estimated, and the report names every such feature, so it is always visible which rows were not corrected.
+
+## The result
+
+`harmonize()` returns the matrix with the input's features and sample columns, in the input's order:
+
+```text
+            s1     s2     s3     s4     s5     s6    s7    s8    s9
+protein
+P1       20.67    NaN  20.22  20.69  20.33  21.14   NaN   NaN   NaN
+P2       19.02  19.66  18.57  18.98  19.52  18.35   NaN   NaN   NaN
+P3       23.30  22.58  23.75  23.09  23.54  22.45   NaN   NaN   NaN
+P4       19.84  20.56  19.30  19.77  20.32  19.32   NaN   NaN   NaN
+P5         NaN    NaN    NaN  16.20  15.80  16.60  17.0  16.4  17.3
+P6         NaN    NaN    NaN    NaN    NaN    NaN   NaN   NaN   NaN
+P7         NaN    NaN    NaN    NaN    NaN    NaN  24.2  23.6  24.9
+P8         NaN    NaN    NaN    NaN    NaN    NaN   NaN   NaN   NaN
+```
+
+> [!IMPORTANT]
+> The output is not the input with values changed. Measured values outside a feature's group come out empty.
+
+Three things in this output are easy to miss:
+
+- It is not the input with values changed. P3's value in `s7` and P4's values in `s7` to `s9` were measured and are now empty, because those batches are outside the group each protein was corrected in. P6 had three values and is empty.
+- A feature's correction depends on the rest of its group. Without unique removal, P4 stays raw and the group is P1 to P3 only; P1's value in `s1` is then 20.70 instead of 20.67. Filling P1's one missing cell would change P2 to P4 too, because ComBat uses one variance rule for a group that has any gap and another for a group that has none.
+- Only one kind of row is removed: a feature repeated with the same name and the same values appears once (see [Input format](Input-Format#repeated-features)).
+
+## Groups are corrected to their own level
+
+Each group is corrected toward the mean of its own batches. A feature corrected over batches 1 and 2 ends near its batch 1 and 2 average; a feature corrected over batches 1, 2 and 3 ends near its average over all three. When batch 3 reads higher or lower than the others, two features with the same true level can come out at different levels partly because they were measured in different batches. Comparisons within a feature, between samples, are what the correction is for; comparisons of levels between features with different affiliations carry this offset (see [Limits](Limits)).
+
+## Many batches: sorting and blocking
+
+With many batches and much missing data, features scatter over many small groups. `block` groups neighbouring batches so that affiliations are formed over fewer, larger units, and `sort` decides which batches are neighbours. Blocking trades measured values for larger groups, and sorting decides which batches share a block; they are explained on [Sorting and blocking](Sorting-and-Blocking).
+
+## Related pages
+
+- [Unique removal](Unique-Removal): the rule that moved P4, and when it finds nothing.
+- [Correction report](Correction-Report): reading the status of every feature after a run.
+- [ComBat](ComBat) and [limma](limma): what happens inside one group.

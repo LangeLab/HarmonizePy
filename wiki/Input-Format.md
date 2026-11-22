@@ -1,126 +1,106 @@
-# Input Format
+# Input format
 
-HarmonizePy requires two input files (or DataFrames): a **data matrix** and a **batch description**.
+A run takes two tables: the data matrix, with one row per feature and one column per sample, and the batch description, which gives each sample its batch. Both can be files or pandas DataFrames.
 
----
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/input-anatomy-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="assets/input-anatomy-light.png">
+    <img alt="The two input files side by side: the data matrix with a protein column and sample columns, and the batch description with ID, sample and batch columns; an arrow shows that the matrix's column names are the description's IDs." src="assets/input-anatomy-light.png">
+  </picture>
+</p>
+<p align="center"><sub><b>Figure 1.</b> The two tables meet on the sample name. Every column of the matrix must appear exactly once in the description's <code>ID</code> column; <code>sample</code> is never read, and <code>batch</code> gives each sample its batch.</sub></p>
+
 
 ## Data matrix
 
-The data matrix is a features-by-samples table. Features (proteins, peptides, metabolites, genes) are rows. Samples are columns.
+Features (proteins, peptides, metabolites, genes) are rows; samples are columns. The first column of a file holds the feature names, and the rest are samples:
 
-### File format
-
-- Tab-separated (`.tsv`) or comma-separated (`.csv`)
-- The first column contains feature names (used as the DataFrame index)
-- All remaining columns are samples, one column per sample
-- Values are floating-point numbers
-- Missing values are represented as empty cells or `NaN`
-
-### Example
-
-```tsv
-ProteinID    Sample_1    Sample_2    Sample_3    Sample_4    Sample_5    Sample_6
-P00001       12.4        11.8        12.1                    13.0        12.7
-P00002       8.3         8.1         8.9         8.4         8.7         8.2
-P00003                               7.2         7.1                     7.5
-P00004       15.1        14.9        15.3        15.0        14.8        15.2
+```text
+protein	s1	s2	s3	s4	s5	s6
+P1	20.1		19.6	21.3	20.9	21.8
+P2	18.2	18.9	17.7	19.8	20.4	19.1
 ```
 
-Here `P00001` is missing in Sample_4, and `P00003` is missing in Samples 1, 2, and 5. This is typical structural missingness. HarmonizePy handles this without imputation.
+The reader is chosen by the file's extension:
+
+| Extension         | Read as                        |
+| ----------------- | ------------------------------ |
+| `.csv`            | comma-separated                |
+| `.parquet`, `.pq` | Parquet (needs the `io` extra) |
+| any other         | tab-separated                  |
+
+- A Parquet file must hold the feature names as its index. A feature-name column that is not the index is read as a sample and refused as text.
+- A DataFrame must have the feature names as its index and the samples as its columns. Read a file with `pd.read_csv("data.tsv", sep="\t", index_col=0)`; without `index_col=0` the name column becomes a text column and the run is refused.
+- Missing values are empty cells or pandas' usual markers, among them `NA`, `NaN`, `nan`, `null`, `N/A`, `#N/A`, `None` and `<NA>`. A `-` is not a missing marker: it makes its column text, and the run is refused.
+- Every sample column must be numeric. A text cell anywhere in a column fails the whole column, with `data contains non-numeric columns: [...]`. R's HarmonizR turns such a cell into a missing value without a word; I refuse it, because silent coercion can hide a data preparation error.
+- Sample names must be unique, in a file header as in a DataFrame.
+- Infinite values are refused, naming the first features that hold them (see [Scale](#scale)).
+- A row with no values at all is kept and comes out empty, with the status `missing_no_usable_batch`.
+
+### Repeated features
+
+A feature name can appear more than once only with identical values in every cell, missing cells included. The first row is kept and the others are removed, and the log says so:
+
+```text
+INFO [harmonizepy] Removed 1 repeated feature(s) with identical values: P2
+```
+
+I remove a repeat only when nothing is lost, and log every removal rather than collapsing rows silently. The same name with different values is refused: `duplicate feature names with different values: 'P2' appears more than once. Each feature name must have one set of values.` Two different names with identical values are both kept, since two proteins can quantify to the same numbers. The report's `repeats_removed` column counts the removed rows for each feature (see [Correction report](Correction-Report)).
 
 ### Scale
 
-ComBat and limma model batch effects as additive on the scale they receive, so the values should be log-transformed, usually log2. HarmonizePy does not transform the data. Transform it first, for example with `log2(x + 1)` for intensities that contain zeros. For proportions such as methylation beta values, correct M-values, `log2(beta / (1 - beta))`, and convert back afterwards.
+> [!IMPORTANT]
+> Both engines treat the location part of a batch effect as a shift added to the values (see [Batch effects](Batch-Effects#why-the-log-scale-matters)), so the values should be log-transformed, usually log2. HarmonizePy does not transform them. Use `log2(x + 1)` for intensities that contain zeros and `log2(x)` otherwise. For proportions such as methylation beta values, correct the M-values, `log2(beta / (1 - beta))`, and convert back for reporting ([Du et al. 2010](References#du-et-al-2010)).
 
-A heuristic check warns with `harmonizepy.InputScaleWarning` when every value is non-negative and the 95th percentile is above 100, as for raw intensities and counts, or when every value lies between 0 and 1 with more than two distinct values, as for proportions. Percentages from 0 to 100 are not detected.
+A check warns with `harmonizepy.InputScaleWarning` when the values look untransformed:
 
-Silence it in Python with `warnings.filterwarnings("ignore", category=harmonizepy.InputScaleWarning)`. On the command line, Python's `-W` option cannot name the category; match the message instead: `python -W "ignore:the data look:UserWarning" -m harmonizepy data.tsv batch.csv`.
+- every value is non-negative and the 95th percentile is above 100, as for raw intensities and counts; or
+- every value lies between 0 and 1, with more than two distinct values, as for proportions.
 
-### Rules
-
-- A feature name may repeat only with identical values. The repeat is removed and logged; the same name with different values raises a `ValueError`. Different names with identical values are both kept
-- All non-index values must be numeric. Non-numeric text cells (other than NaN markers) raise a `ValueError`
-- An all-NaN row is kept and returned as missing, whether the matrix comes from a file or a DataFrame
-- Sample names must be unique. A repeated column name raises a `ValueError`
-- No minimum number of features is enforced, but at least 2 features are needed for ComBat's empirical Bayes prior estimation
-
-### When passing a DataFrame
-
-```python
-# Feature names must be in df.index
-# Sample names must be in df.columns
-data = pd.read_csv("data.tsv", sep="\t", index_col=0)
-```
-
-The `index_col=0` is required. Without it, pandas will treat the feature name column as a data column and raise a validation error.
-
----
+The check is a heuristic. It does not catch percentages from 0 to 100, or raw data that contain a single negative value. `harmonize()` and the command line run it; the engines called directly do not. Silence it in Python with `warnings.filterwarnings("ignore", category=harmonizepy.InputScaleWarning)`.
 
 ## Batch description
 
-The batch description maps each sample to a batch. It is a CSV file with three required columns.
+One row per sample. HarmonizePy reads two of its columns: the sample IDs and the batch labels.
 
-### Columns
-
-| Column | Type | Description |
-| --- | --- | --- |
-| `ID` | string | Sample name. Must match a column name in the data matrix exactly. |
-| `sample` | integer | Sample index, kept for compatibility with HarmonizR. HarmonizePy does not read it. |
-| `batch` | integer | Batch label. Samples with the same batch value are corrected together. |
-
-### Example
-
-```csv
+```text
 ID,sample,batch
-Sample_1,1,1
-Sample_2,2,1
-Sample_3,3,2
-Sample_4,4,2
-Sample_5,5,3
-Sample_6,6,3
+s1,1,1
+s2,2,1
+s3,3,1
+s4,4,2
+s5,5,2
+s6,6,2
 ```
 
-In this example, Samples 1 and 2 are in batch 1, Samples 3 and 4 in batch 2, and Samples 5 and 6 in batch 3.
+- The file is always read as comma-separated, whatever its extension. A tab-separated description is read as one column and refused.
+- It must have at least three columns. The IDs come from the column named `ID`, or else the first column; the labels from the column named `batch`, or else the third. Names are case-sensitive. The `sample` column, kept for compatibility with HarmonizR, is never read. It still matters by position: when no column is named `batch`, the batch labels are read from the third column.
+- The IDs must be exactly the matrix's column names, each listed once. A sample missing from either side is refused, and the message lists the names that do not match.
+- Batch labels must be whole numbers: `1`, `1.0` and `"1"` are accepted; text, blanks and fractions such as `1.5` are refused, naming the column.
+- Batches can differ in size. A batch of one sample is accepted; ComBat then corrects its groups for location only (see [ComBat](ComBat#the-four-modes)).
+- With a single batch there is nothing to correct against. Every feature with at least `needed_values` values keeps them as measured; the others come out empty.
 
-### Rules
+## Errors
 
-- Column names are case-sensitive. The sample IDs come from the column named `ID` and the labels from the column named `batch`; without those names, the first column holds the IDs and the third the batch labels.
-- Every sample name in `ID` must appear as a column in the data matrix.
-- Every data matrix column must appear in `ID`. Extra samples in either direction raise a `ValueError`.
-- Each sample is listed once. A repeated ID raises a `ValueError`.
-- Batch labels must be whole numbers (`1` or `1.0`). Text, blanks, and fractions such as `1.5` raise a `ValueError` that names the column.
-- With a single batch there is nothing to correct, and the data are returned unchanged.
-- Batch sizes do not need to be equal. Unbalanced batches are handled.
+Validation runs before any correction. On the command line each of these errors is one line starting `ERROR:`, with exit status 1; a missing file is a usage error with status 2 (see [CLI reference](CLI-Reference#exit-status)).
 
-### When passing a DataFrame
+| Message starts with                                    | Cause                       |
+| ------------------------------------------------------ | --------------------------- |
+| `data contains non-numeric columns`                    | text in a sample column     |
+| `data contains duplicate sample names`                 | repeated column name        |
+| `duplicate feature names with different values`        | same name, different values |
+| `data contains infinite values`                        | `inf` or `-inf` in a cell   |
+| `data must have at least 2 sample columns`             | one sample                  |
+| `description must have at least 3 columns`             | too few columns             |
+| `the ID column cannot be found`                        | first column is the batch   |
+| `the batch column cannot be found`                     | third column is the ID      |
+| `Sample IDs in description do not match data columns`  | ID sets differ              |
+| `sample IDs listed more than once in the description`  | repeated ID                 |
+| `batch labels in column 'batch' must be whole numbers` | text, blank or fraction     |
 
-```python
-batch = pd.read_csv("batch.csv")
-# No index_col needed. The ID and batch columns are found by name, or else by position.
-```
+## Related pages
 
----
-
-## Parquet input
-
-If the `harmonizepy[io]` extra is installed, `.parquet` and `.pq` files can be used as data matrix input:
-
-```python
-result = harmonize("data.parquet", "batch.csv")
-```
-
-The parquet file must have feature names as the index (row labels). Batch description files are always CSV.
-
----
-
-## Validation errors
-
-HarmonizePy validates both inputs before running any computation. Common errors and their causes:
-
-- `"duplicate feature names with different values"`: a feature name appears in two rows whose values differ
-- `"Non-numeric values in data matrix"`: a data cell contains text or a non-numeric value
-- `"Sample IDs in description do not match data columns"`: an ID in the description is not a data column, or a data column has no row in the description; the message lists both kinds
-- `"batch labels in column 'batch' must be whole numbers"`: the batch column holds text, blanks, or fractions
-- `"sample IDs listed more than once in the description"`: a sample appears in two rows
-- `"description must have at least 3 columns"`: the batch description has fewer than three columns
-- `"the batch column cannot be found"` or `"the ID column cannot be found"`: the columns are not named and their positions point at the same column
+- [Missing values](Missing-Values): what happens to the gaps in the matrix.
+- [CLI reference](CLI-Reference): output formats and the default output path.
+- [API reference](API-Reference): passing DataFrames to `harmonize()`.

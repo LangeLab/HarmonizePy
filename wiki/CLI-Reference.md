@@ -1,97 +1,60 @@
-# CLI Reference
+# CLI reference
 
-HarmonizePy includes a command-line interface that exposes the full `harmonize()` pipeline.
+The whole command line on one page: the arguments, every flag, config files, the dry run, logging and exit statuses. `harmonizepy` runs the same pipeline as `harmonize()`; `python -m harmonizepy` is the same command.
 
-```bash
-harmonizepy data.tsv batch.csv [options]
+```text
+usage: harmonizepy [-h] [-o PATH] [--output-format {tsv,csv,parquet}]
+                   [--algorithm {ComBat,limma}] [--combat-mode {1,2,3,4}]
+                   [--needed-values N] [--sort {sparsity,jaccard,seriation}]
+                   [--block N] [--unique-removal | --no-unique-removal]
+                   [--summary PATH] [--report PATH] [--dry-run]
+                   [--config PATH] [--json] [-v | -q] [--log-file PATH]
+                   [--no-log] [--version]
+                   data description
 ```
 
----
+## Arguments
 
-## Basic examples
+- `data`: the data matrix, read by extension: `.csv` comma-separated, `.parquet` or `.pq` Parquet, otherwise tab-separated ([Input format](Input-Format)).
+- `description`: the batch description, always read as comma-separated.
 
-```bash
-# Minimal: ComBat mode 1, default output path
-harmonizepy data.tsv batch.csv
+## Flags
 
-# Explicit output path
-harmonizepy data.tsv batch.csv -o corrected.tsv
+| Flag                                      | Default                     | Explained on                                 |
+| ----------------------------------------- | --------------------------- | -------------------------------------------- |
+| `-o`, `--output PATH`                     | `<data stem>_corrected.tsv` | below                                        |
+| `--output-format {tsv,csv,parquet}`       | from the extension          | below                                        |
+| `--algorithm {ComBat,limma}`              | `ComBat`                    | [Choosing an engine](Algorithms)             |
+| `--combat-mode {1,2,3,4}`                 | 1                           | [ComBat](ComBat#the-four-modes)              |
+| `--needed-values N`                       | 2; 1 for ComBat modes 2 and 4 | [Missing values](Missing-Values)             |
+| `--sort {sparsity,jaccard,seriation}`     | none                        | [Sorting and blocking](Sorting-and-Blocking) |
+| `--block N`                               | none                        | [Sorting and blocking](Sorting-and-Blocking) |
+| `--unique-removal`, `--no-unique-removal` | on                          | [Unique removal](Unique-Removal)             |
+| `--report PATH`                           | none                        | [Correction report](Correction-Report)       |
+| `--summary PATH`                          | none                        | below                                        |
+| `--json`                                  | off                         | below                                        |
+| `--dry-run`                               | off                         | below                                        |
+| `--config PATH`                           | none                        | below                                        |
+| `-v`, `--verbose`                         | off                         | below                                        |
+| `-q`, `--quiet`                           | off                         | below                                        |
+| `--log-file PATH`                         | `<output stem>.log`         | below                                        |
+| `--no-log`                                | off                         | below                                        |
+| `--version`                               |                             | prints the version                           |
 
-# limma, write parquet
-harmonizepy data.tsv batch.csv --algorithm limma -o corrected.parquet
+## Output
 
-# Sort by sparsity and block into pairs
-harmonizepy data.tsv batch.csv --sort sparsity --block 2 -o corrected.tsv
+Without `-o`, the corrected matrix is written next to the data file as `<data stem>_corrected.tsv`, or `.csv` or `.parquet` with `--output-format`. With `-o`, the format comes from the extension (`.csv`, `.parquet`, `.pq`, otherwise tab-separated) unless `--output-format` names one. Missing values are written as empty cells in TSV and CSV, and as nulls in Parquet. Parquet needs the `io` extra.
 
-# Validate inputs and print run plan without computing
-harmonizepy data.tsv batch.csv --dry-run
+`--report PATH` writes the per-feature report, by extension (`.csv`, `.parquet` or `.pq`, otherwise tab-separated); `--output-format` does not apply to it. A report path equal to the output or to either input is refused.
 
-# Save a reproducible JSON summary alongside the result
-harmonizepy data.tsv batch.csv -o corrected.tsv --summary run.json
-```
+`--summary PATH` writes a JSON summary after the run: the version, the input and output paths, the settings with the `needed_values` actually used, and the feature, sample and batch counts. `--json` prints the same object to standard output and lowers the log to warnings.
 
----
-
-## Positional arguments
-
-- `data`: features x samples matrix (TSV, CSV, or Parquet). The first column is treated as feature names.
-- `description`: batch description CSV with columns `ID`, `sample`, `batch`.
-
----
-
-## Output flags
-
-- `-o`, `--output PATH` (default: `<data_stem>_corrected.tsv`, or `.csv` or `.parquet` with `--output-format`): output file path. Format is inferred from the extension (`.tsv`, `.csv`, `.parquet`, `.pq`).
-- `--output-format {tsv,csv,parquet}` (default: inferred from extension): force a specific output format regardless of file extension. Parquet requires `harmonizepy[io]`.
-
-When `-o` is omitted, the output is written next to the input data file as `<data_stem>_corrected.tsv`. With `--output-format csv` or `--output-format parquet` and no `-o`, the extension follows the format: `<data_stem>_corrected.csv` or `<data_stem>_corrected.parquet`.
-
----
-
-## Algorithm flags
-
-| Flag | Default | Description |
-| --- | --- | --- |
-| `--algorithm {ComBat,limma}` | `ComBat` | Batch correction algorithm. |
-| `--combat-mode {1,2,3,4}` | `1` | ComBat variant. Ignored when `--algorithm limma`. |
-| `--needed-values N` | auto | Minimum non-missing values per batch to qualify a feature. Auto: 2 for modes 1, 3 and limma; 1 for modes 2, 4. |
-
----
-
-## Pipeline flags
-
-| Flag | Default | Description |
-| --- | --- | --- |
-| `--sort {sparsity,jaccard,seriation}` | none | Sort batches before blocking so similar batches are grouped together. |
-| `--block N` | none | Group N consecutive sorted batches into one sub-matrix block. Must be >= 2 and < total number of batches. |
-| `--unique-removal` / `--no-unique-removal` | enabled | Rescue singleton-affiliation features. Disable with `--no-unique-removal` for strict missingness-pattern matching. |
-
----
-
-## Workflow helpers
-
-- `--dry-run`: validate inputs, print run plan, exit without computing. Writes no files: it cannot be combined with `--log-file`, `--summary`, `--json`, or `--report` on the command line, and ignores those keys in a config file. Exit code `0` if valid, `1` on a validation error, `2` on a usage error or a missing input file.
-- `--summary PATH`: write a JSON run summary to PATH after completion. Contains the resolved parameters (including the `needed_values` the run used), input and output dimensions, and the package version.
-- `--report PATH`: write the per-feature correction report to PATH: each feature's status (corrected, or why it kept its values), the batches of its group, its group size, whether unique removal cropped it, and how many repeats of it were removed. Format from the extension: `.csv`, `.parquet` or `.pq`, otherwise TSV; `--output-format` does not apply. A path equal to the output or an input file is a usage error. The columns are described under `harmonize()` in the [[API Reference]].
-- `--json`: print the run summary as JSON to stdout. Suppresses INFO log messages.
-- `--config PATH`: load flags from a TOML, JSON, or YAML config file. CLI flags override config file values.
-
----
-
-## Verbosity flags
-
-- `-v`, `--verbose`: enable debug logging (sub-matrix dimensions, affiliation counts, timing).
-- `-q`, `--quiet`: suppress all progress messages. Only warnings and errors are shown.
-- `--log-file PATH`: write a detailed execution log to PATH (default: `<output_stem>.log`).
-- `--no-log`: disable file logging entirely.
-
----
+> [!CAUTION]
+> `-o`, `--summary` and `--log-file` are not checked against the input paths. Pointing one of them at the data file overwrites it.
 
 ## Config files
 
-Pass `--config path/to/config.toml` to load settings from a file. TOML, JSON, and YAML are supported. YAML requires the `harmonizepy[config]` extra.
-
-### TOML example
+`--config PATH` reads settings from a TOML, JSON or YAML file (`.toml`, `.json`, `.yaml`, `.yml`); YAML needs the `config` extra. Its keys are the long flag names with underscores:
 
 ```toml
 algorithm = "ComBat"
@@ -100,53 +63,39 @@ sort = "sparsity"
 block = 2
 unique_removal = true
 output = "corrected.tsv"
+report = "report.tsv"
 ```
 
-### JSON example
+- Allowed keys: `algorithm`, `combat_mode`, `needed_values`, `sort`, `block`, `unique_removal`, `output`, `output_format`, `summary`, `report`. Any other key is a usage error.
+- Flags on the command line override the file.
+- Paths in the file are taken relative to the current directory, not to the file.
+- Values from the file skip the command line's own checks and are checked by the library instead, so an invalid value exits with status 1 and an `ERROR:` line rather than a usage message. `output_format` is not checked: an unknown value writes tab-separated.
 
-```json
-{
-  "algorithm": "ComBat",
-  "combat_mode": 1,
-  "sort": "sparsity",
-  "block": 2,
-  "unique_removal": true
-}
-```
+## Dry run
 
-Config file keys map 1:1 to CLI flag names: `algorithm`, `combat_mode`, `needed_values`, `sort`, `block`, `unique_removal`, `output`, `output_format`, `summary`, `report`. CLI flags override config file values. Config file values override built-in defaults.
+`--dry-run` reads and validates the inputs and plans the groups exactly as a run would, sorting, blocking and unique removal included, then prints the plan and exits without correcting or writing anything. It refuses `--log-file`, `--summary`, `--json` and `--report` on the command line (unless the flag only repeats the config file's value), and ignores `summary` and `report` in a config file. The input-scale warning still prints.
 
-Config paths are resolved relative to the config file, not the current working directory.
+The plan it prints is shown on [Quick start](Quick-Start#2-check-the-plan).
 
----
+## Logging
 
-## Dry-run output
+Progress goes to standard error as `INFO [harmonizepy] ...` lines. `-v` adds debug lines (affiliation counts, per-group detail); `-q` and `--json` show warnings and errors only. The input-scale warning is a Python warning, not a log line, and prints under `-q` too.
 
-`--dry-run` validates inputs, plans the sub-matrices exactly as a correction run would (sorting, blocking, and unique removal included), and prints a summary without running correction. The layout, with illustrative values:
+A log file with debug detail is written next to the output as `<output stem>.log`, replacing any earlier one; `--log-file PATH` moves it and `--no-log` turns it off. It is opened before the inputs are read, so a run that fails validating its input still leaves a log; a missing input file stops the run before the log is opened.
 
-```text
-  HarmonizePy 0.4.0 dry run
-  ----------------------------------------------------
-  Input data:      data.tsv
-  Description:     batch.csv
-  Output:          data_corrected.tsv  [tsv]
-  ----------------------------------------------------
-  Features:        1500
-  Samples:         45
-  Batches:         5
-  Sub-matrices:    3  (unique affiliation groups)
-  ----------------------------------------------------
-  Algorithm:       ComBat mode 1
-  needed_values:   2
-  Sort strategy:   sparsity
-  Block size:      2
-  Unique removal:  enabled
-  ----------------------------------------------------
-  Inputs valid. Use without --dry-run to run correction.
-```
+## Exit status
 
----
+| Status | Meaning                                        |
+| ------ | ---------------------------------------------- |
+| 0      | success, or a valid dry run                    |
+| 1      | input, validation, correction or output error  |
+| 2      | usage error, or a missing input or config file |
 
-## Exit codes
+- Status 1 prints one line starting `ERROR` to standard error, such as `ERROR: ...` for invalid input or `ERROR writing output to ...` when a file cannot be written.
+- Status 2 covers what the argument parser refuses (an unknown choice, a value that is not a number, `-v` with `-q`), config file errors (unknown key, unsupported extension, unreadable file), and dry-run and `--report` conflicts. It prints the usage and a `harmonizepy: error:` line.
+- A value the parser accepts but the library refuses, such as `--block 1` or `--needed-values 0`, exits with status 1.
+- A summary that cannot be written prints a warning and does not change the status.
 
-Exit code `0` on success (or `--dry-run` with valid inputs). Exit code `1` on validation error or unrecoverable runtime error.
+## Shell completion
+
+With the `completion` extra installed, `harmonizepy` supports tab completion through argcomplete. Activate it as argcomplete's documentation describes for your shell, for example `eval "$(register-python-argcomplete harmonizepy)"` in bash.

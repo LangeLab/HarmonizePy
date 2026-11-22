@@ -1,27 +1,38 @@
 **HarmonizePy**
 
----
-
 **Getting started**
-* [[Home]]
-* [[Installation]]
-* [[Quick-Start]]
 
----
+- [Home](Home)
+- [Installation](Installation)
+- [Quick start](Quick-Start)
 
-**User guide**
-* [[Input-Format]]
-* [[Algorithms]]
-* [[Pipeline]]
+**The data**
 
----
+- [Batch effects](Batch-Effects)
+- [Missing values](Missing-Values)
+- [Input format](Input-Format)
+
+**The pipeline**
+
+- [Pipeline](Pipeline)
+- [Unique removal](Unique-Removal)
+- [Sorting and blocking](Sorting-and-Blocking)
+
+**The engines**
+
+- [Choosing an engine](Algorithms)
+- [ComBat](ComBat)
+- [limma](limma)
+
+**Results**
+
+- [Correction report](Correction-Report)
+- [Limits](Limits)
 
 **Reference**
-* [[API-Reference]]
-* [[CLI-Reference]]
 
----
-
-**Validation & performance**
-* [[R-Compatibility]]
-* [[Benchmarks]]
+- [API reference](API-Reference)
+- [CLI reference](CLI-Reference)
+- [R compatibility](R-Compatibility)
+- [Benchmarks](Benchmarks)
+- [References](References)

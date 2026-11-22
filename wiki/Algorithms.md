@@ -1,71 +1,65 @@
-# Algorithms
+# Choosing an engine
 
-HarmonizePy provides two batch-correction algorithms: **ComBat** and **limma**. Both are implemented in pure NumPy and handle per-cell missing values without imputation.
+Which engine fits depends on two questions about the data, should a protein's batch effect be estimated partly from the other proteins, and does a batch change the spread of a protein or only its level, and on one about assumptions: may the batch effects across proteins be taken to follow a known distribution? ComBat and limma answer them differently, and ComBat's four modes cover the combinations.
 
----
+```mermaid
+flowchart LR
+    Q1[borrow across<br/>proteins?] -- no --> L([limma]):::ok
+    Q1 == yes ==> Q2[correct<br/>spread too?]
+    Q2 == yes ==> Q3[normal and<br/>inverse-gamma<br/>priors?]
+    Q2 -- no --> Q4[normal<br/>prior?]
+    Q3 == yes ==> M1(["mode 1 (default)"]):::ok
+    Q3 -- no --> M3([mode 3]):::ok
+    Q4 -- yes --> M2([mode 2]):::ok
+    Q4 -- no --> M4([mode 4]):::ok
+    classDef ok fill:#116329,stroke:#4ac26b,color:#ffffff
+    linkStyle default stroke:#8b949e
+```
 
-## ComBat
+<p align="center"><sub><b>Figure 1.</b> Three questions, asked in order, pick an engine; modes are ComBat modes, and the thick line leads to the default. Borrowing means estimating each protein's batch effect partly from the other proteins. The last question asks whether the batch shifts may be taken as normal, and the batch spreads as inverse-gamma; a no gives the non-parametric modes. The sections below say what each answer trades away.</sub></p>
 
-ComBat (Johnson, Li & Rabinovic 2007) is an empirical Bayes method. It models each feature as having a batch-specific location shift and scale change, then uses information shared across all features to estimate and remove those effects. The shared step shrinks each feature's estimates towards those of the other features, which steadies them when batches are small.
+| Engine                  | Borrows across features | Corrects scale | Prior          |
+| ----------------------- | ----------------------- | -------------- | -------------- |
+| ComBat mode 1 (default) | yes                     | yes            | parametric     |
+| ComBat mode 2           | yes                     | no             | parametric     |
+| ComBat mode 3           | yes                     | yes            | non-parametric |
+| ComBat mode 4           | yes                     | no             | non-parametric |
+| limma                   | no                      | no             | none           |
 
-### The four modes
+## Borrowing or not
 
-| Mode | `par_prior` | `mean_only` | What it corrects | Use case |
-| --- | --- | --- | --- | --- |
-| 1 | `True` | `False` | Location and scale | Default. Most datasets. |
-| 2 | `True` | `True` | Location only | Pre-scaled or variance-normalized data |
-| 3 | `False` | `False` | Location and scale | Small batches (< ~10 samples), non-Gaussian data |
-| 4 | `False` | `True` | Location only | Small batches, pre-scaled data |
+ComBat estimates each protein's batch effects partly from the other proteins in its group (see [ComBat](ComBat)). With small batches this steadies estimates that would otherwise follow the noise of a few samples ([Johnson et al. 2007](References#johnson-et-al-2007)). It also means the result for one protein depends on which others share its group, and a group needs at least two features.
 
-**Mode 1** (parametric, location + scale) is the default.
+limma fits each protein alone (see [limma](limma)). A protein's correction depends only on its own values, and the batch means of every corrected protein end exactly equal. With few samples per batch, those means carry more noise into the correction.
 
-**Mode 2** (parametric, location only) skips variance correction. Use it when the data has already been variance-normalized or when you want to preserve the measured spread between batches.
+## Level only, or level and spread
 
-**Mode 3** (non-parametric, location + scale) makes no distributional assumption about the batch effects across features: each feature's estimate is a likelihood-weighted average of the other features' estimates. Its cost grows with the square of the number of features in a group. On a known-truth simulation with heavy-tailed batch shifts it removed them less well than mode 1, and R `sva::ComBat` gives the same result, so a heavy tail is not by itself a reason to choose it.
+Modes 1 and 3 also correct each batch's spread; modes 2 and 4, and limma, leave it as it was. Location-only correction is the choice when the differences in spread between batches are to be kept, for example because they were already made comparable before correction. Location-only modes need one value per batch instead of two (`needed_values` 1), so a feature with a single value in a batch can count there. It can still be left raw, for example when it has no spread within batches.
 
-**Mode 4** (non-parametric, location only) combines the non-parametric prior of mode 3 with the location-only correction of mode 2.
+## Parametric or non-parametric
 
-### Parametric vs non-parametric
+The parametric prior assumes the batch effects across proteins follow a normal and an inverse-gamma distribution. The non-parametric prior makes no such assumption and weights the other proteins' estimates directly. It costs more: its work grows with the square of the number of features in a group, where the parametric prior grows in proportion. No measurement here shows one correcting better than the other on real data.
 
-The parametric modes (1, 2) place a normal prior on the batch location effects and an inverse-gamma prior on the batch scale effects, with hyper-parameters estimated across features, and shrink each feature's estimates towards them.
+## Checking a choice
 
-The non-parametric modes (3, 4) use the other features' estimates themselves as the prior, weighted by how well each explains the feature's observed values. Their cost grows with the square of the number of features in a group.
+No measurement here ranks the engines or modes in general, and the tests compare against R, not against a known truth (see [Limits](Limits)). Some checks on a given matrix:
 
-### The `needed_values` parameter
+- The [correction report](Correction-Report): how many features each setting corrects, leaves raw or empties.
+- Batch grouping before and after, for example in a PCA of the corrected features. A batch grouping that has reversed, rather than disappeared, points to over-correction; comparing with limma, which does not borrow, or with mode 2, which leaves the spread alone, can show whether the scale correction or the shrinkage is the cause.
+- A known biological difference that is balanced across batches should survive correction.
 
-`needed_values` controls how many non-missing observations a feature must have in a given batch to be included in adjustment for that batch.
+## Setting it
 
-The default (`None`) auto-selects:
+```python
+harmonize(data, batch)                      # ComBat mode 1
+harmonize(data, batch, combat_mode=3)       # ComBat mode 3
+harmonize(data, batch, algorithm="limma")   # limma
+```
 
-- `2` for modes 1, 3 and limma (need variance estimate: at least 2 observations)
-- `1` for modes 2, 4 (location only: 1 observation suffices)
+On the command line: `--combat-mode 3`, `--algorithm limma`. With limma, `combat_mode` must still be a valid mode (1 to 4) but has no effect.
 
-Increase `needed_values` (e.g. to `3`) if you want stricter inclusion and have enough data to afford it.
+## Related pages
 
----
-
-## limma
-
-limma batch correction (`removeBatchEffect`, Ritchie et al. 2015) uses a linear model. It fits batch as a covariate, estimates batch coefficients by ordinary least squares with a sum-to-zero constraint, and subtracts those coefficients from the data.
-
-limma is:
-
-- Location only: it removes each feature's batch means and leaves the scale unchanged
-- Without shrinkage: each feature is fitted on its own
-- Closed-form: one least-squares fit per feature, no iterative solver
-
-Use limma when you want each feature's batch means removed with no borrowing across features, for example as a simple comparison with ComBat.
-
----
-
-## ComBat vs limma: choosing
-
-Start with ComBat mode 1, the default. Compare with limma, which does not borrow across features, and with mode 2, which leaves the scale unchanged, when the corrected data look over-corrected, for example reversed batch grouping in a PCA after correction. No measurement here ranks the modes in general.
-
----
-
-## NaN handling in both algorithms
-
-Both ComBat and limma handle per-cell missing values (stochastic NaN within qualifying batches) using a per-feature approach. For each feature, the computation uses only the observed values in that feature's valid samples. NaN positions in the input remain NaN in the output.
-
-This matches the behavior of R `sva::ComBat` v3.60.0 (the `Beta.NA` approach). See [[R-Compatibility]] for verification details and [[Pipeline]] for how structural missingness is handled before the engines run.
+- [ComBat](ComBat): the model, the priors and the features set aside.
+- [limma](limma): the linear model and its edges.
+- [Pipeline](Pipeline): both engines run once per affiliation group.
