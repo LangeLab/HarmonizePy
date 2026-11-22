@@ -34,6 +34,8 @@ This release fixes the inputs found to give wrong values, hang, or fail without 
   - Modes 3 and 4 form each likelihood from the deviations to the feature's own mean, as `sva::ComBat` does. The expanded form lost precision and could put scale estimates off by up to a factor of three.
   - `combat()` and `remove_batch_effect()` fit a feature that has no value in some batch on the batches it was measured in; the unobserved batch counted as a batch effect of zero, so a true level of 10 came back near 7. Features with values in a single batch keep their raw values, as do, in limma, features missing a batch whose values do not outnumber their observed batches. `harmonize()` never sends such a feature to an engine, so this change alone does not alter its output (#27).
 - **Features left raw.** A feature alone in its batch pattern keeps its raw values with both engines. ComBat could hang on such a row with a missing cell, and limma corrected it on its own batch means (#19).
+- **Unique removal.**
+  - Between equally long targets, the one more features hold wins, then the smallest; the choice depended on the order of the rows, so reordering them could change the groups and the corrected values.
 - **Engine input.** `combat()` keeps a feature with no value missing instead of making every value missing. Infinite values are rejected with the feature named. All four engine functions require whole-number batch labels; `combat()` merged labels such as 0.2 and 0.9 into one batch. An unknown `ref_batch`, a one-sample reference batch, an unknown algorithm, and a `combat_mode` other than an integer from 1 to 4 are rejected with one message each.
 - **Input files.**
   - A whole-number column with a blank cell loads, with the blank as missing (#20).

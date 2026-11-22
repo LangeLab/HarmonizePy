@@ -267,3 +267,78 @@ class TestFindBestCrop:
         non_unique: set[tuple[int, ...]] = {(1, 2, 3), (1, 2)}
         best = _find_best_crop(frozenset({1, 2, 3}), [(p, frozenset(p)) for p in non_unique])
         assert best == (1, 2)
+
+
+class TestTieOrder:
+    """Equally long candidates are chosen by a rule that ignores row order."""
+
+    _AFFILIATIONS = (
+        (2, 3),
+        (2, 3),
+        (1, 2),
+        (1, 2),
+        (3, 6),
+        (3, 6),
+        (2, 4, 5, 6),
+        (2, 4, 5, 6),
+        (1, 2, 3, 5),
+        (2, 3, 5, 6),
+        (1, 2, 4, 6),
+    )
+
+    def test_choice_is_the_same_in_every_row_order(self) -> None:
+        """Every shuffle of the rows moves each feature to the same affiliation.
+
+        Failure condition: the choice follows the iteration order of a set built
+        from the rows, so it flips between ``(2, 3)`` and ``(1, 2)``.
+        """
+        import random
+
+        expected = remove_unique_combinations(list(self._AFFILIATIONS))
+        rng = random.Random(0)
+        for _ in range(200):
+            order = list(range(len(self._AFFILIATIONS)))
+            rng.shuffle(order)
+            result = remove_unique_combinations([self._AFFILIATIONS[i] for i in order])
+            assert [result[order.index(i)] for i in range(len(order))] == expected
+
+    def test_smallest_tuple_breaks_a_tie_of_equal_groups(self) -> None:
+        """Between candidates shared by equally many features, the smaller tuple wins.
+
+        Failure condition: the tie goes to ``(2, 3)`` in some runs.
+        """
+        assert remove_unique_combinations(list(self._AFFILIATIONS))[8] == (1, 2)
+
+    def test_larger_group_wins_a_tie_of_length(self) -> None:
+        """Among equally long candidates, the one more features share wins.
+
+        Failure condition: the smaller tuple wins although its group is smaller.
+        """
+        affiliations = [(1, 2), (1, 2), (2, 3), (2, 3), (2, 3), (1, 2, 3)]
+        assert remove_unique_combinations(affiliations)[5] == (2, 3)
+
+    def test_harmonize_output_does_not_depend_on_row_order(self) -> None:
+        """Shuffling the rows of the matrix gives the same corrected values per feature.
+
+        Failure condition: a tie resolved by row order puts a feature in another
+        group, and its corrected values change.
+        """
+        import numpy as np
+        import pandas as pd
+
+        from harmonizepy import harmonize
+
+        rng = np.random.default_rng(3)
+        batch = np.repeat(np.arange(1, 7), 2)
+        samples = [f"s{i}" for i in range(12)]
+        rows = {}
+        for k, affiliation in enumerate(self._AFFILIATIONS):
+            values = rng.normal(20, 1) + rng.normal(0, 0.3, 12) + 0.5 * batch
+            values[~np.isin(batch, affiliation)] = np.nan
+            rows[f"f{k}"] = values
+        data = pd.DataFrame(rows, index=samples).T
+        desc = pd.DataFrame({"ID": samples, "sample": range(1, 13), "batch": batch})
+        expected = harmonize(data, desc)
+        for seed in range(10):
+            shuffled = harmonize(data.sample(frac=1.0, random_state=seed), desc)
+            pd.testing.assert_frame_equal(shuffled.loc[expected.index], expected, rtol=1e-12)

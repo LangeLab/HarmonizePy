@@ -201,9 +201,10 @@ def remove_unique_combinations(
     affiliation with the longest affiliation that at least two features share
     and that is a proper subset of the feature's own; the feature then loses
     the values in the dropped blocks but is corrected with others. Among
-    equally long candidates, the winner follows an internal order fixed by the
-    set of shared affiliations, so it does not depend on the order of the
-    rows. A feature with no shared subset, and empty affiliations, are
+    equally long candidates, the one shared by the most features wins, since
+    its group gives the stronger prior; a remaining tie goes to the smallest
+    tuple. The choice does not depend on the order of the rows. A feature with
+    no shared subset, and empty affiliations, are
     left unchanged. This is the counterpart of HarmonizR's ``ur`` option,
     with a narrower rule: HarmonizR also moves a feature to a pattern that
     only one other feature has, and updates the list as it goes.
@@ -235,7 +236,8 @@ def remove_unique_combinations(
         logger.debug("No shared patterns available for rescue")
         return result
 
-    targets = [(pattern, frozenset(pattern)) for pattern in non_unique]
+    ordered = sorted(non_unique, key=lambda pattern: (-counts[pattern], pattern))
+    targets = [(pattern, frozenset(pattern)) for pattern in ordered]
     rescued = 0
     for i, affil in enumerate(result):
         if not affil or affil in non_unique:
@@ -257,9 +259,9 @@ def _find_best_crop(
 ) -> tuple[int, ...] | None:
     """Return the longest target pattern that is a proper subset of *affil_set*.
 
-    *targets* pairs each shared pattern with its set, built once by the caller.
-    Ties go to the pattern met first in *targets*. Returns ``None`` if no
-    target is a proper subset.
+    *targets* pairs each shared pattern with its set, built once by the caller
+    in the order that breaks ties; ties go to the pattern met first. Returns
+    ``None`` if no target is a proper subset.
     """
     best = None
     for pattern, pattern_set in targets:
