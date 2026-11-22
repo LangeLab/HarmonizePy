@@ -388,7 +388,8 @@ def validate_core_args(
     ------
     ValueError
         On an unknown algorithm, ComBat mode, or sort strategy, a
-        ``needed_values`` below 1, or a block size that is not an integer of at
+        ``needed_values`` that is not a whole number of at least 1 (booleans
+        and floats are rejected), or a block size that is not an integer of at
         least 2.
     TypeError
         If *unique_removal* is not a bool.
@@ -396,11 +397,15 @@ def validate_core_args(
     if algorithm not in ("ComBat", "limma"):
         raise ValueError(f"algorithm must be 'ComBat' or 'limma', got {algorithm!r}.")
     validate_combat_mode(combat_mode)
-    if needed_values is not None and needed_values < 1:
-        raise ValueError(
-            f"needed_values must be >= 1 or None, got {needed_values}. "
-            f"Use needed_values=None to auto-select based on algorithm."
+    if needed_values is not None:
+        is_integer = isinstance(needed_values, (int, np.integer)) and not isinstance(
+            needed_values, (bool, np.bool_)
         )
+        if not is_integer or needed_values < 1:
+            raise ValueError(
+                f"needed_values must be a whole number of at least 1, or None, got "
+                f"{needed_values!r}. Use needed_values=None to auto-select based on algorithm."
+            )
     if sort_strategy is not None and sort_strategy not in _VALID_SORT_STRATEGIES:
         raise ValueError(
             f"sort must be one of {sorted(_VALID_SORT_STRATEGIES)!r} or None, "

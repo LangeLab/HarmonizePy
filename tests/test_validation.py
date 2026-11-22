@@ -199,6 +199,22 @@ class TestValidateHarmonizeArgs:
         with pytest.raises(ValueError, match="needed_values"):
             validate_harmonize_args("ComBat", 1, 0)
 
+    @pytest.mark.parametrize("value", [2.5, 2.0, True, "2"])
+    def test_needed_values_must_be_a_whole_number(self, value: object) -> None:
+        """A float, a boolean, or a string is rejected as needed_values.
+
+        Failure condition: 2.5 acts as 3 and ``True`` as 1 without a message.
+        """
+        with pytest.raises(ValueError, match="needed_values must be a whole number"):
+            validate_harmonize_args("ComBat", 1, value)  # type: ignore[arg-type]
+
+    def test_needed_values_accepts_numpy_integers(self) -> None:
+        """A NumPy integer is a valid needed_values.
+
+        Failure condition: an integer read from an array is rejected.
+        """
+        validate_harmonize_args("ComBat", 1, np.int64(2))  # type: ignore[arg-type]
+
     def test_invalid_sort_strategy(self) -> None:
         """Unknown sort strategy raises ValueError.
 

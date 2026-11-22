@@ -43,8 +43,8 @@ class HarmonizeConfig:
     ------
     ValueError
         On an unknown algorithm, ComBat mode, or sort strategy, a
-        ``needed_values`` below 1, or a block size that is not an integer of at
-        least 2.
+        ``needed_values`` that is not a whole number of at least 1, or a block
+        size that is not an integer of at least 2.
     TypeError
         If *unique_removal* is not a bool.
 
