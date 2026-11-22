@@ -16,6 +16,7 @@ from benchmarks.metrics import SingleRunMetrics, aggregate_metrics, assess_rss_s
 from benchmarks.report import build_report_json, generate_markdown
 from benchmarks.runners import python_runner
 from benchmarks.scenarios import Config, DatasetSpec, Scenario
+from benchmarks.validity import ValidityResult
 
 
 def _make_input() -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -365,8 +366,8 @@ class TestBenchmarkReport:
     def test_report_uses_post_gc_python_rss_fields(self) -> None:
         """Report JSON should expose retained post-GC Python RSS metrics.
 
-        Failure condition: the report only keeps the old raw delta and drops the
-        normalized RSS values needed for repeated-run interpretation.
+        Failure condition: the report keeps only the raw before/after delta and
+        drops the normalized RSS values needed for repeated-run interpretation.
         """
         cfg = _make_config()
         scenario = Scenario(dataset="tiny", algorithm="limma")
@@ -535,3 +536,42 @@ class TestReportSystemInfo:
         md = generate_markdown(report)
         assert "BLAS threads=1" in md
         assert "harmonizepy v9.9.9" in md
+
+
+def test_report_json_keeps_feature_counts_of_one_side() -> None:
+    """The report JSON carries the features only Python or only R returned.
+
+    Failure condition: the serializer drops the two counts, so the report's
+    "Py Only" and "R Only" columns are always blank.
+    """
+    metrics = SingleRunMetrics(
+        elapsed_s=0.2,
+        cpu_pct=20.0,
+        tracemalloc_peak_mb=2.0,
+        rss_before_kb=100,
+        rss_after_kb=140,
+        rss_post_gc_kb=110,
+        rss_delta_kb=40,
+        rss_delta_post_gc_kb=10,
+        result={"n_total": 8, "n_corrected": 5, "n_passthrough": 3},
+    )
+    validity = ValidityResult(scenario_id="tiny_limma")
+    validity.concordance_shared_features = 5
+    validity.concordance_py_only_features = 3
+    validity.concordance_r_only_features = 1
+
+    report = build_report_json(
+        [
+            (
+                Scenario(dataset="tiny", algorithm="limma"),
+                aggregate_metrics([metrics]),
+                validity,
+                None,
+            )
+        ],
+        _make_config(),
+    )
+
+    entry = report["results"][0]["validity"]
+    assert entry["concordance_py_only_features"] == 3
+    assert entry["concordance_r_only_features"] == 1

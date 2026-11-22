@@ -1,8 +1,8 @@
 """JSON and Markdown report generation for benchmark results.
 
 Converts harness ``ScenarioResult`` tuples into the v2.0 output JSON
-schema (plan Section 13) and generates human-readable Markdown reports
-comparable to the old ``benchmarks/RESULTS.md``.
+schema and generates human-readable Markdown reports in the layout of
+``benchmarks/RESULTS.md``.
 
 Usage::
 
@@ -252,6 +252,8 @@ def _build_scenario_entry(
             "concordance_mean_rel": validity.concordance_mean_rel,
             "concordance_nan_match": validity.concordance_nan_match,
             "concordance_shared_features": validity.concordance_shared_features,
+            "concordance_py_only_features": validity.concordance_py_only_features,
+            "concordance_r_only_features": validity.concordance_r_only_features,
             "error": validity.error,
         }
 
