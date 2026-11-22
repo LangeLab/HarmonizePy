@@ -433,3 +433,55 @@ def test_reading_a_delimited_file_starts_no_threads(tmp_path: Path) -> None:
     read_main_data(str(data_path))
     read_description(str(desc_path))
     assert set(tasks.iterdir()) <= before
+
+
+class TestNamesReadAsWritten:
+    """Feature names and description IDs are text, read exactly as in the file."""
+
+    def test_feature_names_that_look_missing_are_kept(self, tmp_path: Path) -> None:
+        """Rows named NA and null keep their names; NA in a value cell is still missing.
+
+        Failure condition: the reader applies its missing-value markers to the
+        name column, so both rows are named NaN and one is removed as a repeat.
+        """
+        path = tmp_path / "data.tsv"
+        path.write_text("feature\ts1\ts2\nNA\t1\t2\nnull\t1\t2\nf3\t3\tNA\n")
+
+        result = read_main_data(str(path))
+
+        assert result.index.tolist() == ["NA", "null", "f3"]
+        assert np.isnan(result.loc["f3", "s2"])
+
+    def test_numeric_looking_feature_names_stay_text(self, tmp_path: Path) -> None:
+        """Feature names such as 001 and 002 are not turned into numbers.
+
+        Failure condition: the name column is type-inferred, so 001 becomes 1.
+        """
+        path = tmp_path / "data.tsv"
+        path.write_text("feature\ts1\ts2\n001\t1\t2\n002\t3\t4\n")
+
+        result = read_main_data(str(path))
+
+        assert result.index.tolist() == ["001", "002"]
+
+    def test_numeric_looking_sample_ids_match_the_header(self, tmp_path: Path) -> None:
+        """Description IDs 01 to 04 match data columns 01 to 04 and the run succeeds.
+
+        Failure condition: the ID column is type-inferred, so 01 becomes 1 and
+        the run is refused with a mismatch the user did not make.
+        """
+        ids = ["01", "02", "03", "04"]
+        data = pd.DataFrame(
+            np.random.default_rng(3).normal(10, 1, (6, 4)),
+            index=[f"f{i}" for i in range(6)],
+            columns=ids,
+        )
+        data_path = _write_tsv(tmp_path / "data.tsv", data)
+        desc_path = tmp_path / "desc.csv"
+        desc_path.write_text("ID,sample,batch\n01,1,1\n02,2,1\n03,3,2\n04,4,2\n")
+
+        assert read_description(str(desc_path))["ID"].tolist() == ids
+        result = harmonize(str(data_path), str(desc_path), algorithm="limma")
+        assert result.columns.tolist() == ids
+
+

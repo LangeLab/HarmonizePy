@@ -96,7 +96,9 @@ def validate_data_matrix(df: pd.DataFrame) -> None:
             f"{dups[:5]}). Each row must have a unique identifier."
         )
 
-    repeated_samples = df.columns[df.columns.duplicated()].unique().tolist()
+    # Sample names are matched to the description as text, so 1 and "1" collide.
+    sample_names = df.columns.astype(str)
+    repeated_samples = sample_names[sample_names.duplicated()].unique().tolist()
     if repeated_samples:
         raise ValueError(
             f"data contains duplicate sample names: {repeated_samples[:5]}. "
@@ -436,7 +438,10 @@ def validate_core_args(
             f"sort must be one of {sorted(_VALID_SORT_STRATEGIES)!r} or None, "
             f"got {sort_strategy!r}."
         )
-    if block_size is not None and (not isinstance(block_size, int) or block_size < 2):
+    is_block_integer = isinstance(block_size, (int, np.integer)) and not isinstance(
+        block_size, (bool, np.bool_)
+    )
+    if block_size is not None and (not is_block_integer or block_size < 2):
         raise ValueError(
             f"block must be an integer >= 2 or None, got {block_size!r}. "
             f"Use block=None to disable blocking."

@@ -751,3 +751,59 @@ def test_unique_removal_logs_moved_features(caplog: pytest.LogCaptureFixture) ->
     with caplog.at_level(logging.INFO, logger="harmonizepy.core"):
         harmonize(data, desc)
     assert "Unique removal moved 1 feature(s) into a shared pattern" in caplog.text
+
+
+class TestArgumentTypes:
+    """Inputs given as natural Python or NumPy values are accepted."""
+
+    def test_integer_column_labels_match_text_ids(self) -> None:
+        """A frame with integer column labels runs against text IDs 1 to 6.
+
+        Failure condition: the batch lookup uses the raw label, so the integer
+        1 is not found among the text IDs and a KeyError escapes after
+        validation passed.
+        """
+        df, desc = _make_df_and_desc(n_features=10, n_per_batch=2, n_batches=3)
+        labels = list(range(1, df.shape[1] + 1))
+        int_df = df.set_axis(labels, axis=1)
+        text_desc = desc.assign(ID=[str(label) for label in labels])
+
+        result = harmonize(int_df, text_desc)
+        expected = harmonize(df, desc)
+
+        assert result.columns.tolist() == labels
+        np.testing.assert_allclose(result.to_numpy(), expected.to_numpy(), rtol=0, atol=0)
+
+    def test_numpy_integer_block_is_accepted(self) -> None:
+        """block=np.int64(2) gives the same result as block=2.
+
+        Failure condition: the block check accepts only Python int and
+        refuses a NumPy integer that needed_values accepts.
+        """
+        df, desc = _make_df_and_desc(n_features=10, n_per_batch=3, n_batches=3)
+
+        result = harmonize(df, desc, block=np.int64(2))
+
+        pd.testing.assert_frame_equal(result, harmonize(df, desc, block=2))
+
+    def test_boolean_block_is_refused(self) -> None:
+        """block=True is refused although bool is a subclass of int.
+
+        Failure condition: the NumPy integer check lets booleans through.
+        """
+        df, desc = _make_df_and_desc(n_features=10, n_per_batch=3, n_batches=3)
+
+        with pytest.raises(ValueError, match="block must be an integer"):
+            harmonize(df, desc, block=True)
+
+    def test_sample_names_equal_as_text_are_refused(self) -> None:
+        """Columns 1 and "1" are one sample name to the description and are refused.
+
+        Failure condition: the two labels pass the duplicate check and map to
+        the same description row.
+        """
+        df, desc = _make_df_and_desc(n_features=10, n_per_batch=2, n_batches=2)
+        df = df.set_axis([1, "1", 3, 4], axis=1)
+
+        with pytest.raises(ValueError, match="duplicate sample names"):
+            harmonize(df, desc)

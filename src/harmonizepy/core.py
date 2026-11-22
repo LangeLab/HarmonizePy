@@ -342,7 +342,7 @@ def prepare_inputs(
     logger.info("Input: %d features x %d samples", data.shape[0], data.shape[1])
 
     sample_to_batch = sample_batch_map(description)
-    batch_list = np.array([sample_to_batch[col] for col in data.columns], dtype=np.int64)
+    batch_list = np.array([sample_to_batch[str(col)] for col in data.columns], dtype=np.int64)
     n_batches = len(np.unique(batch_list))
     validate_harmonize_args(algorithm, combat_mode, resolved, block_size=block, n_batches=n_batches)
     logger.info(

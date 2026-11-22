@@ -13,6 +13,7 @@ import csv
 import logging
 from collections import Counter
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -62,14 +63,57 @@ def format_from_suffix(path: str) -> str:
     return _FORMAT_BY_SUFFIX.get(Path(path).suffix.lower(), "tsv")
 
 
-def _read_delimited(path: str, sep: str, *, index_col: int | None) -> pd.DataFrame:
-    """Read a delimited file with pandas' C parser.
+# pandas' default missing-value markers. They are applied to every column
+# except the one that holds names, so that a feature called ``NA`` or a sample
+# called ``null`` keeps its name.
+_MISSING_MARKERS: tuple[str, ...] = (
+    "",
+    "#N/A",
+    "#N/A N/A",
+    "#NA",
+    "-1.#IND",
+    "-1.#QNAN",
+    "-NaN",
+    "-nan",
+    "1.#IND",
+    "1.#QNAN",
+    "<NA>",
+    "N/A",
+    "NA",
+    "NULL",
+    "NaN",
+    "None",
+    "n/a",
+    "nan",
+    "null",
+)
+
+
+def _read_delimited(path: str, sep: str, *, name_col: int, index_col: int | None) -> pd.DataFrame:
+    """Read a delimited file with pandas' C parser, keeping column *name_col* as text.
+
+    The name column is read as written: no type inference (``01`` stays
+    ``01``) and no missing-value markers (``NA`` stays ``NA``). The other
+    columns read blanks and pandas' default markers as missing.
 
     The C parser runs on the calling thread. pyarrow's CSV reader is not used:
     it starts a thread pool, and on this package's inputs it is no faster on
     narrow files and slower on wide ones.
     """
-    return pd.read_csv(path, sep=sep, index_col=index_col, engine="c")
+    n_cols = len(_header_fields(path, sep))
+    # Keys are column positions; pandas accepts them, though its stubs name str keys.
+    markers: dict[Any, list[str]] = {
+        i: list(_MISSING_MARKERS) for i in range(n_cols) if i != name_col
+    }
+    return pd.read_csv(
+        path,
+        sep=sep,
+        index_col=index_col,
+        engine="c",
+        dtype={name_col: str},
+        keep_default_na=False,
+        na_values=markers,
+    )
 
 
 def _to_numpy_dtypes(df: pd.DataFrame) -> pd.DataFrame:
@@ -187,7 +231,7 @@ def _read_data_matrix(path: str) -> pd.DataFrame:
     else:
         sep = "," if ext == ".csv" else "\t"
         _reject_repeated_sample_names(path, sep)
-        df = _read_delimited(path, sep, index_col=0)
+        df = _read_delimited(path, sep, name_col=0, index_col=0)
     df = _to_numpy_dtypes(df)
     if df.index.name == "":
         df.index.name = None
@@ -205,9 +249,11 @@ def read_main_data(path: str) -> pd.DataFrame:
 
     The file must have a header row and use the first column as row names
     (feature identifiers), matching R
-    ``read.table(sep="\\t", header=TRUE, row.names=1)``. Blank cells and the
-    usual missing-value markers (``NA``, ``NaN``, ``null``, ``N/A``, ``#N/A``,
-    ``None``) are read as missing. An empty index name is set to ``None``.
+    ``read.table(sep="\\t", header=TRUE, row.names=1)``. Blank cells and pandas'
+    default missing-value markers (among them ``NA``, ``NaN``, ``nan``,
+    ``null``, ``N/A``, ``#N/A``, ``None``, ``<NA>``) are read as missing in
+    the sample columns. Feature names are read as written, as text: a feature
+    named ``NA`` keeps that name, and ``001`` stays ``001``. An empty index name is set to ``None``.
 
     Parameters
     ----------
@@ -255,9 +301,10 @@ def read_description(path: str) -> pd.DataFrame:
     Parameters
     ----------
     path : str
-        Path to the comma-separated file.  Expected columns: ``ID``
-        (sample name), ``sample`` (integer index), ``batch`` (integer
-        batch label).  Without the names ``ID`` and ``batch``, the first
+        Path to the comma-separated file, with at least three columns; the ID
+        column is read as written, as text, so ``01`` stays ``01``:
+        ``ID`` (sample name), ``sample`` (not read), and ``batch`` (whole-number
+        batch label). Without the names ``ID`` and ``batch``, the first
         column holds the sample IDs and the third the batch labels.
 
     Returns
@@ -277,7 +324,9 @@ def read_description(path: str) -> pd.DataFrame:
     >>> from harmonizepy.io import read_description
     >>> desc = read_description("batch.csv")  # doctest: +SKIP
     """
-    desc = _to_numpy_dtypes(_read_delimited(path, ",", index_col=None))
+    header = _header_fields(path, ",")
+    id_col = header.index("ID") if "ID" in header else 0
+    desc = _to_numpy_dtypes(_read_delimited(path, ",", name_col=id_col, index_col=None))
 
     logger.debug(
         "Read description: %d samples, %d columns from %s", desc.shape[0], desc.shape[1], path
